@@ -1,0 +1,49 @@
+# ---- Secrets: never commit ----
+.env
+.env.*
+!.env.example
+google-services.json
+GoogleService-Info.plist
+*.keystore
+*.jks
+service-account*.json
+
+# ---- Kotlin / Android / Gradle ----
+.gradle/
+build/
+local.properties
+captures/
+.cxx/
+*.apk
+*.aab
+*.hprof
+
+# ---- iOS / Xcode ----
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+Pods/
+*.xcuserstate
+
+# ---- Node / NestJS ----
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ---- Editors / OS ----
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Local data ----
+*.sqlite
+*.sqlite3
+pgdata/
+redisdata/
+tmp/
