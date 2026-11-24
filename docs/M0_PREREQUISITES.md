@@ -117,38 +117,77 @@ Console: <https://console.firebase.google.com>
 
 ## 3. Google OAuth client IDs
 
-Console: <https://console.cloud.google.com/apis/credentials> — use the Google Cloud project that
-Firebase created for you, not a new one.
+**You do not create these by hand in Google Cloud Console.** Firebase provisions both of them
+for you as a side effect of two settings. Creating them manually in Cloud Console produces
+clients that Firebase does not know about, and they will not appear in `google-services.json`.
 
-First, **OAuth consent screen**: External, app name WishKaro, your support email, scopes
-`email` + `profile` + `openid` only. Leave it in Testing mode for now and add yourself as a test
-user — you do **not** need verification for these three non-sensitive scopes.
+Current state of `composeApp/google-services.json`:
 
-Then create **two** clients:
+```
+project_id   : wishkaro-1c95e
+package_name : in.wishkaro.app      ✅ correct
+api_key      : present              ✅
+oauth_client : 0 entries            ❌ both clients missing
+```
 
-| Type | Needs | Used by |
-|---|---|---|
-| **Android** | package `in.wishkaro.app` + debug SHA-1 | The app, so Google will issue a token |
-| **Web** | nothing extra | The **server**, as the audience it validates ID tokens against |
+Zero OAuth clients means Google Sign-In cannot work at all. Two settings fix it:
 
-> The Web client is the one people forget. The Android app requests a token, but your NestJS
-> backend verifies it against the **Web client ID** — that value goes in the server's `.env` as
-> `GOOGLE_CLIENT_ID`. Without it, `POST /v1/auth/google` cannot validate anything and M0's first
-> step fails.
+### 3a. Add the debug SHA-1 → creates the **Android** client
+
+Firebase Console → ⚙️ **Project settings** → **Your apps** → the Android app → **Add fingerprint**:
+
+```
+46:2B:C7:B7:36:3E:3E:17:2E:88:C0:33:BC:7E:8D:C5:78:DB:50:8D
+```
+
+This is the step that was skipped during app registration — the SHA-1 field is optional there,
+and leaving it blank is the single most common cause of "Google Sign-In fails with code 10".
+
+### 3b. Enable Google as a sign-in provider → creates the **Web** client
+
+Firebase Console → **Authentication** → **Get started** → **Sign-in method** → **Google** →
+enable → set a project support email → Save.
+
+Enabling the provider is what makes Google auto-create the **Web client**, which is the one your
+NestJS server validates ID tokens against.
+
+### 3c. Re-download
+
+Project settings → Your apps → download `google-services.json` again and replace
+`composeApp/google-services.json`. It should now show **2 oauth_client entries** — one `ANDROID`
+(client_type 1) and one `WEB` (client_type 3).
+
+Copy the **Web** client ID into `server/.env` as `GOOGLE_CLIENT_ID`.
+
+> Why the Web client and not the Android one: the app asks Google for a token, but the *server*
+> must verify it. Google issues the ID token with the **Web** client as its audience, so that is
+> what the backend checks. Using the Android client ID server-side fails every request, and the
+> error message does not tell you why.
+
+### Consent screen
+
+Only needed once, and usually auto-created with the project. Check
+<https://console.cloud.google.com/apis/credentials/consent> — External, app name WishKaro, your
+support email, scopes `email` + `profile` + `openid` only, yourself added as a test user. Those
+three scopes are non-sensitive, so **no verification review is required**.
 
 ---
 
-## 4. Play Console account — start this now
+## 4. Play Console account — deferrable, with a deadline
 
 <https://play.google.com/console/signup> · one-time USD 25.
 
-This is on the list now and not at M9 because it is **calendar time you cannot compress**: a
-personal developer account created after Nov 2023 must run a **closed test with at least 12
-testers for 14 consecutive days** before it can even apply for production access. Identity
-verification can also take several days on its own.
+**Deferred by decision (2026-11-24).** It blocks nothing in M0–M8: you can build, run on a real
+device, and test the entire app without it. Only publishing needs it.
 
-Starting it today costs you an hour and USD 25, and removes a multi-week block from the end of
-the project. Start recruiting the 12 testers in parallel — friends and family count.
+The catch is that it is not work, it is **waiting**. A personal developer account created after
+Nov 2023 must run a **closed test with at least 12 testers for 14 consecutive days** before it
+can even apply for production access, and identity verification takes several days on its own.
+That is roughly **3–4 weeks of wall-clock time** that cannot be compressed by working harder.
+
+**Rule of thumb:** start it no later than **one month before** you want to be live, and ideally
+at the start of M6 so it runs in the background while you build the AI features. Recruiting the
+12 testers is the slow part — friends and family count, but they must actually install.
 
 ---
 
@@ -173,17 +212,17 @@ months before you need them just widens the window in which they can leak from a
 
 ## Readiness checklist
 
-- [ ] Docker Desktop installed and running
-- [ ] Node 22 installed and active (`node --version`)
-- [ ] JDK 21 installed and `org.gradle.java.home` set
-- [ ] `ANDROID_HOME` exported
-- [ ] Firebase project created, Android app registered with `in.wishkaro.app` + debug SHA-1
-- [ ] `google-services.json` at `composeApp/google-services.json` (gitignored)
+- [x] Docker Desktop installed (daemon starting)
+- [x] Node 22.23.5 installed and set as fnm default
+- [x] JDK 21 present and `org.gradle.java.home` pinned to it
+- [x] `ANDROID_HOME` exported in ~/.zshrc
+- [x] Firebase project `wishkaro-1c95e` created, Android app registered as `in.wishkaro.app`
+- [x] `google-services.json` at `composeApp/` (gitignored) — ⚠️ re-download after steps 3a/3b
 - [ ] Firebase service-account key saved **outside** the repo
 - [ ] OAuth consent screen configured, yourself added as a test user
-- [ ] Android OAuth client created
-- [ ] Web OAuth client created — client ID saved for the server's `.env`
-- [ ] Play Console account created and identity verification started
+- [ ] Android OAuth client — add debug SHA-1 in Firebase (step 3a)
+- [ ] Web OAuth client — enable Google sign-in provider in Firebase Auth (step 3b)
+- [ ] Play Console account — deferred by decision; start by M6
 - [ ] Railway account created
 - [ ] A physical Android phone with USB debugging on, visible to `adb devices`
 
