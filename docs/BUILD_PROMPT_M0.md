@@ -130,6 +130,10 @@ queued for sync. The list must render with the network off.
 
 - No secrets in the repo. `.env.example` committed, `.env` gitignored. The app reads
   the API base URL from a build config field, never a hardcoded string.
+- Firebase Admin must accept credentials BOTH ways: GOOGLE_APPLICATION_CREDENTIALS as a
+  file path (local dev) and FIREBASE_SERVICE_ACCOUNT as raw JSON in an env var (Railway,
+  where there is no file to point at). Prefer the env var when both are set. Build this
+  now — left until deploy day, it stalls the last step of M0.
 - Every endpoint validates input with Zod and returns typed errors.
 - Timezone handling is the highest-bug-density area in this app. All instants stored
   UTC; all user-facing dates computed in the user's timezone; unit tests for

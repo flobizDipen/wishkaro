@@ -209,15 +209,50 @@ at the start of M6 so it runs in the background while you build the AI features.
 
 ---
 
-## 5. Hosting (`TBD-7`)
+## 5. Hosting — Railway (`TBD-7` decided)
 
-M0's definition of done includes a deployed server. **Railway** is the recommendation: Postgres
-and Redis are one-click add-ons, deploys come straight from the GitHub repo, and it costs roughly
-USD 5/month at this scale. Fly.io is cheaper at scale but you provision Postgres and Redis
-yourself.
+**Decision: Railway**, 2026-11-24.
 
-Sign up with the GitHub account that owns the repo. Nothing else to configure until M0 is ready
-to deploy.
+The deciding factor is not price, it is **idle behaviour**. WishKaro's reminder engine is a
+nightly BullMQ job that materialises occurrences and enqueues pushes (`FR-REM-01`). A host that
+sleeps idle containers will silently skip that job, and the failure mode is the worst one this
+product has: reminders that never fire, with nothing in the logs to explain it.
+
+| Host | Fit |
+|---|---|
+| **Railway** | No idle spin-down. Postgres and Redis are one-click add-ons. Deploys from the GitHub repo. ~USD 5/month at this scale |
+| Fly.io | Cheaper at scale, but you provision and babysit Postgres and Redis yourself |
+| Render | Free tier **spins down when idle** — disqualifying for a scheduler |
+
+### Setup
+
+1. Sign up at <https://railway.app> with the **GitHub account that owns the repo**
+   (`flobizDipen`), so repo access needs no extra wiring.
+2. **New Project** → name it `wishkaro`.
+3. Add **Postgres** and **Redis** from the add-on catalogue. Railway injects `DATABASE_URL` and
+   `REDIS_URL` into the service environment automatically — do not hardcode them.
+4. **Do not deploy yet.** There is no `server/` to deploy until M0 builds it. The GitHub service
+   gets connected at the end of M0.
+5. Note the Hobby plan is ~USD 5/month once any trial credit runs out. Nothing here bills while
+   the project is empty.
+
+### Environment variables to set on Railway at deploy time
+
+`DATABASE_URL` and `REDIS_URL` come from the add-ons. You set the rest by hand, mirroring
+`server/.env.example`:
+
+```
+NODE_ENV=production
+GOOGLE_CLIENT_ID          (the Web client id)
+JWT_ACCESS_SECRET         (generate a NEW one — never reuse the local value)
+JWT_REFRESH_SECRET        (generate a NEW one)
+FIREBASE_PROJECT_ID=wishkaro-1c95e
+FIREBASE_SERVICE_ACCOUNT  (the service-account JSON pasted as a single-line variable)
+```
+
+> On Railway there is no file to point `GOOGLE_APPLICATION_CREDENTIALS` at, so the server must
+> also accept the service-account JSON **as an environment variable**. Build that path into the
+> Firebase Admin initialisation during M0, or deployment will stall at the last step.
 
 ---
 

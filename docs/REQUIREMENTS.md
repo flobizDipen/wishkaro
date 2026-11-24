@@ -665,7 +665,7 @@ Each milestone ends with a **working, installable app**. No milestone is "backen
 | TBD-4 | Solemn copy and template art direction — review by hand, do not ship AI-only | M5 |
 | TBD-5 | Visual identity: palette, type, icon, poster template art direction | M4 |
 | TBD-6 | Licensed music library for video | M10 |
-| TBD-7 | Hosting choice: Railway vs Fly.io | M0 |
+| TBD-7 | Hosting: **Railway** — decided 2026-11-24. No idle spin-down, which the nightly reminder scheduler requires | done |
 | TBD-8 | Play Console account type and tester recruitment | Now |
 
 ---
