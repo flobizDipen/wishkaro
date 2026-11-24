@@ -276,7 +276,7 @@ months before you need them just widens the window in which they can leak from a
 - [x] Android OAuth client provisioned
 - [x] Web OAuth client provisioned; id in `server/.env` as GOOGLE_CLIENT_ID
 - [ ] Play Console account — deferred by decision; start by M6
-- [ ] Railway account created
+- [x] Railway project `wishkaro` created with Postgres + Redis add-ons
 - [x] Physical Android device connected and visible to `adb` (4B201JEBF03493)
 
 When every box is ticked, paste `docs/BUILD_PROMPT_M0.md` into a fresh Claude Code session.
