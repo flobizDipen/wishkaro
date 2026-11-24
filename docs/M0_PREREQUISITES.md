@@ -236,7 +236,7 @@ months before you need them just widens the window in which they can leak from a
 - [x] `ANDROID_HOME` exported in ~/.zshrc
 - [x] Firebase project `wishkaro-1c95e` created, Android app registered as `in.wishkaro.app`
 - [x] `google-services.json` at `composeApp/` with both OAuth clients (gitignored)
-- [ ] Firebase service-account key saved **outside** the repo
+- [x] Firebase service-account key at `~/.secrets/` (chmod 600, outside repo), wired into `server/.env`
 - [x] OAuth consent screen (auto-created with the project)
 - [x] Android OAuth client provisioned
 - [x] Web OAuth client provisioned; id in `server/.env` as GOOGLE_CLIENT_ID
