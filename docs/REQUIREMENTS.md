@@ -4,8 +4,10 @@
 > **Date:** 2026-11-24
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
-> **Repo:** single **private** GitHub monorepo. Nothing in this project is published to any
-> hosted doc, artifact, gist or public repo.
+> **Repo:** single **public** GitHub monorepo — `github.com/flobizDipen/wishkaro`.
+> ⚠️ Because the repo is public, **any secret that is ever committed is compromised the moment it
+> is pushed** and must be rotated, not merely deleted — git history is permanent and public repos
+> are scraped continuously by credential bots. See the secrets rules in §11.
 
 **How to read this document.** Every requirement has a stable id (`FR-AUTH-01`). Open questions
 have ids too (`OD-1`). During the alignment pass we walk module by module; when a module is agreed
@@ -139,7 +141,7 @@ Agreed during scoping. Changing one of these invalidates downstream requirements
 | D16 | Backend | NestJS + PostgreSQL + Redis/BullMQ + Cloudflare R2, Docker, Railway/Fly |
 | D17 | Core loop | WhatsApp wish send · widget + rich notifications · wish/gift history · calendar + timeline |
 | D18 | Compliance | Privacy-by-design baseline from day one |
-| D19 | Repo | Single private GitHub monorepo |
+| D19 | Repo | Single **public** GitHub monorepo (`flobizDipen/wishkaro`) — decided 2026-11-24, overriding the earlier private-repo requirement |
 | D20 | Text AI | Claude (Haiku for volume, Sonnet for reasoning), strict JSON output |
 | D21 | Image AI | **OpenAI `gpt-image-1`**, server-side only, behind an `ImageProvider` interface |
 | D22 | Build order | M0 walking skeleton → vertical feature slices |
@@ -531,6 +533,7 @@ The entire economic thesis rests on the cache-hit rate. Instrument it from day o
 | Performance | Cold start to list < 2s on a mid-range device. List scroll 60fps at 1,000 people. |
 | Reliability | Reminder delivery > 98% on the OEM test matrix (G1). |
 | Security | TLS only, certificate pinning on release builds, tokens in EncryptedSharedPreferences / Keychain, R2 objects served via short-lived signed URLs, no PII in logs or analytics. |
+| Secrets (public repo) | No key, token, keystore or service-account file is ever committed — see `.gitignore`. Enable GitHub **secret scanning + push protection** on the repo. Keys live in `.env` locally and in the host's secret store in CI/deploy. A leaked key must be **rotated at the provider**, since deleting the commit does not unpublish it. The `gpt-image-1` and Anthropic keys are the highest-value targets: both bill directly to your card. |
 | Accessibility | TalkBack labels on all interactive elements, minimum 4.5:1 contrast, dynamic type support. |
 | Large screens | `minSdk 26`. Adaptive layouts across compact/medium/expanded, fold-aware, no orientation locks, no letterboxing, state preserved across fold/rotate/resize. Verified on a foldable and a 10" tablet before every release. |
 | Tone safety | Automated tests assert that no `SOLEMN` event can ever produce celebratory copy, a celebratory template, a gift suggestion or a T-7 gifting reminder. Treated as a correctness requirement, not a content preference. |
@@ -600,7 +603,7 @@ GitHub Actions with path filters · Sentry · PostHog.
 ## 15. Repo structure
 
 ```
-wishkaro/                        (private GitHub repo)
+wishkaro/                        (public GitHub repo)
 ├── composeApp/
 │   ├── commonMain/              ui, domain, data, di
 │   ├── androidMain/             actuals, widget, billing, contacts
