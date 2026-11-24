@@ -1,0 +1,17 @@
+-- Notification de-duplication (FR-REM-02).
+--
+-- Every reminder carries a dedupe_key. The server may retry, and from M2 an on-device alarm
+-- fires for the same event too — the user must still see exactly one notification.
+CREATE TABLE seen_reminder (
+    dedupe_key TEXT NOT NULL PRIMARY KEY,
+    seen_at    TEXT NOT NULL
+);
+
+markSeen:
+INSERT OR IGNORE INTO seen_reminder(dedupe_key, seen_at) VALUES (?, ?);
+
+wasSeen:
+SELECT EXISTS(SELECT 1 FROM seen_reminder WHERE dedupe_key = ?);
+
+deleteAll:
+DELETE FROM seen_reminder;

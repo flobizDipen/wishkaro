@@ -1,0 +1,42 @@
+-- Local mirror of the server's person table.
+--
+-- `pending_sync` is the outbox: a row written on the device is marked 1 and the sync engine
+-- clears it once the server has acknowledged that write. Soft deletes are tombstones, never
+-- DELETE, so a deletion made offline can still be pushed (D23).
+CREATE TABLE person (
+    id                TEXT    NOT NULL PRIMARY KEY,
+    display_name      TEXT    NOT NULL,
+    relation_to_owner TEXT,
+    is_self           INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT    NOT NULL,
+    deleted_at        TEXT,
+    pending_sync      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX person_pending_sync ON person(pending_sync);
+
+selectAll:
+SELECT * FROM person WHERE deleted_at IS NULL ORDER BY display_name;
+
+selectById:
+SELECT * FROM person WHERE id = ?;
+
+selectPendingSync:
+SELECT * FROM person WHERE pending_sync = 1;
+
+-- NOTE: no `ON CONFLICT ... DO UPDATE` (UPSERT) anywhere in this schema.
+-- UPSERT needs SQLite 3.24, which arrived in Android 11 (API 30). minSdk is 26 (OD-13), so
+-- on an Android 8 device that syntax is a runtime parse error. INSERT OR REPLACE is
+-- equivalent here because every column is always supplied, and the conditional
+-- last-write-wins that `applyRemote` used to express lives in LocalStore.kt instead, where
+-- it is easier to read anyway.
+
+insertOrReplace:
+INSERT OR REPLACE INTO person(id, display_name, relation_to_owner, is_self, updated_at, deleted_at, pending_sync)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+clearPendingSync:
+UPDATE person SET pending_sync = 0 WHERE id = ?;
+
+deleteAll:
+DELETE FROM person;
