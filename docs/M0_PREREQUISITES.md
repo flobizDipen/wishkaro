@@ -11,46 +11,61 @@ Machine checked: 2026-11-24.
 
 | Tool | Found | Verdict |
 |---|---|---|
-| Node | **v18.20.8** | ⚠️ **Too old.** Node 18 reached end-of-life in April 2025 and NestJS 11 requires Node ≥ 20. Upgrade to Node 22 LTS |
+| Node | v18.20.8 → **v22.23.5** | ✅ Fixed. Managed by **fnm**, not Homebrew. Node 18 is EOL and below NestJS 11's minimum |
 | npm | 10.8.2 | OK |
-| Java | **openjdk 24.0.2** | ⚠️ **Too new for Android.** AGP targets JDK 17/21; JDK 24 will fail or behave unpredictably. Install JDK 21 LTS and point Gradle at it |
-| Docker | **not installed** | ⚠️ **Blocking.** Local Postgres + Redis come from `docker compose` |
+| Java | 24.0.2 active; **21.0.8 already installed** | ✅ Fixed. AGP does not support JDK 24. Microsoft OpenJDK 21 was already on the machine — Gradle now pinned to it, system default left alone |
+| Docker | cask registered, **app missing** | ⚠️ Was uninstalled manually: `/Applications/Docker.app` gone, stale root-owned symlink left at `/usr/local/bin/docker` from Jun 2023. Reinstalling |
 | keytool | `/usr/bin/keytool` | OK |
 | adb | `~/Library/Android/sdk/platform-tools/adb` | OK — Android SDK is installed |
-| `ANDROID_HOME` | **unset** | Minor. Android Studio works without it; CLI Gradle builds are happier with it set |
+| `ANDROID_HOME` | unset → **set** | ✅ Fixed. Exported in `~/.zshrc` along with `platform-tools` and `emulator` on PATH |
 | Debug keystore | `~/.android/debug.keystore` | OK — fingerprints below |
 | gcloud CLI | not installed | Optional — console works fine |
 | firebase CLI | not installed | Optional — console works fine |
 
-### Fixes
+### What was actually done
+
+Node is managed by **fnm** on this machine, and JDK 21 was **already installed** — so the obvious
+Homebrew commands would have been wrong on both counts. For the record:
 
 ```bash
-brew install --cask docker
+fnm install 22 && fnm default 22
 ```
+
+Gradle pinned to the existing Microsoft OpenJDK 21 in `~/.gradle/gradle.properties`:
+
+```
+org.gradle.java.home=/Users/dipenjansari/Library/Java/JavaVirtualMachines/ms-21.0.8/Contents/Home
+```
+
+Android SDK exported in `~/.zshrc`:
+
+```
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+```
+
+Docker Desktop reinstalled:
 
 ```bash
-brew install node@22
+brew reinstall --cask docker-desktop
 ```
 
-```bash
-brew install --cask temurin@21
-```
+> **Java:** leaving JDK 24 as the system default is fine — Gradle uses whatever
+> `org.gradle.java.home` points at. Nothing was uninstalled.
+>
+> **Open a new terminal** for the Node and `ANDROID_HOME` changes to apply; existing shells keep
+> the old values.
 
-Then pin Gradle to JDK 21 by adding this to `~/.gradle/gradle.properties` (adjust the path if
-your JDK lands elsewhere — check with `/usr/libexec/java_home -V`):
+### ⚠️ Credential hygiene
 
-```bash
-echo "org.gradle.java.home=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home" >> ~/.gradle/gradle.properties
-```
+`~/.gradle/gradle.properties` holds a GitHub personal access token in plaintext (`gpr.key`, for
+GitHub Packages). That file is outside any repo so it is **not** committed — but the token is
+long-lived and plaintext, so:
 
-And add the Android SDK to your shell profile:
-
-```bash
-echo 'export ANDROID_HOME="$HOME/Library/Android/sdk"' >> ~/.zshrc
-```
-
-> **Note on Java:** leaving JDK 24 as your system default is fine — Gradle will use whatever
-> `org.gradle.java.home` points at. You do not need to uninstall anything.
+- **Rotate it** at <https://github.com/settings/tokens> if it has been exposed anywhere.
+- Never copy those two lines into a project-level `gradle.properties` — that is the exact path by
+  which these tokens end up in public git history.
+- Prefer a fine-grained token scoped to `read:packages` only, with an expiry date.
 
 ---
 
