@@ -230,18 +230,18 @@ months before you need them just widens the window in which they can leak from a
 
 ## Readiness checklist
 
-- [x] Docker Desktop installed (daemon starting)
+- [x] Docker Desktop installed
 - [x] Node 22.23.5 installed and set as fnm default
 - [x] JDK 21 present and `org.gradle.java.home` pinned to it
 - [x] `ANDROID_HOME` exported in ~/.zshrc
 - [x] Firebase project `wishkaro-1c95e` created, Android app registered as `in.wishkaro.app`
-- [x] `google-services.json` at `composeApp/` (gitignored) — ⚠️ re-download after steps 3a/3b
+- [x] `google-services.json` at `composeApp/` with both OAuth clients (gitignored)
 - [ ] Firebase service-account key saved **outside** the repo
-- [ ] OAuth consent screen configured, yourself added as a test user
-- [ ] Android OAuth client — add debug SHA-1 in Firebase (step 3a)
-- [ ] Web OAuth client — enable Google sign-in provider in Firebase Auth (step 3b)
+- [x] OAuth consent screen (auto-created with the project)
+- [x] Android OAuth client provisioned
+- [x] Web OAuth client provisioned; id in `server/.env` as GOOGLE_CLIENT_ID
 - [ ] Play Console account — deferred by decision; start by M6
 - [ ] Railway account created
-- [ ] A physical Android phone with USB debugging on, visible to `adb devices`
+- [x] Physical Android device connected and visible to `adb` (4B201JEBF03493)
 
 When every box is ticked, paste `docs/BUILD_PROMPT_M0.md` into a fresh Claude Code session.
