@@ -263,9 +263,28 @@ months before you need them just widens the window in which they can leak from a
 
 ---
 
+## Docker troubleshooting — if it breaks again
+
+Symptoms seen on 2026-11-24: backend processes running, no socket at `~/.docker/run/docker.sock`,
+and a **0B VM disk**. That combination means the Linux VM was never created, which almost always
+means Docker Desktop's **privileged helper was not installed** — the admin password prompt on
+first launch was dismissed.
+
+Two traps hit during the clean reinstall:
+
+1. `brew uninstall --cask --zap` cannot delete `~/Library/Containers/com.docker.docker` without
+   **Full Disk Access** for the terminal. It fails partway and leaves the cask still registered.
+2. Deleting `/Applications/Docker.app` by hand after that makes `brew install` a no-op
+   ("already installed"), leaving no app at all. Use `brew reinstall --cask docker-desktop --force`.
+
+The leftover container directory turned out to be harmless — a fresh install recreated what it
+needed. Granting Full Disk Access was not necessary.
+
+---
+
 ## Readiness checklist
 
-- [x] Docker Desktop installed
+- [x] Docker Desktop installed and verified (ran Postgres + Redis containers successfully)
 - [x] Node 22.23.5 installed and set as fnm default
 - [x] JDK 21 present and `org.gradle.java.home` pinned to it
 - [x] `ANDROID_HOME` exported in ~/.zshrc
