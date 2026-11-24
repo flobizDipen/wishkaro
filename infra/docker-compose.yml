@@ -58,12 +58,18 @@ services:
       # mounted explicitly. On Railway this variable is unset and
       # FIREBASE_SERVICE_ACCOUNT carries the JSON instead — both paths are supported.
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+      # server/.env carries ALLOW_DEV_LOGIN=true for the curl walkthrough, and the server
+      # refuses to boot with that set while NODE_ENV=production. The container is the
+      # production-shaped path, so it is forced off here rather than left to the env file.
+      ALLOW_DEV_LOGIN: 'false'
     ports:
       - '3000:3000'
     volumes:
       # Read-only mount of the key that lives OUTSIDE the repo. Override the host path
       # with FIREBASE_SA_PATH if yours is elsewhere.
-      - ${FIREBASE_SA_PATH:-~/.secrets/wishkaro-service-account.json}:/run/secrets/firebase-service-account.json:ro
+      # Compose does NOT expand `~`, so this uses ${HOME}. Override FIREBASE_SA_PATH if the
+      # key lives elsewhere.
+      - ${FIREBASE_SA_PATH:-${HOME}/.secrets/wishkaro-service-account.json}:/run/secrets/firebase-service-account.json:ro
     depends_on:
       db:
         condition: service_healthy

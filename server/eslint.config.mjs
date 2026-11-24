@@ -14,7 +14,16 @@ export default [
     rules: {
       ...tseslint.configs.recommended.rules,
       '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          // `const { secret: _drop, ...rest } = obj` is how you omit a key; the binding is
+          // meant to be unused.
+          ignoreRestSiblings: true,
+        },
+      ],
     },
   },
   prettier,
