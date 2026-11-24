@@ -16,14 +16,16 @@ concurrency:
   group: server-${{ github.ref }}
   cancel-in-progress: true
 
-defaults:
-  run:
-    working-directory: server
-
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Scoped to this job on purpose: the docker job below builds from the repository root,
+    # and a top-level default made `./server` resolve to `server/server`.
+    defaults:
+      run:
+        working-directory: server
 
     # The date and sync logic is pure and needs no database, but `prisma migrate deploy`
     # against a real Postgres is the only thing that proves a migration actually applies.
