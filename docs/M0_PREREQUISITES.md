@@ -121,27 +121,30 @@ Console: <https://console.firebase.google.com>
 for you as a side effect of two settings. Creating them manually in Cloud Console produces
 clients that Firebase does not know about, and they will not appear in `google-services.json`.
 
-Current state of `composeApp/google-services.json`:
+Verified live from the Firebase API (not a cached download):
 
 ```
 project_id   : wishkaro-1c95e
-package_name : in.wishkaro.app      ✅ correct
-api_key      : present              ✅
-oauth_client : 0 entries            ❌ both clients missing
+app id       : 1:97088713716:android:ed09fd08c8168c140cffa1
+package_name : in.wishkaro.app                            ✅
+api_key      : present                                    ✅
+SHA-1        : 462bc7b7363e3e172e88c033bc7e8dc578db508d   ✅ registered
+oauth_client : 0 entries                                  ❌
 ```
 
-Zero OAuth clients means Google Sign-In cannot work at all. Two settings fix it:
+**The SHA-1 is correctly registered and the OAuth clients are still absent.** That rules out the
+fingerprint as the cause and isolates it to one thing: the Google sign-in *provider* has never
+been enabled. Registering a fingerprint alone does not cause Firebase to emit OAuth clients into
+`google-services.json` — enabling the provider is what provisions them.
 
-### 3a. Add the debug SHA-1 → creates the **Android** client
-
-Firebase Console → ⚙️ **Project settings** → **Your apps** → the Android app → **Add fingerprint**:
+### 3a. Debug SHA-1 — ✅ already done
 
 ```
 46:2B:C7:B7:36:3E:3E:17:2E:88:C0:33:BC:7E:8D:C5:78:DB:50:8D
 ```
 
-This is the step that was skipped during app registration — the SHA-1 field is optional there,
-and leaving it blank is the single most common cause of "Google Sign-In fails with code 10".
+Registered against the Android app. Nothing further needed here until you add a **release**
+signing key, which needs its own fingerprint added the same way.
 
 ### 3b. Enable Google as a sign-in provider → creates the **Web** client
 
@@ -151,13 +154,28 @@ enable → set a project support email → Save.
 Enabling the provider is what makes Google auto-create the **Web client**, which is the one your
 NestJS server validates ID tokens against.
 
-### 3c. Re-download
+### 3c. Pull the config from the CLI, not the browser
 
-Project settings → Your apps → download `google-services.json` again and replace
-`composeApp/google-services.json`. It should now show **2 oauth_client entries** — one `ANDROID`
-(client_type 1) and one `WEB` (client_type 3).
+The Firebase CLI is installed and authenticated, so skip the download-and-move dance entirely:
 
-Copy the **Web** client ID into `server/.env` as `GOOGLE_CLIENT_ID`.
+```bash
+firebase apps:sdkconfig ANDROID 1:97088713716:android:ed09fd08c8168c140cffa1 --project wishkaro-1c95e -o composeApp/google-services.json
+```
+
+It should then show **2 oauth_client entries** — one `ANDROID` (client_type 1) and one `WEB`
+(client_type 3). Copy the **Web** client ID into `server/.env` as `GOOGLE_CLIENT_ID`.
+
+### CLI accounts
+
+The project lives under a **personal** Google account, not the work one:
+
+| Account | Sees `wishkaro` |
+|---|---|
+| `dipen@flobiz.in` | ❌ no — 15 other projects |
+| `drjansari@gmail.com` | ✅ yes — now the global default |
+
+Switch between them with `firebase login:use <email>`. If a Firebase command ever reports the
+project as missing, this is why — check the active account first.
 
 > Why the Web client and not the Android one: the app asks Google for a token, but the *server*
 > must verify it. Google issues the ID token with the **Web** client as its audience, so that is
