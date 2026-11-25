@@ -1,6 +1,6 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.6 — M0, M1 and M2 built and merged
+> **Status:** v0.7 — M0, M1 and M2 built and merged; M3 prompt written
 > **Date:** 2026-11-25
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
