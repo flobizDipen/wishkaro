@@ -1,0 +1,44 @@
+CREATE TABLE event (
+    id           TEXT    NOT NULL PRIMARY KEY,
+    person_id    TEXT    NOT NULL,
+    type         TEXT    NOT NULL DEFAULT 'BIRTHDAY',
+    day          INTEGER NOT NULL,
+    month        INTEGER NOT NULL,
+    -- Nullable on purpose: "year unknown" is a first-class birthday (FR-EVT-02).
+    year         INTEGER,
+    updated_at   TEXT    NOT NULL,
+    deleted_at   TEXT,
+    pending_sync INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX event_person ON event(person_id);
+CREATE INDEX event_pending_sync ON event(pending_sync);
+
+selectAll:
+SELECT * FROM event WHERE deleted_at IS NULL;
+
+selectById:
+SELECT * FROM event WHERE id = ?;
+
+selectForPerson:
+SELECT * FROM event WHERE person_id = ? AND deleted_at IS NULL;
+
+selectPendingSync:
+SELECT * FROM event WHERE pending_sync = 1;
+
+-- NOTE: no `ON CONFLICT ... DO UPDATE` (UPSERT) anywhere in this schema.
+-- UPSERT needs SQLite 3.24, which arrived in Android 11 (API 30). minSdk is 26 (OD-13), so
+-- on an Android 8 device that syntax is a runtime parse error. INSERT OR REPLACE is
+-- equivalent here because every column is always supplied, and the conditional
+-- last-write-wins that `applyRemote` used to express lives in LocalStore.kt instead, where
+-- it is easier to read anyway.
+
+insertOrReplace:
+INSERT OR REPLACE INTO event(id, person_id, type, day, month, year, updated_at, deleted_at, pending_sync)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+clearPendingSync:
+UPDATE event SET pending_sync = 0 WHERE id = ?;
+
+deleteAll:
+DELETE FROM event;

@@ -1,0 +1,143 @@
+name: android
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'composeApp/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'composeApp/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - '.github/workflows/android.yml'
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          # JDK 21. AGP does not support JDK 24, which is this machine's system default —
+          # see docs/M0_PREREQUISITES.md.
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # google-services.json carries the Firebase config and OAuth client ids and is
+      # gitignored, because this repository is public. CI only needs a structurally valid
+      # file for the google-services plugin to parse: it builds, it never signs in.
+      - name: Write a placeholder google-services.json
+        run: |
+          cat > composeApp/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "wishkaro-ci",
+              "storage_bucket": "wishkaro-ci.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": { "package_name": "in.wishkaro.app" }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "000000000000-ci.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [ { "current_key": "AIzaSyCI0000000000000000000000000000000" } ],
+                "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Shared unit tests
+        run: ./gradlew :composeApp:testDebugUnitTest --no-daemon
+
+      - name: Assemble the debug APK
+        run: ./gradlew :composeApp:assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: wishkaro-debug-apk
+          path: composeApp/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: composeApp/build/reports/
+          retention-days: 7
+
+  ios:
+    # Kotlin/Native Apple targets can only be built on a macOS host.
+    #
+    # iOS is not shipped in v1 (D15), but the shared code must stay multiplatform: compiling
+    # this target is the only thing that stops commonMain quietly becoming JVM-only.
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Write a placeholder google-services.json
+        run: |
+          cat > composeApp/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "wishkaro-ci",
+              "storage_bucket": "wishkaro-ci.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": { "package_name": "in.wishkaro.app" }
+                },
+                "oauth_client": [
+                  {
+                    "client_id": "000000000000-ci.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
+                "api_key": [ { "current_key": "AIzaSyCI0000000000000000000000000000000" } ],
+                "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+
+      - name: Compile the iOS simulator target
+        run: ./gradlew :composeApp:compileKotlinIosSimulatorArm64 --no-daemon

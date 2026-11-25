@@ -1,0 +1,90 @@
+name: server
+
+# Path-filtered: an Android-only change must not run server CI, and vice versa.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/server.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server.yml'
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Scoped to this job on purpose: the docker job below builds from the repository root,
+    # and a top-level default made `./server` resolve to `server/server`.
+    defaults:
+      run:
+        working-directory: server
+
+    # The date and sync logic is pure and needs no database, but `prisma migrate deploy`
+    # against a real Postgres is the only thing that proves a migration actually applies.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: wishkaro
+          POSTGRES_PASSWORD: wishkaro
+          POSTGRES_DB: wishkaro_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U wishkaro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://wishkaro:wishkaro@localhost:5432/wishkaro_test
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Validate the schema
+        run: npx prisma validate
+
+      - name: Apply migrations to a clean database
+        run: npx prisma migrate deploy
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # The image is how the server is deployed, so a Dockerfile that no longer builds is a
+      # broken deploy waiting to happen — worth catching here rather than on deploy day.
+      - name: Build the production image
+        run: docker build -t wishkaro-server:ci ./server

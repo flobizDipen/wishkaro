@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder mark. A real icon is a launch task, not a walking-skeleton task. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30c2.21,0 4,-1.79 4,-4c0,-0.76 -0.21,-1.47 -0.58,-2.08L54,18l-3.42,5.92C50.21,24.53 50,25.24 50,26C50,28.21 51.79,30 54,30zM66,36h-10v-4h-4v4L42,36c-3.31,0 -6,2.69 -6,6v18c0,3.31 2.69,6 6,6h24c3.31,0 6,-2.69 6,-6L72,42C72,38.69 69.31,36 66,36zM68,60c0,1.1 -0.9,2 -2,2L42,62c-1.1,0 -2,-0.9 -2,-2v-6h28V60zM68,50L40,50v-8c0,-1.1 0.9,-2 2,-2h24c1.1,0 2,0.9 2,2V50z" />
+</vector>

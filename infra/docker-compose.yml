@@ -1,0 +1,81 @@
+# WishKaro local stack: Postgres + Redis + the API server.
+#
+#   docker compose -f infra/docker-compose.yml up --build
+#
+# Datastores only (when running the server from source with `npm run start:dev`):
+#
+#   docker compose -f infra/docker-compose.yml up db redis
+
+name: wishkaro
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wishkaro
+      POSTGRES_PASSWORD: wishkaro
+      POSTGRES_DB: wishkaro
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wishkaro -d wishkaro']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Real values come from server/.env, which is gitignored. Everything below
+    # overrides the host-oriented entries in it with container hostnames.
+    env_file:
+      - ../server/.env
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DATABASE_URL: postgresql://wishkaro:wishkaro@db:5432/wishkaro
+      REDIS_URL: redis://redis:6379
+      # There is no host filesystem inside the container, so the service account is
+      # mounted explicitly. On Railway this variable is unset and
+      # FIREBASE_SERVICE_ACCOUNT carries the JSON instead — both paths are supported.
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+      # server/.env carries ALLOW_DEV_LOGIN=true for the curl walkthrough, and the server
+      # refuses to boot with that set while NODE_ENV=production. The container is the
+      # production-shaped path, so it is forced off here rather than left to the env file.
+      ALLOW_DEV_LOGIN: 'false'
+    ports:
+      - '3000:3000'
+    volumes:
+      # Read-only mount of the key that lives OUTSIDE the repo. Override the host path
+      # with FIREBASE_SA_PATH if yours is elsewhere.
+      # Compose does NOT expand `~`, so this uses ${HOME}. Override FIREBASE_SA_PATH if the
+      # key lives elsewhere.
+      - ${FIREBASE_SA_PATH:-${HOME}/.secrets/wishkaro-service-account.json}:/run/secrets/firebase-service-account.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,540 @@
+openapi: 3.1.0
+
+info:
+  title: WishKaro API
+  version: 0.1.0-M0
+  description: |
+    The M0 walking-skeleton surface only. `docs/REQUIREMENTS.md` §9 lists the full v1 API;
+    everything absent here — import, AI, gifts, billing, media — arrives with the milestone
+    that needs it.
+
+    Every endpoint except `/health` and `/v1/auth/*` requires a bearer access token.
+    Errors share one shape: `{ "error": { "code", "message", "details"? } }`.
+
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local development, reached from a device via `adb reverse tcp:3000 tcp:3000`
+
+tags:
+  - name: health
+  - name: auth
+  - name: people
+  - name: events
+  - name: devices
+  - name: reminders
+  - name: sync
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness, including a database round-trip
+      security: []
+      responses:
+        '200':
+          description: Service state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, db, uptimeSeconds]
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  db: { type: string, enum: [up, down] }
+                  uptimeSeconds: { type: integer }
+
+  /v1/auth/google:
+    post:
+      tags: [auth]
+      summary: Exchange a Google ID token for a WishKaro session
+      description: |
+        The ID token is verified server-side against Google's certificates, with the **Web**
+        OAuth client as the expected audience. Nothing the client claims about the user is
+        trusted. First sign-in also creates the owner's own `person` row (FR-AUTH-04).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idToken]
+              properties:
+                idToken: { type: string }
+                timezone:
+                  type: string
+                  description: IANA zone reported by the device, e.g. Asia/Kolkata
+                  example: Asia/Kolkata
+      responses:
+        '200':
+          description: A session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate the refresh token
+      description: |
+        The presented token is revoked and a new one issued in the same transaction, so a
+        token presented twice is always rejected the second time. A replay revokes every
+        session for that user, on the assumption that the token leaked.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: A new token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke a refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '204': { description: Revoked }
+
+  /v1/people:
+    get:
+      tags: [people]
+      summary: List people with their next occurrence
+      responses:
+        '200':
+          description: People
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PersonView' }
+    post:
+      tags: [people]
+      summary: Create a person, optionally with their first birthday
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: Client-generated, so an offline record keeps its identity.
+                displayName: { type: string, minLength: 1, maxLength: 120 }
+                relationToOwner: { type: string, maxLength: 60 }
+                event:
+                  allOf:
+                    - $ref: '#/components/schemas/EventDate'
+                  description: |
+                    `sentiment` is absent on purpose — it is derived from the event type
+                    server-side and never accepted from a client (FR-EVT-01a).
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonView' }
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /v1/people/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [people]
+      summary: One person
+      responses:
+        '200':
+          description: The person
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PersonView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [people]
+      summary: Soft-delete a person and tombstone their events
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/events/upcoming:
+    get:
+      tags: [events]
+      summary: Upcoming events in the owner's timezone
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        - name: to
+          in: query
+          schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+      responses:
+        '200':
+          description: Events, soonest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    eventId: { type: string }
+                    personId: { type: string }
+                    personName: { type: string }
+                    type: { $ref: '#/components/schemas/EventType' }
+                    sentiment: { $ref: '#/components/schemas/Sentiment' }
+                    occursOn: { type: string, format: date }
+                    daysUntil: { type: integer }
+                    turningAge:
+                      type: [integer, 'null']
+                      description: Null when the birth year is unknown — never 0.
+
+  /v1/events:
+    post:
+      tags: [events]
+      summary: Create an event for an existing person
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [personId]
+                  properties:
+                    id: { type: string, format: uuid }
+                    personId: { type: string, format: uuid }
+                - $ref: '#/components/schemas/EventDate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/events/{id}:
+    delete:
+      tags: [events]
+      summary: Soft-delete an event
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/devices:
+    post:
+      tags: [devices]
+      summary: Register an FCM token and the device timezone
+      description: |
+        Keyed on the token, not the user: FCM reassigns a token when a phone changes hands or
+        the app is reinstalled. A timezone that differs from the stored one reschedules every
+        pending reminder (FR-EVT-08).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcmToken, platform]
+              properties:
+                fcmToken: { type: string, minLength: 10 }
+                platform: { type: string, enum: [ANDROID, IOS] }
+                timezone: { type: string, example: Asia/Kolkata }
+      responses:
+        '200':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deviceId: { type: string }
+                  timezone: { type: string }
+                  remindersRescheduled: { type: integer }
+
+  /v1/reminders/test:
+    post:
+      tags: [reminders]
+      summary: Queue a reminder two minutes out (FR-REM-07)
+      description: |
+        The self-test. Its reminder row has a null `event_occurrence_id` by design, so this
+        works before any person or event exists.
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reminderId: { type: string }
+                  scheduledAtUtc: { type: string, format: date-time }
+                  dedupeKey: { type: string }
+                  message: { type: string }
+
+  /v1/sync:
+    get:
+      tags: [sync]
+      summary: Delta pull
+      description: |
+        Returns everything changed since the cursor, tombstones included. The cursor is
+        opaque base64 over a `(updated_at, id)` tuple per entity; people and events advance
+        independently so a page limit on one cannot make the other skip rows.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: A page of changes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [people, events, cursor]
+                properties:
+                  people:
+                    type: array
+                    items: { $ref: '#/components/schemas/SyncPerson' }
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/SyncEvent' }
+                  cursor: { type: string }
+                  hasMore: { type: boolean }
+                  serverTime: { type: string, format: date-time }
+    post:
+      tags: [sync]
+      summary: Delta push — batched upserts and tombstones
+      description: |
+        Last-write-wins on `updated_at`, per record. Idempotent: replaying a batch produces
+        timestamps that are equal rather than newer, so every record comes back as STALE and
+        nothing changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                people:
+                  type: array
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/SyncPerson' }
+                events:
+                  type: array
+                  maxItems: 500
+                  items: { $ref: '#/components/schemas/SyncEvent' }
+      responses:
+        '200':
+          description: What was applied and what was skipped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied:
+                    type: object
+                    properties:
+                      people: { type: integer }
+                      events: { type: integer }
+                  skipped:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        entity: { type: string, enum: [person, event] }
+                        reason:
+                          type: string
+                          enum: [STALE, NOT_OWNED, UNKNOWN_PERSON]
+                  serverTime: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    EventType:
+      type: string
+      description: |
+        The full v1 set. M0 only ever writes BIRTHDAY; the others exist so later milestones
+        add behaviour rather than altering columns.
+      enum:
+        - BIRTHDAY
+        - WEDDING_ANNIVERSARY
+        - ENGAGEMENT_ANNIVERSARY
+        - DEATH_ANNIVERSARY
+        - CUSTOM
+
+    Sentiment:
+      type: string
+      description: Derived from the event type. Never accepted from a client (FR-EVT-01a).
+      enum: [CELEBRATORY, SOLEMN]
+
+    EventDate:
+      type: object
+      required: [day, month]
+      properties:
+        type:
+          allOf: [{ $ref: '#/components/schemas/EventType' }]
+          default: BIRTHDAY
+        day: { type: integer, minimum: 1, maximum: 31 }
+        month: { type: integer, minimum: 1, maximum: 12 }
+        year:
+          type: [integer, 'null']
+          minimum: 1900
+          maximum: 2200
+          description: |
+            Null means the birth year is unknown — a first-class case, not a UI concern
+            (FR-EVT-02). 29 February is accepted with a null year and with a leap year, and
+            rejected for a non-leap year.
+
+    Session:
+      type: object
+      required: [accessToken, refreshToken, expiresInSeconds]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresInSeconds: { type: integer }
+        user:
+          type: object
+          properties:
+            id: { type: string }
+            email: { type: string, format: email }
+            name: { type: [string, 'null'] }
+            photoUrl: { type: [string, 'null'] }
+            timezone: { type: string }
+
+    PersonView:
+      type: object
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        relationToOwner: { type: [string, 'null'] }
+        isSelf: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              type: { $ref: '#/components/schemas/EventType' }
+              sentiment: { $ref: '#/components/schemas/Sentiment' }
+              day: { type: integer }
+              month: { type: integer }
+              year: { type: [integer, 'null'] }
+              nextOccurrenceOn: { type: string, format: date }
+              daysUntil: { type: integer }
+              turningAge: { type: [integer, 'null'] }
+
+    SyncPerson:
+      type: object
+      required: [id, displayName, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        relationToOwner: { type: [string, 'null'] }
+        isSelf: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+        deletedAt:
+          type: [string, 'null']
+          format: date-time
+          description: A tombstone is an upsert with this set.
+
+    SyncEvent:
+      type: object
+      required: [id, personId, day, month, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        personId: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/EventType' }
+        day: { type: integer }
+        month: { type: integer }
+        year: { type: [integer, 'null'] }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: [string, 'null'], format: date-time }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid or expired credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such record
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationFailed:
+      description: The request body failed Zod validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: VALIDATION_FAILED
+              message: Request body failed validation
+              details:
+                - path: event.day
+                  message: day 31 does not exist in month 4
+                  code: custom
