@@ -260,6 +260,112 @@ survive aeroplane mode on a real handset.**
 
 ---
 
+## 5a. The server, proven with curl
+
+Two scripts, checked in, so "proven with curl" survives the terminal they were run in.
+
+```bash
+cd server && npm run start:dev          # needs ALLOW_DEV_LOGIN=true in server/.env
+bash scripts/m1-crud-check.sh           # 56 assertions
+bash scripts/m1-sync-check.sh           # 25 assertions
+U=https://wishkaro-production-0312ab77.up.railway.app bash scripts/m1-sync-check.sh
+```
+
+The CRUD script needs the local Postgres container for four assertions that read
+`reminder.status` directly — the API does not expose it, and "the reminder stopped NOW" is
+precisely the claim a 200 response cannot make. It skips those and passes the rest without it.
+
+What they cover, and why each one is there rather than a unit test:
+
+| Section | The claim it would be embarrassing to get wrong |
+|---|---|
+| 1 | `sentiment`, `isMinor`, `completenessScore`, `milestoneLabel` from a client are **400s naming the field**, not silently stripped |
+| 9 | One death anniversary turns every one of that person's events SOLEMN, strips the wedding's "25th Silver", nulls every `turningAge`, and mutes the birthday |
+| 9 | Un-muting that birthday is the FR-EVT-05 opt-in, and it is still SOLEMN |
+| 9 | Un-marking the person while a death anniversary is live is refused |
+| 10 | A minor gets no suggestions and `POST /traits` returns `MINOR_PROFILING_BLOCKED` |
+| 14 | PENDING → mute → SUPPRESSED → un-mute → PENDING → delete → SUPPRESSED, immediately |
+| sync 4 | The same four derived fields are refused on the sync path too, and a trait claiming `source=INFERRED` is refused |
+| sync 6 | A birthday pushed for an already-deceased person arrives muted, and re-pushing it without `isMuted` leaves it muted |
+| sync 8 | An M0-shaped cursor with no `trait` key still works |
+
+### Two bugs these scripts found
+
+**An impossible override date returned 500.** `PUT /v1/events/:id/occurrences/:year/override`
+with `2026-02-31` reached `assertValidSpec`, which throws a plain `Error`; letting it escape a
+controller turned a user's typo into a server error. Now a 400 naming the date.
+
+**"Disabled by default" was not a default.** `PersonDerivationService` muted birthdays only on
+the TRANSITION to deceased — correct for events that already exist, and what stops an opt-in
+being undone by the next write. But a birthday ADDED to someone already marked deceased
+arrived unmuted. `defaultMutedFor()` is now the creation-time half of the rule, applied at all
+three write paths and deliberately not on update.
+
+---
+
+## 5b. The client, on the handset
+
+### The SQLDelight migration — the one that would crash a real install
+
+```bash
+adb exec-out run-as in.wishkaro.app cat databases/wishkaro.db > before.db
+sqlite3 before.db "PRAGMA user_version;"          # 1 on an M0 install
+
+./gradlew :composeApp:assembleDebug
+adb install -r composeApp/build/outputs/apk/debug/composeApp-debug.apk
+adb shell monkey -p in.wishkaro.app -c android.intent.category.LAUNCHER 1
+
+# The driver migrates LAZILY, on the first query. Give the app a moment to draw the list
+# before pulling the file, or you will read the pre-migration database and think it failed.
+adb exec-out run-as in.wishkaro.app cat databases/wishkaro.db > after.db
+sqlite3 after.db "PRAGMA user_version;"           # 3
+sqlite3 after.db "SELECT display_name FROM person;"
+```
+
+Verified on `4B201JEBF03493`, 2026-11-25: **1 → 2 → 3 across two installs, no crash, both
+people and the birthday intact each time, new columns defaulted.**
+
+`verifyMigrations` is on, and it failed the build the first time: `ALTER TABLE` can only
+append columns while `Person.sq` declared them in the middle, so every ordinal position after
+`pending_sync` disagreed. That is a difference no test would have caught and the device would
+have. The M1 columns now sit at the END of `person` and `event` with a comment saying they
+cannot be moved.
+
+### Tone
+
+`sentiment` is mirrored into SQLite and never derived on the client. A UI that inferred tone
+from the event type gets a remembrance birthday wrong — type `BIRTHDAY`, sentiment `SOLEMN` —
+which is the exact failure FR-EVT-05 names. `Sentiment.from()` falls back to `SOLEMN` for an
+unrecognised value, because saying too little is recoverable and "Happy Birthday!" to someone
+grieving is not.
+
+`ToneTest` enumerates every event type against a banned lexicon and an emoji check rather than
+sampling, so a sixth type fails it until someone writes its solemn copy.
+
+---
+
+## 6a. Derived values repair themselves
+
+Two of them change with no write at all:
+
+- **`is_minor` flips on a person's eighteenth birthday.** Derived only at write time, a child
+  flagged at thirteen stays flagged until somebody happens to edit them, and FR-PPL-09's
+  profiling exclusions stay on for years after they should lift.
+- **`completeness_score` is new in M1**, so every row written before it existed reads 0 until
+  it is next touched — visible in the app as a profile claiming 0% while showing a relation
+  and a birth year.
+
+The materialiser already walks every live event on a schedule, which makes it the only part of
+this system that notices time passing. It re-derives each person it touches. To see it:
+
+```sql
+UPDATE person SET completeness_score = 0, is_minor = true WHERE id = '<id>';
+```
+
+then wait for a pass (or write anything for that user) and read the row back: 25 and false.
+
+---
+
 ## 7. What "it's broken" usually means
 
 | Symptom | Cause |
@@ -269,3 +375,6 @@ survive aeroplane mode on a real handset.**
 | `Invalid environment configuration` at boot | A variable above is missing. The server refuses to start rather than fail at 09:00 |
 | Gradle dies in odd, inconsistent ways | Disk. Check `df -h /System/Volumes/Data` before believing anything else |
 | The phone reaches `127.0.0.1` and times out | `local.properties` still has the debug default, or the APK predates the change |
+| `PRAGMA user_version` still reads the old number after installing | The driver migrates lazily. Open the app, let it draw the list, then pull the file |
+| `verifySqlDelightMigration` fails on ordinal positions | A new column was declared in the middle of a `.sq` table. `ALTER TABLE` can only append — move it to the end |
+| A profile shows 0% with fields plainly filled in | A row written before M1. The next materialiser pass repairs it; §6a |
