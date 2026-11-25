@@ -118,9 +118,23 @@ export class RemindersService {
      *
      * The materialiser already walks every live event on a schedule, which makes it the one
      * place that notices the passage of time at all.
+     *
+     * Queried over PEOPLE, deliberately, and not derived from `events` above — that query is
+     * filtered to `isMuted: false`, so building the set from it skips the two populations the
+     * sweep exists for: the self person created at sign-in, who has no events at all and
+     * whose completeness score would read 0 forever, and a deceased person whose only live
+     * event is a muted remembrance birthday.
      */
-    const touched = new Set(events.map((e) => e.personId));
-    for (const personId of touched) {
+    const people = await this.prisma.person.findMany({
+      where: {
+        deletedAt: null,
+        ...(options.userId ? { userId: options.userId } : {}),
+        user: { deletedAt: null },
+      },
+      select: { id: true },
+    });
+
+    for (const { id: personId } of people) {
       try {
         await this.derivation.recompute(personId, this.prisma, now);
       } catch (cause) {
