@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { AppConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { DerivationModule } from './modules/people/derivation.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
@@ -27,6 +28,7 @@ import { SyncModule } from './modules/sync/sync.module';
       },
     }),
     PrismaModule,
+    DerivationModule,
     FirebaseModule,
     QueueModule,
     AuthModule,

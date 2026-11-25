@@ -1,0 +1,56 @@
+-- Progressive profile enrichment (FR-PPL-04), rendered as chips.
+--
+-- `source` is mirrored from the server and is always USER for anything this app writes.
+-- IMPORT (M3) and INFERRED (M5+) exist so a guess can never be shown as something the user
+-- told us — the column is here now so that distinction is not retrofitted later.
+CREATE TABLE person_trait (
+    id           TEXT    NOT NULL PRIMARY KEY,
+    person_id    TEXT    NOT NULL,
+    kind         TEXT    NOT NULL,
+    value        TEXT    NOT NULL,
+    source       TEXT    NOT NULL DEFAULT 'USER',
+    updated_at   TEXT    NOT NULL,
+    deleted_at   TEXT,
+    pending_sync INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX person_trait_person ON person_trait(person_id);
+CREATE INDEX person_trait_pending_sync ON person_trait(pending_sync);
+
+selectAll:
+SELECT * FROM person_trait WHERE deleted_at IS NULL;
+
+selectForPerson:
+SELECT * FROM person_trait WHERE person_id = ? AND deleted_at IS NULL;
+
+-- Including tombstones, for the same reason as Event.sq.
+selectAllForPerson:
+SELECT * FROM person_trait WHERE person_id = ?;
+
+markRestored:
+UPDATE person_trait SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+selectById:
+SELECT * FROM person_trait WHERE id = ?;
+
+selectPendingSync:
+SELECT * FROM person_trait WHERE pending_sync = 1;
+
+-- No UPSERT anywhere in this schema: it needs SQLite 3.24 (Android 11) and minSdk is 26.
+insertOrReplace:
+INSERT OR REPLACE INTO person_trait(
+    id, person_id, kind, value, source, updated_at, deleted_at, pending_sync
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+markDeleted:
+UPDATE person_trait SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+clearPendingSync:
+UPDATE person_trait SET pending_sync = 0 WHERE id = ?;
+
+-- See person.restampPending: re-assert a local edit the server rejected as STALE.
+restampPending:
+UPDATE person_trait SET updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+deleteAll:
+DELETE FROM person_trait;

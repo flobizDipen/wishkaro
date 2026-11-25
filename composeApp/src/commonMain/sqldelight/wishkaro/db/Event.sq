@@ -1,3 +1,4 @@
+-- Column order is load-bearing; see the note in Person.sq.
 CREATE TABLE event (
     id           TEXT    NOT NULL PRIMARY KEY,
     person_id    TEXT    NOT NULL,
@@ -8,7 +9,17 @@ CREATE TABLE event (
     year         INTEGER,
     updated_at   TEXT    NOT NULL,
     deleted_at   TEXT,
-    pending_sync INTEGER NOT NULL DEFAULT 0
+    pending_sync INTEGER NOT NULL DEFAULT 0,
+    -- ---- added in M1 (schema version 2) ----
+    -- Mirrored from the server, NEVER computed here. The client must be able to pick its
+    -- tone offline, and a UI that guessed sentiment from `type` would get a remembrance
+    -- birthday wrong in exactly the way FR-EVT-05 forbids.
+    sentiment    TEXT    NOT NULL DEFAULT 'CELEBRATORY',
+    -- User-supplied name for a CUSTOM event (FR-EVT-06); null for every other type.
+    label        TEXT,
+    -- Stops reminders without deleting the event. A deceased person's birthday arrives
+    -- muted; un-muting it is the remembrance opt-in (FR-EVT-05).
+    is_muted     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX event_person ON event(person_id);
@@ -23,6 +34,10 @@ SELECT * FROM event WHERE id = ?;
 selectForPerson:
 SELECT * FROM event WHERE person_id = ? AND deleted_at IS NULL;
 
+-- Including tombstones. Restoring a person has to find the rows its own delete hid.
+selectAllForPerson:
+SELECT * FROM event WHERE person_id = ?;
+
 selectPendingSync:
 SELECT * FROM event WHERE pending_sync = 1;
 
@@ -34,11 +49,33 @@ SELECT * FROM event WHERE pending_sync = 1;
 -- it is easier to read anyway.
 
 insertOrReplace:
-INSERT OR REPLACE INTO event(id, person_id, type, day, month, year, updated_at, deleted_at, pending_sync)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO event(
+    id, person_id, type, sentiment, label, is_muted,
+    day, month, year, updated_at, deleted_at, pending_sync
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateEvent:
+UPDATE event SET type = ?, label = ?, day = ?, month = ?, year = ?, updated_at = ?, pending_sync = 1
+WHERE id = ?;
+
+setMuted:
+UPDATE event SET is_muted = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+markDeleted:
+UPDATE event SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+markRestored:
+UPDATE event SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+selectByMonth:
+SELECT * FROM event WHERE month = ? AND deleted_at IS NULL;
 
 clearPendingSync:
 UPDATE event SET pending_sync = 0 WHERE id = ?;
+
+-- See person.restampPending: re-assert a local edit the server rejected as STALE.
+restampPending:
+UPDATE event SET updated_at = ?, pending_sync = 1 WHERE id = ?;
 
 deleteAll:
 DELETE FROM event;

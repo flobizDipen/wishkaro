@@ -1,0 +1,40 @@
+-- Schema version 1 -> 2 (M1: people & events).
+--
+-- Replayed by AndroidSqliteDriver on upgrade. WITHOUT THIS FILE the M1 `.sq` schema compiles
+-- and installs over an M0 database and then throws "no such column: sentiment" on the first
+-- query — a crash on exactly the handset this milestone is verified on.
+--
+-- Purely additive, for the same reason the server migration is: real rows exist in both
+-- places. SQLite can only ADD COLUMN anyway, but the defaults are what make the existing
+-- rows legal rather than merely present.
+--
+-- `sentiment` defaults to CELEBRATORY for existing rows. That is correct for every M0 row
+-- (M0 could only ever create BIRTHDAY events for living people), and the next sync pull
+-- overwrites it from the server for anything that has since changed.
+
+ALTER TABLE person ADD COLUMN photo_key TEXT;
+ALTER TABLE person ADD COLUMN gender TEXT;
+ALTER TABLE person ADD COLUMN phone TEXT;
+ALTER TABLE person ADD COLUMN email TEXT;
+ALTER TABLE person ADD COLUMN notes TEXT;
+ALTER TABLE person ADD COLUMN is_deceased INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE person ADD COLUMN is_minor INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE person ADD COLUMN completeness_score INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE event ADD COLUMN sentiment TEXT NOT NULL DEFAULT 'CELEBRATORY';
+ALTER TABLE event ADD COLUMN label TEXT;
+ALTER TABLE event ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE person_trait (
+    id           TEXT    NOT NULL PRIMARY KEY,
+    person_id    TEXT    NOT NULL,
+    kind         TEXT    NOT NULL,
+    value        TEXT    NOT NULL,
+    source       TEXT    NOT NULL DEFAULT 'USER',
+    updated_at   TEXT    NOT NULL,
+    deleted_at   TEXT,
+    pending_sync INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX person_trait_person ON person_trait(person_id);
+CREATE INDEX person_trait_pending_sync ON person_trait(pending_sync);

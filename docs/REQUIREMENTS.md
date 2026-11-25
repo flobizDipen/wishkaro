@@ -529,7 +529,7 @@ The entire economic thesis rests on the cache-hit rate. Instrument it from day o
 | Area | Requirement |
 |---|---|
 | Offline | Full read access offline. Add/edit offline, queued and synced. Only AI and gifting require network. |
-| Sync | Last-write-wins per field on `updated_at`, soft deletes as tombstones, monotonic cursor. Single-owner data, so conflicts are rare by construction. |
+| Sync | Last-write-wins per **record** on `updated_at`, soft deletes as tombstones, monotonic cursor. Single-owner data, so conflicts are rare by construction. *(Corrected in M1. This row said "per field" from v1 onwards, which the schema cannot express — `person`, `event` and `person_trait` each carry one `updated_at` and no per-field versions. M0 shipped per-record and flagged the gap (`M0_PLAN.md` §2); M1 decided to keep it rather than ship a change log, because for single-owner data edited on one device the two are indistinguishable in practice. `M1_PLAN.md` §2.2.)* |
 | Performance | Cold start to list < 2s on a mid-range device. List scroll 60fps at 1,000 people. |
 | Reliability | Reminder delivery > 98% on the OEM test matrix (G1). |
 | Security | TLS only, certificate pinning on release builds, tokens in EncryptedSharedPreferences / Keychain, R2 objects served via short-lived signed URLs, no PII in logs or analytics. |
@@ -625,7 +625,7 @@ wishkaro/                        (public GitHub repo)
 | M | Name | Definition of done |
 |---|---|---|
 | **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
-| M1 | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync |
+| M1 | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first |
 | M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest |
 | M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |

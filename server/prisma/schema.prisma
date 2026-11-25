@@ -67,6 +67,24 @@ enum DevicePlatform {
   IOS
 }
 
+/// Progressive profile enrichment (FR-PPL-04). Full v1 value set now; M1 collects all four.
+/// Gift suggestions in M8 are only as good as what accumulates here, which is why the table
+/// exists two milestones before the feature that reads it.
+enum TraitKind {
+  HOBBY
+  LIKE
+  DISLIKE
+  BUDGET_BAND
+}
+
+/// Where a trait came from. M1 only ever writes USER; IMPORT is M3 and INFERRED is M5+.
+/// Kept distinct because an inferred trait must never be shown as though the user said it.
+enum TraitSource {
+  USER
+  IMPORT
+  INFERRED
+}
+
 // ---------------------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------------------
@@ -86,6 +104,7 @@ model User {
   deletedAt DateTime? @map("deleted_at")
 
   people        Person[]
+  traits        PersonTrait[]
   events        Event[]
   reminders     Reminder[]
   devices       Device[]
@@ -96,27 +115,82 @@ model User {
 }
 
 model Person {
-  id               String  @id @default(uuid(7))
-  userId           String  @map("user_id")
-  displayName      String  @map("display_name")
-  relationToOwner  String? @map("relation_to_owner")
+  id              String  @id @default(uuid(7))
+  userId          String  @map("user_id")
+  displayName     String  @map("display_name")
+  relationToOwner String? @map("relation_to_owner")
   /// The person record representing the signed-in user themselves (FR-AUTH-04).
-  isSelf           Boolean @default(false) @map("is_self")
+  isSelf          Boolean @default(false) @map("is_self")
+
+  // --- M1: optional profile fields, all progressively collected (FR-PPL-04) ------------
+  /// Reserved for the R2 object key. NOTHING writes this in M1 — uploads are M6. The column
+  /// exists now so the feature is a code change later rather than a migration.
+  photoKey String? @map("photo_key")
+  /// Free text, deliberately not an enum: an enum of genders is a product decision this app
+  /// has no reason to make, and gift logic in M8 reads traits rather than this field.
+  gender   String?
+  phone    String?
+  email    String?
+  notes    String?
+
+  /// Set when a DEATH_ANNIVERSARY is created for this person (FR-EVT-04), and it changes the
+  /// sentiment of EVERY event they own — see sentimentFor() in modules/events/derived.ts.
+  /// Never trusted from a client on an event write; derived there.
+  isDeceased Boolean @default(false) @map("is_deceased")
+
+  /// DERIVED from a known birth year implying age < 18 (FR-PPL-09). Impossible to set from a
+  /// client. Flagged records are excluded from profiling and from the completeness nudge.
+  isMinor Boolean @default(false) @map("is_minor")
+
+  /// DERIVED 0..100 (FR-PPL-05). Weights live in ONE place: COMPLETENESS_WEIGHTS.
+  completenessScore Int @default(0) @map("completeness_score")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @default(now()) @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   events Event[]
+  traits PersonTrait[]
 
   /// Drives the sync cursor: (updatedAt, id) is the monotonic ordering.
   @@index([userId, updatedAt, id])
   @@map("person")
 }
 
+/// Progressive profile enrichment (FR-PPL-04), as chips in the UI.
+///
+/// `updatedAt` and `deletedAt` are not in REQUIREMENTS.md §8's sketch, which has only
+/// `created_at`. Both are required here: traits sync like everything else, and sync needs a
+/// monotonic ordering key and a tombstone. Adding them now is free; retrofitting them would
+/// mean a migration and a second code path.
+model PersonTrait {
+  id       String @id @default(uuid(7))
+  personId String @map("person_id")
+  /// Denormalised from person, exactly as `event.user_id` is: the sync cursor scans by owner
+  /// and ordering, and a join to person for every page would be the one slow query in the
+  /// hot path.
+  userId   String @map("user_id")
+
+  kind   TraitKind
+  value  String
+  source TraitSource @default(USER)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @default(now()) @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Drives the sync cursor for traits, the third entity after person and event.
+  @@index([userId, updatedAt, id])
+  @@index([personId])
+  @@map("person_trait")
+}
+
 model Event {
-  id       String @map("id") @id @default(uuid(7))
+  id       String @id @default(uuid(7)) @map("id")
   personId String @map("person_id")
   userId   String @map("user_id")
 
@@ -130,6 +204,15 @@ model Event {
   year  Int?
 
   calendarSystem CalendarSystem @default(GREGORIAN) @map("calendar_system")
+
+  /// User-supplied name for a CUSTOM event (FR-EVT-06). Null for every other type — a
+  /// BIRTHDAY does not need a label and must not be given one.
+  label String?
+
+  /// Stops reminders without deleting the event. Distinct from deletedAt on purpose: a muted
+  /// event still appears on the person, still counts towards their profile, and can be
+  /// un-muted; a deleted one cannot.
+  isMuted Boolean @default(false) @map("is_muted")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @default(now()) @map("updated_at")
@@ -161,6 +244,12 @@ model EventOccurrence {
   occursOn     DateTime  @map("occurs_on") @db.Date
   /// Moves a single year's occurrence without touching the base event (FR-EVT-10).
   overrideDate DateTime? @map("override_date") @db.Date
+
+  /// DERIVED (FR-EVT-03). Materialised here rather than recomputed per push, and present in
+  /// REQUIREMENTS.md §8 — M0 omitted it because nothing could produce one yet. For a
+  /// DEATH_ANNIVERSARY this is a plain year count ("12 years") and NEVER a celebratory
+  /// milestone name: no Silver, no Golden.
+  milestoneLabel String? @map("milestone_label")
 
   computedAt DateTime @default(now()) @map("computed_at")
 

@@ -1,6 +1,7 @@
 package `in`.wishkaro.app.data.remote
 
 import `in`.wishkaro.app.data.TokenStore
+import `in`.wishkaro.app.data.repository.SyncApi
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngine
@@ -38,7 +39,7 @@ class WishKaroApi(
     private val tokens: TokenStore,
     engine: HttpClientEngine? = null,
     private val onSessionExpired: suspend () -> Unit = {},
-) {
+) : SyncApi {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -87,7 +88,7 @@ class WishKaroApi(
             client.post("$baseUrl/v1/reminders/test") { header("Authorization", "Bearer $token") }
         }.decode()
 
-    suspend fun syncPull(cursor: String?): SyncPullResponse =
+    override suspend fun syncPull(cursor: String?): SyncPullResponse =
         authed { token ->
             client.get("$baseUrl/v1/sync") {
                 header("Authorization", "Bearer $token")
@@ -95,7 +96,7 @@ class WishKaroApi(
             }
         }.decode()
 
-    suspend fun syncPush(body: SyncPushRequest): SyncPushResponse =
+    override suspend fun syncPush(body: SyncPushRequest): SyncPushResponse =
         authed { token ->
             client.post("$baseUrl/v1/sync") {
                 header("Authorization", "Bearer $token")

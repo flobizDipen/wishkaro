@@ -1,6 +1,8 @@
 package `in`.wishkaro.app.ui.people
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,11 +13,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,14 +33,29 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.PersonCard
+import `in`.wishkaro.app.domain.Sentiment
+import `in`.wishkaro.app.domain.toneFor
+import `in`.wishkaro.app.ui.PeopleFilter
+
+private val MONTHS = listOf(
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PeopleListScreen(
     cards: List<PersonCard>,
+    filter: PeopleFilter,
+    knownRelations: List<String>,
     focusedPersonId: String?,
     busy: Boolean,
+    onOpenPerson: (String) -> Unit,
     onAddPerson: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onRelationFilter: (String?) -> Unit,
+    onMonthFilter: (Int?) -> Unit,
+    onClearFilter: () -> Unit,
+    onOpenDeleted: () -> Unit,
     onRefresh: () -> Unit,
     onTestReminder: () -> Unit,
     onSignOut: () -> Unit,
@@ -57,24 +77,75 @@ fun PeopleListScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // FR-REM-07. In M0 it lives on the list screen because there is no Settings yet.
-            TextButton(
-                onClick = onTestReminder,
-                enabled = !busy,
-                modifier = Modifier.padding(horizontal = 16.dp),
+            // ---- search and filter (FR-PPL-10) ----
+            OutlinedTextField(
+                value = filter.query,
+                onValueChange = onQueryChange,
+                label = { Text("Search by name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Send me a test reminder in 2 minutes")
+                // Only relations actually in use — a chip row of seventeen options the user
+                // has never applied is a worse filter than none.
+                knownRelations.forEach { relation ->
+                    FilterChip(
+                        selected = filter.relation == relation,
+                        onClick = { onRelationFilter(if (filter.relation == relation) null else relation) },
+                        label = { Text(relation) },
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MONTHS.forEachIndexed { index, name ->
+                    val month = index + 1
+                    FilterChip(
+                        selected = filter.month == month,
+                        onClick = { onMonthFilter(if (filter.month == month) null else month) },
+                        label = { Text(name) },
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (filter.isActive) {
+                    TextButton(onClick = onClearFilter) { Text("Clear filters") }
+                } else {
+                    // FR-REM-07. Still on the list screen because there is no Settings yet.
+                    TextButton(onClick = onTestReminder, enabled = !busy) {
+                        Text("Send me a test reminder in 2 minutes")
+                    }
+                }
+                TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
             }
 
             if (cards.isEmpty()) {
-                EmptyState(modifier = Modifier.fillMaxSize())
+                EmptyState(filtered = filter.isActive, modifier = Modifier.fillMaxSize())
             } else {
                 LazyColumn(
                     contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 96.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(cards, key = { it.person.id }) { card ->
-                        PersonRow(card = card, highlighted = card.person.id == focusedPersonId)
+                        PersonRow(
+                            card = card,
+                            highlighted = card.person.id == focusedPersonId,
+                            onClick = { onOpenPerson(card.person.id) },
+                        )
                     }
                 }
             }
@@ -83,14 +154,23 @@ fun PeopleListScreen(
 }
 
 @Composable
-private fun PersonRow(card: PersonCard, highlighted: Boolean) {
-    val event = card.person.events.firstOrNull()
+private fun PersonRow(card: PersonCard, highlighted: Boolean, onClick: () -> Unit) {
+    val person = card.person
+    val event = card.nextEvent
+    // Tone comes from the person, never from the event type: a deceased person's birthday is
+    // a SOLEMN event whose type is BIRTHDAY (FR-EVT-05).
+    val tone = toneFor(person)
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = if (highlighted) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-        } else {
-            CardDefaults.cardColors()
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = when {
+            highlighted -> CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            )
+            person.isSolemn -> CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            else -> CardDefaults.cardColors()
         },
     ) {
         Row(
@@ -100,37 +180,73 @@ private fun PersonRow(card: PersonCard, highlighted: Boolean) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    card.person.displayName,
+                    person.displayName,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     buildString {
-                        append(card.person.relationToOwner ?: "—")
+                        append(person.relationToOwner ?: "—")
                         if (event != null) {
                             append(" · ")
+                            append(event.title)
+                            append(" ")
                             append(BirthdayMath.formatDayMonth(event.date.day, event.date.month))
                         }
-                        // No age at all when the birth year is unknown (FR-EVT-02).
-                        card.turningAge?.let { append(" · turning $it") }
+                        // No age when the year is unknown, and none at all for someone who
+                        // has died — the solemn string set returns null for both.
+                        tone.years(card.turningAge, event?.type ?: return@buildString)?.let {
+                            append(" · ")
+                            append(it)
+                        }
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (person.events.size > 1) {
+                    Text(
+                        "${person.events.size} dates",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
-            Text(
-                card.countdown ?: "no date",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    card.countdown?.let(tone::countdown) ?: "no date",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (person.isSolemn) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+                if (event?.isMuted == true) {
+                    Text(
+                        tone.reminderToggle(false),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                if (event?.sentiment == Sentiment.SOLEMN && !person.isSolemn) {
+                    // Belt and braces: a SOLEMN event on a person the client thinks is alive
+                    // means the local mirror is mid-sync. Show the quiet label, not the loud one.
+                    Text("quiet", style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
-    Box(modifier = modifier.background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+private fun EmptyState(filtered: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
-            "Nobody here yet.\nAdd the first person whose birthday you keep forgetting.",
+            if (filtered) {
+                "Nobody matches that."
+            } else {
+                "Nobody here yet.\nAdd the first person whose birthday you keep forgetting."
+            },
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.padding(32.dp),

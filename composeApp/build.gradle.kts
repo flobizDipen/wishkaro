@@ -15,21 +15,42 @@ plugins {
 
 /**
  * The API base URL is a build-config field, never a literal in the source (engineering rules
- * in docs/BUILD_PROMPT_M0.md). Override it in `local.properties`, which is gitignored:
+ * in docs/BUILD_PROMPT_M0.md), and it differs per build type (docs/M1_PLAN.md §2.4):
  *
- *     wishkaro.apiBaseUrl=http://192.168.1.20:3000
+ *   debug   -> a server on this machine, reached through `adb reverse tcp:3000 tcp:3000`
+ *   release -> the deployed server, https, no cleartext exemption
  *
- * The default assumes `adb reverse tcp:3000 tcp:3000`, which points the phone's own
- * 127.0.0.1:3000 at the server running on this machine. See docs/M0_VERIFY.md.
+ * Both are overridable from `local.properties`, which is gitignored:
+ *
+ *     wishkaro.apiBaseUrl=https://wishkaro-production-0312ab77.up.railway.app
+ *     wishkaro.releaseApiBaseUrl=https://api.example.com
+ *
+ * Pointing the DEBUG build at the deployed https URL is how M1's task zero is proved: the
+ * phone talks to Railway over mobile data with no `adb reverse` and no port forward, while
+ * still being signed with the debug keystore whose SHA-1 Google Sign-In is registered
+ * against. See docs/M1_VERIFY.md.
  */
-val apiBaseUrl: String = run {
-    val local = rootProject.file("local.properties")
-    val fromLocal = if (local.exists()) {
-        Properties().apply { local.inputStream().use(::load) }.getProperty("wishkaro.apiBaseUrl")
-    } else {
-        null
-    }
-    fromLocal ?: "http://127.0.0.1:3000"
+private val localProperties: Properties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+
+val debugApiBaseUrl: String =
+    localProperties.getProperty("wishkaro.apiBaseUrl") ?: "http://127.0.0.1:3000"
+
+val releaseApiBaseUrl: String =
+    localProperties.getProperty("wishkaro.releaseApiBaseUrl")
+        ?: "https://wishkaro-production-0312ab77.up.railway.app"
+
+/**
+ * REQUIREMENTS.md §11 requires TLS everywhere, and the cleartext exemption in
+ * `src/debug/res/xml/network_security_config.xml` is scoped to the debug manifest so it
+ * cannot reach a release build. A plaintext release URL would therefore produce an app that
+ * compiles, installs, and fails every request at runtime — caught here instead.
+ */
+require(releaseApiBaseUrl.startsWith("https://")) {
+    "wishkaro.releaseApiBaseUrl must be https (got: $releaseApiBaseUrl). Release builds have " +
+        "no cleartext exemption."
 }
 
 kotlin {
@@ -132,13 +153,17 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+            buildConfigField("String", "API_BASE_URL", "\"$debugApiBaseUrl\"")
             isMinifyEnabled = false
         }
         release {
-            // M0 has no release signing config yet; a release build needs its own OAuth
-            // client registered against the release SHA-1 before Google Sign-In works.
-            buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+            // Still no release signing config: a release build needs its own OAuth client
+            // registered against the release keystore's SHA-1 before Google Sign-In works,
+            // and that keystore is a secret that must never reach this public repo. Deferred
+            // to the milestone that first puts a build in front of a tester — docs/M1_PLAN.md
+            // §2.4. The base URL is wired correctly regardless, so the only thing missing is
+            // the signing identity.
+            buildConfigField("String", "API_BASE_URL", "\"$releaseApiBaseUrl\"")
             isMinifyEnabled = false
         }
     }
@@ -160,6 +185,23 @@ sqldelight {
             // code would need backticks the generator does not always emit. The app id and
             // the Android namespace are unaffected — this names generated classes only.
             packageName.set("wishkaro.db")
+
+            /**
+             * M1 adds columns to `person` and `event` and a whole `person_trait` table, and
+             * there are real installs out there — the handset M0 was proved on among them.
+             *
+             * `AndroidSqliteDriver` replays the `.sqm` files on upgrade. Without one, the new
+             * `.sq` schema compiles and installs happily and then throws
+             * "no such column" on the first query against an existing database. That is a
+             * crash on exactly the device this milestone is meant to be verified on.
+             *
+             * `schemaOutputDirectory` holds the snapshot of each released schema;
+             * `verifyMigrations` makes the BUILD fail if applying the migrations to that
+             * snapshot does not reproduce the current `.sq` files. So the next person to add
+             * a column gets a build error rather than a field report.
+             */
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+            verifyMigrations.set(true)
         }
     }
 }
