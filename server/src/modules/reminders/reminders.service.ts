@@ -11,9 +11,11 @@ import {
   shiftCivil,
   yearsAt,
 } from '../../common/date/occurrence';
-import { buildReminderCopy, buildTestCopy } from './reminder-copy';
-import { dedupeKeyFor, testDedupeKey } from './dedupe-key';
+import { buildDigestCopy, buildReminderCopy, buildTestCopy } from './reminder-copy';
+import { dedupeKeyFor, digestDedupeKey, testDedupeKey } from './dedupe-key';
 import { LADDER_ORDER, OFFSET_DAYS, ladderFor, reminderHourFor } from './ladder';
+import { applyQuietHours, localDateKey, type QuietWindow } from './quiet-hours';
+import { DateTime } from 'luxon';
 import { milestoneLabelFor } from '../events/derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 
@@ -101,16 +103,29 @@ export class RemindersService {
             ladderD7: true,
             ladderD1: true,
             ladderD0: true,
+            quietHoursStart: true,
+            quietHoursEnd: true,
+            digestEnabled: true,
+            digestHour: true,
           },
         },
         person: { select: { displayName: true, isDeceased: true, reminderHourOverride: true } },
       },
     });
 
+    /**
+     * Which local days each user has something to say on, collected as the events are walked.
+     *
+     * Built from the OCCURRENCES rather than from the reminder rows, because when digest mode
+     * is on the per-event rows are suppressed — so reading the digest's contents back off them
+     * would work on the first tick and find nothing on the second.
+     */
+    const digestDays = new Map<string, Set<string>>();
+
     for (const event of events) {
       summary.eventsConsidered += 1;
       try {
-        await this.materialiseOne(event, now, summary);
+        await this.materialiseOne(event, now, summary, digestDays);
       } catch (cause) {
         // One bad row must not stop the scheduler for every other user.
         this.logger.error(
@@ -118,6 +133,11 @@ export class RemindersService {
         );
       }
     }
+
+    // The digest (FR-REM-08). Runs after every event so the day's contents are known, and
+    // before the people sweep because that sweep is about derived profile values and has
+    // nothing to do with scheduling.
+    await this.materialiseDigests(options.userId, digestDays, now, summary);
 
     /**
      * Re-derive every person this pass touched.
@@ -174,6 +194,10 @@ export class RemindersService {
             ladderD7: true;
             ladderD1: true;
             ladderD0: true;
+            quietHoursStart: true;
+            quietHoursEnd: true;
+            digestEnabled: true;
+            digestHour: true;
           };
         };
         person: {
@@ -183,6 +207,7 @@ export class RemindersService {
     }>,
     now: Date,
     summary: MaterialiseSummary,
+    digestDays: Map<string, Set<string>>,
   ): Promise<void> {
     const zone = event.user.timezone;
     const occ = nextOccurrence({ day: event.day, month: event.month, year: event.year }, zone, now);
@@ -220,7 +245,26 @@ export class RemindersService {
     const wanted = ladderFor(event.sentiment, event.user);
 
     for (const offset of wanted) {
-      await this.upsertRung(event, occurrence.id, occ.occurrenceYear, effective, offset, hour, zone, now, summary);
+      const fireAt = await this.upsertRung(
+        event,
+        occurrence.id,
+        occ.occurrenceYear,
+        effective,
+        offset,
+        hour,
+        zone,
+        now,
+        summary,
+        event.user,
+        event.user.digestEnabled,
+      );
+      // Record the day even when the rung itself is suppressed by digest mode — the digest
+      // is precisely the thing that will speak for it.
+      if (fireAt && fireAt.getTime() >= now.getTime() - LATE_GRACE_MS) {
+        const days = digestDays.get(event.userId) ?? new Set<string>();
+        days.add(localDateKey(fireAt, zone));
+        digestDays.set(event.userId, days);
+      }
     }
 
     // Reconcile the other way: a rung the user has just switched off — or D7 on an event that
@@ -240,7 +284,10 @@ export class RemindersService {
     }
   }
 
-  /** Creates or moves one rung of the ladder. */
+  /**
+   * Creates or moves one rung of the ladder. Returns the instant it will fire, or null if
+   * there is no live row for it.
+   */
   private async upsertRung(
     event: { id: string; userId: string },
     occurrenceId: string,
@@ -251,13 +298,26 @@ export class RemindersService {
     zone: string,
     now: Date,
     summary: MaterialiseSummary,
-  ): Promise<void> {
+    quiet: QuietWindow = { quietHoursStart: null, quietHoursEnd: null },
+    digestEnabled = false,
+  ): Promise<Date | null> {
     // Calendar arithmetic on the DATE, then the hour in the owner's zone — not "the D0
     // instant minus seven days", which drifts by an hour across a DST boundary and would
     // deliver a 09:00 reminder at 08:00 twice a year.
     const fireOn = shiftCivil(effective, -OFFSET_DAYS[offset]);
-    const scheduledAtUtc = reminderInstantUtc(fireOn, hour, zone);
+    // Quiet hours are applied here, once, so `scheduled_at_utc` is already the deferred
+    // instant and BOTH delivery paths inherit the deferral from one implementation. The
+    // local alarm is the path that fires when the server cannot reach the phone, and a
+    // fallback that wakes someone at 3am is worse than no fallback at all.
+    const scheduledAtUtc = applyQuietHours(reminderInstantUtc(fireOn, hour, zone), zone, quiet);
     const tooLate = scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS;
+
+    // In digest mode the rung still exists but says nothing: the day's digest speaks for it
+    // (FR-REM-08, and docs/M2_PLAN.md §2.1 — the digest replaces the WHOLE ladder, not just
+    // morning-of). Kept as a suppressed row rather than deleted so that turning digest off
+    // brings the ladder straight back, and flagged here rather than suppressed afterwards so
+    // the revive branch below does not fight the digest pass every ten minutes.
+    const wantSuppressed = tooLate || digestEnabled;
     const dedupeKey = dedupeKeyFor(event.id, occurrenceYear, offset);
 
     const existing = await this.prisma.reminder.findUnique({ where: { dedupeKey } });
@@ -273,13 +333,13 @@ export class RemindersService {
           // A D7 rung for a birthday three days away is already in the past. Recorded as
           // SUPPRESSED rather than fired late: "buy a present, you have a week" is worse
           // than useless when the day is tomorrow.
-          status: tooLate ? 'SUPPRESSED' : 'PENDING',
+          status: wantSuppressed ? 'SUPPRESSED' : 'PENDING',
           dedupeKey,
         },
       });
-      if (tooLate) summary.remindersSuppressed += 1;
+      if (wantSuppressed) summary.remindersSuppressed += 1;
       else summary.remindersCreated += 1;
-      return;
+      return scheduledAtUtc;
     }
 
     // A rung the user switched off and has now switched back on. Suppression has to be
@@ -288,13 +348,23 @@ export class RemindersService {
     //
     // `sentAt: null` is the guard that keeps it honest — a reminder that actually went out
     // and was later suppressed must never be resurrected and sent a second time.
-    if (existing.status === 'SUPPRESSED' && !tooLate && existing.sentAt === null) {
+    if (existing.status === 'SUPPRESSED' && !wantSuppressed && existing.sentAt === null) {
       await this.prisma.reminder.update({
         where: { id: existing.id },
         data: { scheduledAtUtc, status: 'PENDING' },
       });
       summary.remindersCreated += 1;
-      return;
+      return scheduledAtUtc;
+    }
+
+    // Digest just went on, or the rung's moment has passed. Either way it stops.
+    if (existing.status === 'PENDING' && wantSuppressed) {
+      await this.prisma.reminder.update({
+        where: { id: existing.id },
+        data: { scheduledAtUtc, status: 'SUPPRESSED' },
+      });
+      summary.remindersSuppressed += 1;
+      return scheduledAtUtc;
     }
 
     // Only a reminder that has not gone out yet can move.
@@ -304,7 +374,132 @@ export class RemindersService {
     ) {
       await this.prisma.reminder.update({
         where: { id: existing.id },
-        data: { scheduledAtUtc, status: tooLate ? 'SUPPRESSED' : 'PENDING' },
+        data: { scheduledAtUtc, status: 'PENDING' },
+      });
+      summary.remindersRescheduled += 1;
+    }
+    return scheduledAtUtc;
+  }
+
+  /**
+   * One digest row per user per local day that has anything to say (FR-REM-08).
+   *
+   * Digest mode replaces the WHOLE ladder, not just morning-of — docs/M2_PLAN.md §2.1. A user
+   * who turns on a digest is asking for one notification a day, and leaving D7 and D1 firing
+   * per-event does not give them that. So the rungs are suppressed by `upsertRung` and this
+   * creates one row per day in their place; the row's CONTENT is built at send time from
+   * whatever is due that day, so nothing has to be stored and nothing can go stale.
+   *
+   * Keyed `digest:${userId}:${localDate}`, which makes "exactly one digest per day" a
+   * UNIQUE constraint rather than a hope — the same trick as the ladder's own keys.
+   *
+   * Reconciles in both directions: turning digest off suppresses the digest rows, and
+   * `upsertRung` brings the ladder back on the same pass.
+   */
+  private async materialiseDigests(
+    userId: string | undefined,
+    digestDays: Map<string, Set<string>>,
+    now: Date,
+    summary: MaterialiseSummary,
+  ): Promise<void> {
+    const users = await this.prisma.user.findMany({
+      where: { deletedAt: null, ...(userId ? { id: userId } : {}) },
+      select: {
+        id: true,
+        timezone: true,
+        digestEnabled: true,
+        digestHour: true,
+        quietHoursStart: true,
+        quietHoursEnd: true,
+      },
+    });
+
+    for (const user of users) {
+      if (!user.digestEnabled) {
+        // Digest just went off. Stop the digest rows; upsertRung has already restored the
+        // ladder on this same pass, so the user never has a tick with neither.
+        const stopped = await this.prisma.reminder.updateMany({
+          where: { userId: user.id, offset: 'DIGEST', status: 'PENDING' },
+          data: { status: 'SUPPRESSED' },
+        });
+        summary.remindersSuppressed += stopped.count;
+        continue;
+      }
+
+      for (const localDate of digestDays.get(user.id) ?? []) {
+        try {
+          await this.upsertDigest(user, localDate, now, summary);
+        } catch (cause) {
+          this.logger.error(
+            `Failed to materialise the ${localDate} digest for ${user.id}: ` +
+              (cause instanceof Error ? cause.message : String(cause)),
+          );
+        }
+      }
+    }
+  }
+
+  private async upsertDigest(
+    user: {
+      id: string;
+      timezone: string;
+      digestHour: number;
+      quietHoursStart: number | null;
+      quietHoursEnd: number | null;
+    },
+    localDate: string,
+    now: Date,
+    summary: MaterialiseSummary,
+  ): Promise<void> {
+    const [year, month, day] = localDate.split('-').map(Number);
+    if (!year || !month || !day) return;
+
+    // Quiet hours apply to the digest exactly as they do to a rung. A digest hour of 07:00
+    // under a 22:00–07:00 window is outside it and does not move; one of 06:00 does.
+    const scheduledAtUtc = applyQuietHours(
+      reminderInstantUtc({ year, month, day }, user.digestHour, user.timezone),
+      user.timezone,
+      user,
+    );
+    if (scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS) return;
+
+    const dedupeKey = digestDedupeKey(user.id, localDate);
+    const existing = await this.prisma.reminder.findUnique({ where: { dedupeKey } });
+
+    if (!existing) {
+      await this.prisma.reminder.create({
+        data: {
+          // No occurrence: a digest belongs to a user and a day, not to one event. The
+          // column has been nullable since M0 for the self-test, which has the same shape.
+          eventOccurrenceId: null,
+          userId: user.id,
+          offset: 'DIGEST',
+          scheduledAtUtc,
+          channel: 'FCM',
+          status: 'PENDING',
+          dedupeKey,
+        },
+      });
+      summary.remindersCreated += 1;
+      return;
+    }
+
+    if (existing.status === 'SUPPRESSED' && existing.sentAt === null) {
+      await this.prisma.reminder.update({
+        where: { id: existing.id },
+        data: { scheduledAtUtc, status: 'PENDING' },
+      });
+      summary.remindersCreated += 1;
+      return;
+    }
+
+    if (
+      existing.status === 'PENDING' &&
+      existing.scheduledAtUtc.getTime() !== scheduledAtUtc.getTime()
+    ) {
+      await this.prisma.reminder.update({
+        where: { id: existing.id },
+        data: { scheduledAtUtc },
       });
       summary.remindersRescheduled += 1;
     }
@@ -641,7 +836,10 @@ export class RemindersService {
       return { delivered: false, tokensRemoved: 0 };
     }
 
-    const data = this.buildPayload(reminder);
+    const data =
+      reminder.offset === 'DIGEST'
+        ? await this.buildDigestPayload(reminder)
+        : this.buildPayload(reminder);
     const results = await this.firebase.sendData(tokens, data);
 
     const dead = results.filter((r) => r.unregistered).map((r) => r.token);
@@ -655,6 +853,77 @@ export class RemindersService {
     }
 
     return { delivered: results.some((r) => r.success), tokensRemoved: dead.length };
+  }
+
+  /**
+   * The day's digest, assembled at SEND time from whatever is due (FR-REM-08).
+   *
+   * Nothing about the contents is stored on the digest row. The day's events can change
+   * between materialisation and 09:00 — a person deleted, an event muted, a date edited —
+   * and a list frozen at materialisation time would announce a birthday the user has since
+   * removed. Reading it fresh costs one query and cannot go stale.
+   *
+   * The rows it reads are SUPPRESSED, because that is what digest mode does to the ladder.
+   * Their schedule is still the truth about WHEN each rung would have fired, which is what
+   * decides whether an item is today's, tomorrow's or next week's.
+   */
+  private async buildDigestPayload(
+    reminder: Prisma.ReminderGetPayload<{
+      include: {
+        eventOccurrence: { include: { event: { include: { person: true } } } };
+        user: { include: { devices: true } };
+      };
+    }>,
+  ): Promise<Record<string, string>> {
+    const zone = reminder.user.timezone;
+    const localDate = localDateKey(reminder.scheduledAtUtc, zone);
+    const { start, end } = localDayBounds(localDate, zone);
+
+    const rungs = await this.prisma.reminder.findMany({
+      where: {
+        userId: reminder.userId,
+        offset: { in: ['D7', 'D1', 'D0'] },
+        scheduledAtUtc: { gte: start, lt: end },
+        eventOccurrence: {
+          event: { deletedAt: null, isMuted: false, person: { deletedAt: null } },
+        },
+      },
+      include: { eventOccurrence: { include: { event: { include: { person: true } } } } },
+      orderBy: { scheduledAtUtc: 'asc' },
+    });
+
+    const items = rungs
+      .filter((r) => r.eventOccurrence !== null)
+      // The third place the ladder has to be consulted, and the least obvious.
+      //
+      // These rows are read by schedule, not by status, because digest mode suppresses them
+      // all — so a rung the ladder no longer wants is indistinguishable from one it does. A
+      // stale D7 row on an event that has since become SOLEMN (the person was marked
+      // deceased after it was created) would otherwise reappear as a "in 7 days" line in the
+      // digest: the T-7 gifting nudge FR-REM-11 forbids, smuggled in as a list item.
+      .filter((r) =>
+        (ladderFor(r.eventOccurrence!.event.sentiment, reminder.user) as ReminderOffset[]).includes(
+          r.offset,
+        ),
+      )
+      .map((r) => ({
+        personName: r.eventOccurrence!.event.person.displayName,
+        eventType: r.eventOccurrence!.event.type,
+        sentiment: r.eventOccurrence!.event.sentiment,
+        offset: r.offset,
+      }));
+
+    const copy = buildDigestCopy(items);
+    return {
+      dedupeKey: reminder.dedupeKey,
+      reminderId: reminder.id,
+      offset: 'DIGEST',
+      type: 'DIGEST',
+      title: copy.title,
+      body: copy.body,
+      itemCount: String(items.length),
+      deepLink: 'wishkaro://home',
+    };
   }
 
   private buildPayload(
@@ -692,6 +961,9 @@ export class RemindersService {
         { day: event.day, month: event.month, year: event.year },
         occurrence.occurrenceYear,
       ),
+      // The rung changes the tense, never the register — buildReminderCopy picks the SOLEMN
+      // string set before it looks at this.
+      offset: reminder.offset,
     });
 
     return {
@@ -708,4 +980,13 @@ export class RemindersService {
       deepLink: `wishkaro://person/${event.personId}`,
     };
   }
+}
+
+/** The UTC half-open interval covering one of the user's calendar days. */
+function localDayBounds(localDate: string, zone: string): { start: Date; end: Date } {
+  const startLocal = DateTime.fromISO(localDate, { zone }).startOf('day');
+  return {
+    start: startLocal.toUTC().toJSDate(),
+    end: startLocal.plus({ days: 1 }).toUTC().toJSDate(),
+  };
 }

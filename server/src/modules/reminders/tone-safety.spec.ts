@@ -1,6 +1,6 @@
-import type { EventType } from '@prisma/client';
+import type { EventType, ReminderOffset } from '@prisma/client';
 import { sentimentFor } from '../events/derived';
-import { buildReminderCopy } from './reminder-copy';
+import { buildDigestCopy, buildReminderCopy } from './reminder-copy';
 
 /**
  * REQUIREMENTS.md §11 makes this a correctness requirement, not a content preference:
@@ -52,27 +52,37 @@ function everyCopyInput(): Array<{
   for (const eventType of ALL_TYPES) {
     for (const personIsDeceased of [false, true]) {
       for (const years of [null, 0, 1, 12, 25, 50, 99]) {
-        cases.push({
-          label: `${eventType} deceased=${personIsDeceased} years=${String(years)}`,
-          input: {
-            personName: 'Ravi',
-            eventType,
-            sentiment: sentimentFor(eventType, personIsDeceased),
-            years,
-          },
-        });
+        // M2 widens the cross-product by the ladder. D7 is unreachable for a SOLEMN event
+        // because ladderFor() never creates the rung (FR-REM-11) — it is enumerated here
+        // anyway, so the copy layer's safety does not depend on the scheduler's.
+        for (const offset of ALL_OFFSETS) {
+          cases.push({
+            label: `${eventType} deceased=${personIsDeceased} years=${String(years)} ${offset}`,
+            input: {
+              personName: 'Ravi',
+              eventType,
+              sentiment: sentimentFor(eventType, personIsDeceased),
+              years,
+              offset,
+            },
+          });
+        }
       }
     }
   }
   return cases;
 }
 
+const ALL_OFFSETS: ReminderOffset[] = ['D7', 'D1', 'D0'];
+
 describe('tone safety', () => {
   const all = everyCopyInput();
 
   it('covers every event type against both living and deceased people', () => {
-    // 5 types x 2 x 7 year values. Guards against the generator silently shrinking.
-    expect(all).toHaveLength(70);
+    // 5 types x 2 deceased x 7 year values x 3 ladder rungs. Guards against the generator
+    // silently shrinking — M2 multiplied it by the ladder, and a future rung must widen it
+    // again rather than quietly narrowing the property being proved.
+    expect(all).toHaveLength(210);
     expect(all.filter((c) => c.input.sentiment === 'SOLEMN')).not.toHaveLength(0);
   });
 
@@ -146,5 +156,64 @@ describe('tone safety', () => {
         expect(`${copy.title} ${copy.body}`).not.toMatch(/\d/);
       }
     }
+  });
+});
+
+/**
+ * The digest puts a death anniversary and a birthday on neighbouring lines of ONE
+ * notification (FR-REM-08). There is no per-item register to branch on, so the only safe
+ * answer is a list with no register at all — and that has to be asserted, not assumed.
+ */
+describe('tone safety in the digest (FR-REM-08 x FR-REM-11)', () => {
+  const mixed = [
+    {
+      personName: 'Ravi',
+      eventType: 'BIRTHDAY' as EventType,
+      sentiment: sentimentFor('BIRTHDAY', false),
+      offset: 'D0' as ReminderOffset,
+    },
+    {
+      personName: 'Aai',
+      eventType: 'DEATH_ANNIVERSARY' as EventType,
+      sentiment: sentimentFor('DEATH_ANNIVERSARY', true),
+      offset: 'D0' as ReminderOffset,
+    },
+  ];
+
+  it('never uses celebratory language, even for the celebratory item', () => {
+    const copy = buildDigestCopy(mixed);
+    const text = `${copy.title}\n${copy.body}`.toLowerCase();
+    for (const banned of BANNED_IN_SOLEMN) {
+      expect(text).not.toContain(banned);
+    }
+  });
+
+  it('carries no emoji at all', () => {
+    const copy = buildDigestCopy(mixed);
+    expect(ANY_EMOJI.test(copy.title)).toBe(false);
+    expect(ANY_EMOJI.test(copy.body)).toBe(false);
+  });
+
+  it('calls a death anniversary a remembrance, not an anniversary to mark', () => {
+    const copy = buildDigestCopy([mixed[1]!]);
+    expect(copy.body).toContain('Aai (remembrance)');
+  });
+
+  it('groups the day by rung, furthest out last', () => {
+    const copy = buildDigestCopy([
+      { ...mixed[0]!, offset: 'D7' },
+      { ...mixed[0]!, personName: 'Sita', offset: 'D1' },
+      { ...mixed[1]! },
+    ]);
+    expect(copy.body.split('\n')).toEqual([
+      'Today: Aai (remembrance)',
+      'Tomorrow: Sita (birthday)',
+      'In 7 days: Ravi (birthday)',
+    ]);
+    expect(copy.title).toBe('3 dates coming up');
+  });
+
+  it('counts one date as one', () => {
+    expect(buildDigestCopy([mixed[0]!]).title).toBe('1 date coming up');
   });
 });
