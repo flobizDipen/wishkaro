@@ -55,6 +55,49 @@ is written to be correct for any count. See §9.2 if you want the real numbers f
 
 ---
 
+### 0.1 The M0 offline check — **run today, and it passes**
+
+M0 left it untried and `M1_PLAN.md` §2.5 deferred it deliberately, recording that it stayed a
+gap. It is no longer one. Run on the Pixel 9a against Railway, 2026-11-25 18:04–18:07 IST:
+
+| leg | evidence |
+|---|---|
+| Offline for real | `cmd connectivity airplane-mode enable`, Wi-Fi disabled. `ping 8.8.8.8` → *Network is unreachable*; the Railway host did not even resolve |
+| Add a person offline | "Offline Check M2", Friend, birthday 2 Dec 1990. Saved, person detail drew "in 7 days / Turning 36" with no network |
+| Force-stop | `am force-stop in.wishkaro.app`. The database pulled off the device (`run-as cat`) held `person 0b6c4ca3-…` and `event e73582ba-…`, both `pending_sync = 1` |
+| Reopen | Both people and the new one listed, countdown intact, still offline |
+| Radio back → sync | `POST /v1/sync` → **200**, in Railway's own request log at 12:37:00Z, 420-byte body. Afterwards `pending_sync = 0`, `updated_at` restamped to the server's `12:36:56.507Z`, and `sentiment = CELEBRATORY` present on the event — a column **the client never writes**, so it can only have come back from the server |
+
+The last row is the part that matters: the proof is not that the client believes it synced, it
+is that a server-derived value the client cannot invent came back down.
+
+**So the local write path is sound and the local-alarm work in §7 step 7 is not built on sand.**
+
+Two things noticed while doing it. Neither is M2's to fix; both are written down rather than
+left in a screenshot:
+
+- A never-synced person's detail screen reads **"Profile 0% complete"** directly above
+  **"Nothing left to add."** `completeness_score` is server-derived, so it is 0 until the first
+  sync, while the suggestion list is computed locally — the two disagree for exactly as long as
+  the record is offline. Cosmetic, M1's, and a one-line fix whenever someone is in there.
+- Client-generated ids are **UUIDv4** (`0b6c4ca3-2173-4cc6-…`), not the UUIDv7 that `M1_PLAN.md`
+  attributes to D23. Harmless — `id` is only the tiebreaker in the `(updated_at, id)` cursor, so
+  nothing depends on it sorting by time — but the doc and the code disagree.
+
+### 0.2 The mobile-data leg — **checked today, still unproven, still not faked**
+
+M1 §2.6 left it open because the SIM would not register. It still will not. With Wi-Fi off:
+`mVoiceRegState=OUT_OF_SERVICE`, `mDataRegState=OUT_OF_SERVICE`, the CS domain
+`registrationState=DENIED` on CellOne, the PS domain `NOT_REG_OR_SEARCHING`, and
+`gsm.sim.state=LOADED,NOT_READY`. `ping` over mobile data: *Network is unreachable*.
+
+The sync above therefore travelled over Wi-Fi, which does reach the public internet — the
+request arrived at Railway from a public IP and the response came back through TLS. What
+remains unproven is the specific clause "on mobile data", and it stays unproven. Nothing in
+this repo should say otherwise.
+
+---
+
 ## 1. The blocker: the dedupe key
 
 ### 1.1 The problem, restated
@@ -349,7 +392,7 @@ Each step is provable before the next depends on it.
 
 | # | Step | Proof |
 |---|---|---|
-| **1** | **The M0 offline check**, finally run. Aeroplane mode → add a person → force-stop → reopen → still listed → radio back → sync | A `person` row on Railway with the id the phone generated. **If it fails it is an M0 bug, it blocks step 7, and I stop and say so** |
+| **1** | ~~The M0 offline check~~ | **Done — §0.1. It passes.** Step 7 is not blocked |
 | **2** | Prisma migration: settings columns, the dedupe-key rewrite (§1.4), `dedupeKeyFor()` and its tests. No behaviour change yet | Migration applied to the local database with its 96 occurrences and 95 live reminders; unit tests on the key; a test asserting the rewrite is injective |
 | **3** | **Delivery reporting**, server + client outbox | `curl` a report, see `DELIVERED`; a report queued in aeroplane mode drains on reconnect |
 | **4** | The ladder and the **solemn ladder**, server-side | `curl`: one event → three reminder rows with distinct keys. A SOLEMN event → two. The test that fails if a D7 row is ever materialised for a SOLEMN occurrence |
@@ -410,8 +453,8 @@ not depend on it.
 ### 9.4 Two things to be willing to do
 
 - Leave the phone alone overnight. Several checks need a real 09:00.
-- The mobile-data leg of the M1 deploy is still unproven — the SIM would not register. If it
-  works now I will close it out; if not it stays recorded, unfaked, as M1 left it.
+- A working SIM, if you want the mobile-data leg closed. Checked today and it is still
+  `OUT_OF_SERVICE` / registration `DENIED` — §0.2. Not mine to fix and not mine to fake.
 
 ---
 
