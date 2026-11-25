@@ -206,6 +206,60 @@ railway logs --deployment --service wishkaro
 
 ---
 
+## 5. Task zero: what is proved, and what is not
+
+Proved on handset `4B201JEBF03493` (Pixel 9a), 2026-11-25, against Railway with the debug
+build pointed at the https URL, **no `adb reverse` and no port forward**:
+
+```
+POST /v1/auth/google   -> 200     real Google sign-in, real user row on Railway
+POST /v1/devices       -> 200     FCM token registered
+GET  /v1/sync          -> 200
+POST /v1/sync          -> 200     the person reached Postgres
+GET  /v1/sync?cursor=… -> 200
+```
+
+The phone's local database afterwards, both rows `pending_sync = 0`, meaning the outbox
+drained and the server acknowledged the writes:
+
+| id | display_name | relation | |
+|---|---|---|---|
+| `01a211dc-…` | dipen jansari | Self | |
+| `744b8df1-…` | Jaydatt Jansari | Brother | 22/9/1988 |
+
+**Not yet proved: the mobile-data leg.** Wi-Fi was still on for the run above
+(`settings get global wifi_on` → `1`, SSID `Dipen_5G`), and the client IP in the Railway log
+is the same public address as the development machine's `curl` calls. The traffic certainly
+reached Railway — the APK's compiled base URL is the Railway domain and the server logged the
+requests — but the prompt's clause is specifically *on mobile data*, and that clause exists to
+remove exactly this ambiguity. Outstanding; to be completed before the PR.
+
+To finish it:
+
+```bash
+adb reverse --remove-all
+adb shell settings get global wifi_on      # must be 0
+adb shell dumpsys connectivity | grep -m1 'NetworkAgentInfo.*CELLULAR'
+```
+
+Then on the handset, add a person and tap **"Send me a test reminder in 2 minutes"** on the
+people list — it posts to `/v1/reminders/test`, which queues through BullMQ and sends via the
+`FIREBASE_SERVICE_ACCOUNT` credential path. A notification arriving with Wi-Fi off closes it.
+
+---
+
+## 6. Offline persistence — still unverified on a device
+
+M0 never ran the aeroplane-mode check, and M1 does not either: the owner chose to drop the
+offline *tests* from this milestone while keeping the offline-first code unchanged
+(`docs/M1_PLAN.md` §2.5). SQLDelight is still the only read source and every write still
+goes local-first through the outbox, so the behaviour is presumed working and untested.
+
+Stated plainly so the next milestone inherits a true sentence: **nobody has watched this app
+survive aeroplane mode on a real handset.**
+
+---
+
 ## 7. What "it's broken" usually means
 
 | Symptom | Cause |

@@ -87,6 +87,8 @@ answered with the recommendation below**.
 | 2.2 | **Per-record LWW stays.** `REQUIREMENTS.md` §11's "per field" is corrected to match the code |
 | 2.3 | **Shared events across people are deferred**, by a path that stays a pure addition |
 | 2.4 | **Task zero is proved on a debug build pointed at the Railway https URL.** Release signing and certificate pinning move to M9 |
+| 2.5 | **The offline-first code stays; the offline *tests* are dropped from M1.** No code change — see below |
+| 2.6 | **The mobile-data leg of task zero is deferred** until before the PR |
 | — | Branch: **`feat/m1-people-events`**, PR at the end. `main` stays merge-only |
 
 The reasoning behind each, as it was put:
@@ -180,6 +182,51 @@ keystore is a secret that must never reach this public repo.
   met except "the binary is a release build", which proves nothing about the deploy.
 - Release signing + release SHA-1 + certificate pinning (§11) is a Play-track concern. It
   belongs with M9, or with whichever milestone first puts a build in front of a tester.
+
+### 2.5 — Offline: keep the code, drop the tests
+
+Asked for mid-milestone: "we can make app work online only, no need to handle offline cases
+for now."
+
+Raised before acting, because it contradicts two documents rather than one:
+`REQUIREMENTS.md` §11 ("Full read access offline. Add/edit offline, queued and synced") and
+`BUILD_PROMPT_M1.md`, which names "none of it needs a network connection to work" as one of
+the four things M1 must make true and makes the aeroplane-mode reconcile its
+definition-of-done item 4.
+
+The other half of the answer is that **offline-first is already built**. SQLDelight is the
+only read source, every write lands locally and enters an outbox the sync engine drains, and
+ids are client-generated UUIDv7 so a record created offline keeps its identity forever
+(decision D23). That is `LocalStore.kt`, `SyncEngine.kt`, the `pending_sync` columns and the
+whole `/v1/sync` cursor design — about 700 lines across client and server, working today.
+Going online-only would mean *deleting* working code and unpicking D23, not saving effort.
+
+**Chosen: no code change. The architecture stays offline-first; M1 simply does not spend
+itself on the aeroplane-mode verification.** Definition-of-done item 4 is deferred, and
+`REQUIREMENTS.md` §11 stands unaltered because the code still satisfies it. Features built
+from here still go through the local-first write path, because that is the only write path
+there is.
+
+What this does defer: the M0 carry-over check (aeroplane mode → add → force-stop → reopen →
+reconnect → sync) is **still never been run on a device**. It was a known gap at the end of
+M0 and it remains one at the end of M1. Recorded here so the next milestone inherits a true
+statement rather than a quiet one.
+
+### 2.6 — The mobile-data leg of task zero, deferred
+
+The deploy is proved: real Google sign-in, device registration and a person push all reached
+Railway and returned 200, with no `adb reverse` and no port forward (§6 step 1).
+
+It was **not** done on mobile data. Wi-Fi was still on — `settings get global wifi_on`
+returned `1`, the handset was associated with `Dipen_5G`, and the client IP in the Railway log
+is the same public address as the `curl` calls from the development machine. The traffic
+unambiguously reached Railway, since the base URL compiled into the APK is the Railway https
+domain and the server logged the requests; what is unproven is specifically the clause the
+prompt insists on, whose entire purpose is to remove any argument about which network carried
+it.
+
+**Chosen: finish it before the PR, not now.** Until then, task zero is "proved over the
+internet", not "proved on mobile data", and no document in this repo should say otherwise.
 
 ---
 
