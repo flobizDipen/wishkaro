@@ -5,8 +5,28 @@ describe('sync cursor', () => {
     const cursor = {
       person: { updatedAt: '2026-11-24T10:00:00.000Z', id: 'aaa' },
       event: { updatedAt: '2026-11-24T11:00:00.000Z', id: 'bbb' },
+      trait: { updatedAt: '2026-11-24T12:00:00.000Z', id: 'ccc' },
     };
     expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor);
+  });
+
+  /**
+   * M1 added a third entity. A cursor minted by an M0 client has no `trait` key at all, and
+   * must still decode — with trait null, so that client pulls every trait it has never seen
+   * rather than being handed an error or skipping them forever.
+   */
+  it('accepts an M0 cursor that predates traits', () => {
+    const m0 = Buffer.from(
+      JSON.stringify({
+        person: { updatedAt: '2026-11-24T10:00:00.000Z', id: 'aaa' },
+        event: { updatedAt: '2026-11-24T11:00:00.000Z', id: 'bbb' },
+      }),
+    ).toString('base64url');
+
+    const decoded = decodeCursor(m0);
+    expect(decoded.person?.id).toBe('aaa');
+    expect(decoded.event?.id).toBe('bbb');
+    expect(decoded.trait).toBeNull();
   });
 
   it('treats a missing cursor as a full resync', () => {
@@ -19,7 +39,9 @@ describe('sync cursor', () => {
   });
 
   it('rejects a cursor whose timestamp is not a date', () => {
-    const bad = Buffer.from(JSON.stringify({ person: { updatedAt: 'soon', id: 'x' } })).toString('base64url');
+    const bad = Buffer.from(JSON.stringify({ person: { updatedAt: 'soon', id: 'x' } })).toString(
+      'base64url',
+    );
     expect(decodeCursor(bad).person).toBeNull();
   });
 
@@ -53,15 +75,17 @@ describe('sync cursor', () => {
     });
   });
 
-  it('advances people and events independently, so one entity cannot starve the other', () => {
-    // People filled a page; events did not. The event cursor must not jump forward.
+  it('advances the three entities independently, so none can starve the others', () => {
+    // People filled a page; events and traits did not. Their cursors must not jump forward.
     const cursor = decodeCursor(
       encodeCursor({
         person: advance(null, [{ id: 'p9', updatedAt: new Date('2026-11-24T12:00:00.000Z') }]),
         event: advance(null, []),
+        trait: advance(null, []),
       }),
     );
     expect(cursor.person?.id).toBe('p9');
     expect(cursor.event).toBeNull();
+    expect(cursor.trait).toBeNull();
   });
 });

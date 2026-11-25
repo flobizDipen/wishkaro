@@ -43,6 +43,26 @@ export function marksPersonDeceased(type: EventType): boolean {
   return type === 'DEATH_ANNIVERSARY';
 }
 
+/**
+ * Whether a NEWLY CREATED event starts muted.
+ *
+ * FR-EVT-05: "a deceased person's birthday reminder is disabled by default". The word that
+ * matters is *default* — it has to hold for a birthday added to someone who was already
+ * marked deceased, not only for the birthday that existed when they were marked.
+ *
+ * PersonDerivationService handles the other direction (muting the birthdays that already
+ * existed at the moment the person became deceased) and does it ONLY on that transition, so
+ * that opting in to a remembrance birthday is not undone by the next write. This function is
+ * the creation-time half of the same rule, and the two together are what make the default
+ * actually a default.
+ *
+ * Deliberately not applied on update: re-saving an event must never re-mute one the user has
+ * deliberately un-muted.
+ */
+export function defaultMutedFor(type: EventType, personIsDeceased: boolean): boolean {
+  return type === 'BIRTHDAY' && personIsDeceased;
+}
+
 /** `label` is meaningful only on CUSTOM events (FR-EVT-06). */
 export function acceptsLabel(type: EventType): boolean {
   return type === 'CUSTOM';

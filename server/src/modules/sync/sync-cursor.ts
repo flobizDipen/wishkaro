@@ -18,9 +18,16 @@ export interface EntityCursor {
 export interface SyncCursor {
   person: EntityCursor | null;
   event: EntityCursor | null;
+  /**
+   * Added in M1. A cursor minted by an M0 client has no `trait` key, so it decodes to null
+   * and that client gets a full trait resync on its next pull — which is exactly right, since
+   * it has never seen any. Extending the shape rather than collapsing the three into one
+   * ordering keeps a page limit on people from stalling events or traits.
+   */
+  trait: EntityCursor | null;
 }
 
-export const EMPTY_CURSOR: SyncCursor = { person: null, event: null };
+export const EMPTY_CURSOR: SyncCursor = { person: null, event: null, trait: null };
 
 export function encodeCursor(cursor: SyncCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
@@ -33,7 +40,7 @@ export function decodeCursor(encoded: string | undefined): SyncCursor {
     const parsed: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
     if (!parsed || typeof parsed !== 'object') return EMPTY_CURSOR;
     const o = parsed as Record<string, unknown>;
-    return { person: readEntity(o.person), event: readEntity(o.event) };
+    return { person: readEntity(o.person), event: readEntity(o.event), trait: readEntity(o.trait) };
   } catch {
     return EMPTY_CURSOR;
   }

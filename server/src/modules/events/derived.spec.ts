@@ -1,6 +1,7 @@
 import type { EventType, TraitKind } from '@prisma/client';
 import {
   COMPLETENESS_TOTAL,
+  defaultMutedFor,
   COMPLETENESS_WEIGHTS,
   type CompletenessInput,
   completenessScore,
@@ -48,6 +49,32 @@ describe('sentimentFor', () => {
   it('has no input combination that yields CELEBRATORY for a deceased person', () => {
     const celebratory = ALL_TYPES.filter((t) => sentimentFor(t, true) === 'CELEBRATORY');
     expect(celebratory).toEqual([]);
+  });
+});
+
+/**
+ * The creation-time half of FR-EVT-05's "disabled by default". Found by the sync walkthrough:
+ * PersonDerivationService muted the birthdays that existed at the moment a person became
+ * deceased, but a birthday ADDED afterwards arrived unmuted, so the default silently was not
+ * one. These cases are the regression guard.
+ */
+describe('defaultMutedFor', () => {
+  it('mutes a birthday created for someone already deceased', () => {
+    expect(defaultMutedFor('BIRTHDAY', true)).toBe(true);
+  });
+
+  it("leaves a living person's birthday alone", () => {
+    expect(defaultMutedFor('BIRTHDAY', false)).toBe(false);
+  });
+
+  it('does not mute the death anniversary itself — that one is the point', () => {
+    expect(defaultMutedFor('DEATH_ANNIVERSARY', true)).toBe(false);
+  });
+
+  it('does not mute other event types for a deceased person', () => {
+    for (const type of ALL_TYPES.filter((t) => t !== 'BIRTHDAY')) {
+      expect(defaultMutedFor(type, true)).toBe(false);
+    }
   });
 });
 

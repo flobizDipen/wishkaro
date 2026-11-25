@@ -11,6 +11,7 @@ import {
 } from '../../common/date/occurrence';
 import {
   completenessSuggestions,
+  defaultMutedFor,
   marksPersonDeceased,
   milestoneLabelFor,
   sentimentFor,
@@ -277,6 +278,7 @@ export class PeopleService {
             month: input.event.month,
             year: input.event.year ?? null,
             label: input.event.label ?? null,
+            isMuted: defaultMutedFor(input.event.type, deceased),
           },
         });
       }

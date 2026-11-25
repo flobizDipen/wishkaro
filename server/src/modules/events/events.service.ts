@@ -11,7 +11,7 @@ import {
   yearsAt,
   type CivilDate,
 } from '../../common/date/occurrence';
-import { acceptsLabel, marksPersonDeceased, sentimentFor } from './derived';
+import { acceptsLabel, defaultMutedFor, marksPersonDeceased, sentimentFor } from './derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 import { RemindersService } from '../reminders/reminders.service';
 
@@ -137,6 +137,8 @@ export class EventsService {
         month: input.month,
         year: input.year ?? null,
         label: input.label ?? null,
+        // A birthday added to someone already marked deceased starts muted (FR-EVT-05).
+        isMuted: defaultMutedFor(input.type, deceased),
       },
     });
 
