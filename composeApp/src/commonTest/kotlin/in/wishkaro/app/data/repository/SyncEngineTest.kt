@@ -3,6 +3,10 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.remote.DeliveryReportDto
+import `in`.wishkaro.app.data.remote.DeliveryReportRequest
+import `in`.wishkaro.app.data.remote.DeliveryReportResponse
+import `in`.wishkaro.app.data.remote.SyncApplied
 import `in`.wishkaro.app.data.remote.SyncPullResponse
 import `in`.wishkaro.app.data.remote.SyncPushRequest
 import `in`.wishkaro.app.data.remote.SyncPushResponse
@@ -237,9 +241,15 @@ class SyncEngineTest {
 // Fakes
 // -------------------------------------------------------------------------------------
 
-private class FakeApi(private val pushResponse: SyncPushResponse) : SyncApi {
+private class FakeApi(
+    private val pushResponse: SyncPushResponse,
+    /** Lets a test make the metrics endpoint fail without failing the whole sync. */
+    private val deliveryFails: Boolean = false,
+) : SyncApi {
     var pushes = 0
         private set
+
+    val deliveryBatches = mutableListOf<List<DeliveryReportDto>>()
 
     override suspend fun syncPush(body: SyncPushRequest): SyncPushResponse {
         pushes += 1
@@ -248,6 +258,12 @@ private class FakeApi(private val pushResponse: SyncPushResponse) : SyncApi {
 
     override suspend fun syncPull(cursor: String?): SyncPullResponse =
         SyncPullResponse(cursor = "c1", hasMore = false)
+
+    override suspend fun reportDelivery(body: DeliveryReportRequest): DeliveryReportResponse {
+        if (deliveryFails) throw IllegalStateException("delivery endpoint down")
+        deliveryBatches += body.reports
+        return DeliveryReportResponse(recorded = body.reports.size)
+    }
 }
 
 /**
@@ -365,4 +381,94 @@ private class FakeStore(
     ) = Unit
 
     override suspend fun cursor(): String? = null
+
+    // ---- delivery-report outbox ----
+
+    val pendingDelivery = mutableListOf<wishkaro.db.Delivery_report>()
+    val clearedDelivery = mutableSetOf<String>()
+
+    override suspend fun pendingDeliveryReports(limit: Long): List<wishkaro.db.Delivery_report> =
+        pendingDelivery.filter { it.pending_sync == 1L }.take(limit.toInt())
+
+    override suspend fun clearDeliveryPending(keys: List<String>) {
+        clearedDelivery += keys
+        pendingDelivery.replaceAll {
+            if (it.dedupe_key in keys) it.copy(pending_sync = 0L) else it
+        }
+    }
+}
+
+private fun report(key: String, outcome: String = "SHOWN", channel: String = "LOCAL") =
+    wishkaro.db.Delivery_report(
+        dedupe_key = key,
+        outcome = outcome,
+        channel = channel,
+        occurred_at = "2026-12-02T03:30:00Z",
+        pending_sync = 1L,
+    )
+
+/**
+ * FR-REM-10. The delivery outbox is the instrument the rest of M2 is measured with, and it
+ * is written in the conditions that make it hardest to send — a local alarm firing on a phone
+ * that has been off the network for days. These are about what happens to a report that
+ * cannot be delivered immediately.
+ */
+class DeliveryReportDrainTest {
+
+    @Test
+    fun handsPendingReportsToTheServerAndClearsThem() = runTest {
+        val api = FakeApi(SyncPushResponse())
+        val store = FakeStore()
+        store.pendingDelivery += report("e1:2026:D0")
+        store.pendingDelivery += report("e2:2026:D7", outcome = "SUPPRESSED_DUPLICATE", channel = "FCM")
+
+        val result = SyncEngine(api, store) { Instant.parse("2026-12-02T04:00:00Z") }.sync()
+
+        assertTrue(result.isSuccess)
+        assertEquals(2, result.getOrThrow().deliveryReported)
+        assertEquals(listOf("e1:2026:D0", "e2:2026:D7"), api.deliveryBatches.single().map { it.dedupeKey })
+        assertEquals(setOf("e1:2026:D0", "e2:2026:D7"), store.clearedDelivery)
+    }
+
+    @Test
+    fun sendsNothingWhenThereIsNothingToReport() = runTest {
+        val api = FakeApi(SyncPushResponse())
+        val store = FakeStore()
+
+        SyncEngine(api, store) { Instant.parse("2026-12-02T04:00:00Z") }.sync()
+
+        assertTrue(api.deliveryBatches.isEmpty())
+    }
+
+    /**
+     * A report that was never acknowledged must stay pending. Re-sending is free — the server
+     * is idempotent on the dedupe key — whereas clearing it optimistically deletes a data
+     * point from the one number that says whether this product works.
+     */
+    @Test
+    fun keepsReportsPendingWhenTheServerRefusesThem() = runTest {
+        val api = FakeApi(SyncPushResponse(), deliveryFails = true)
+        val store = FakeStore()
+        store.pendingDelivery += report("e1:2026:D0")
+
+        val result = SyncEngine(api, store) { Instant.parse("2026-12-02T04:00:00Z") }.sync()
+
+        assertTrue(result.isSuccess, "a dead metrics endpoint must not fail the whole sync")
+        assertEquals(0, result.getOrThrow().deliveryReported)
+        assertTrue(store.clearedDelivery.isEmpty())
+        assertEquals(1L, store.pendingDelivery.single().pending_sync)
+    }
+
+    /** The user's data is worth more than the metric: a dead endpoint cannot block a push. */
+    @Test
+    fun aFailedReportStillLetsTheOutboxPush() = runTest {
+        val api = FakeApi(SyncPushResponse(applied = SyncApplied(people = 1)), deliveryFails = true)
+        val store = FakeStore(people = listOf("p1"))
+        store.pendingDelivery += report("e1:2026:D0")
+
+        val result = SyncEngine(api, store) { Instant.parse("2026-12-02T04:00:00Z") }.sync()
+
+        assertEquals(1, api.pushes)
+        assertTrue(result.getOrThrow().pushed.people == 1)
+    }
 }

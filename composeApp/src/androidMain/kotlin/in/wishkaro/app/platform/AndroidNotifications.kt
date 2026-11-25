@@ -28,6 +28,16 @@ object NotificationChannels {
     const val WEEK_BEFORE = "reminders_week_before"
     const val SELF_TEST = "self_test"
 
+    /**
+     * M2. Digest mode replaces the whole ladder (docs/M2_PLAN.md §2.1), so this channel
+     * stands in for MORNING_OF and takes its importance.
+     *
+     * Adding a channel id to an app that is already installed is fine — the rule that forced
+     * the other four to be created up front is that an EXISTING channel's importance cannot
+     * be RAISED afterwards. A new id has no history to be bound by.
+     */
+    const val DIGEST = "reminders_digest"
+
     fun createAll(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -35,6 +45,7 @@ object NotificationChannels {
             Triple(MORNING_OF, "Birthday reminders", NotificationManager.IMPORTANCE_HIGH),
             Triple(DAY_BEFORE, "Day-before reminders", NotificationManager.IMPORTANCE_DEFAULT),
             Triple(WEEK_BEFORE, "Week-ahead reminders", NotificationManager.IMPORTANCE_DEFAULT),
+            Triple(DIGEST, "Daily digest", NotificationManager.IMPORTANCE_HIGH),
             Triple(SELF_TEST, "Test notifications", NotificationManager.IMPORTANCE_HIGH),
         ).forEach { (id, name, importance) ->
             manager.createNotificationChannel(NotificationChannel(id, name, importance))

@@ -3,6 +3,8 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.remote.DeliveryReportRequest
+import `in`.wishkaro.app.data.remote.DeliveryReportResponse
 import `in`.wishkaro.app.data.remote.SyncPullResponse
 import `in`.wishkaro.app.data.remote.SyncPushRequest
 import `in`.wishkaro.app.data.remote.SyncPushResponse
@@ -23,6 +25,9 @@ interface SyncApi {
     suspend fun syncPull(cursor: String?): SyncPullResponse
 
     suspend fun syncPush(body: SyncPushRequest): SyncPushResponse
+
+    /** FR-REM-10. Drained by the same engine, for the same reason: it needs a network. */
+    suspend fun reportDelivery(body: DeliveryReportRequest): DeliveryReportResponse
 }
 
 /** The outbox, plus the one write that applies a pulled page. */
@@ -59,4 +64,10 @@ interface SyncStore {
     )
 
     suspend fun cursor(): String?
+
+    // ---- delivery-report outbox (FR-REM-10) ----
+
+    suspend fun pendingDeliveryReports(limit: Long = 200): List<wishkaro.db.Delivery_report>
+
+    suspend fun clearDeliveryPending(keys: List<String>)
 }

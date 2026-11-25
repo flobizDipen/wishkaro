@@ -71,6 +71,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
     private val traits = db.personTraitQueries
     private val sync = db.syncStateQueries
     private val seen = db.seenReminderQueries
+    private val delivery = db.deliveryReportQueries
 
     // -----------------------------------------------------------------------------------
     // Reads
@@ -476,6 +477,42 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
             }
         }
 
+    // -----------------------------------------------------------------------------------
+    // Delivery reporting (FR-REM-10)
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Records what this device did with a reminder, for the server to collect later.
+     *
+     * Written locally first and never posted directly, because the deliveries that matter
+     * most are the ones that happen with no network: a local alarm firing during an outage is
+     * the exact case the fallback exists for, and the exact case a direct POST cannot report.
+     *
+     * Upsert by hand — `ON CONFLICT DO UPDATE` needs SQLite 3.24 and `minSdk 26` can be
+     * older than that, a constraint the rest of this schema already works under.
+     */
+    suspend fun recordDelivery(
+        dedupeKey: String,
+        outcome: String,
+        channel: String,
+        occurredAtIso: String,
+    ) = withContext(Dispatchers.Default) {
+        db.transaction {
+            if (delivery.exists(dedupeKey).executeAsOne()) {
+                delivery.updateReport(outcome, channel, occurredAtIso, dedupeKey)
+            } else {
+                delivery.record(dedupeKey, outcome, channel, occurredAtIso)
+            }
+        }
+    }
+
+    override suspend fun pendingDeliveryReports(limit: Long): List<wishkaro.db.Delivery_report> =
+        withContext(Dispatchers.Default) { delivery.pending(limit).executeAsList() }
+
+    override suspend fun clearDeliveryPending(keys: List<String>) = withContext(Dispatchers.Default) {
+        if (keys.isNotEmpty()) delivery.clearPending(keys)
+    }
+
     /** Sign-out wipes local data (FR-AUTH-07). */
     suspend fun wipe() = withContext(Dispatchers.Default) {
         db.transaction {
@@ -483,6 +520,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
             events.deleteAll()
             people.deleteAll()
             seen.deleteAll()
+            delivery.deleteAll()
             sync.reset()
         }
     }

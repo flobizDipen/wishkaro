@@ -51,6 +51,27 @@ data class TestReminderResponse(
     val message: String? = null,
 )
 
+/**
+ * What this device did with a reminder (FR-REM-10).
+ *
+ * Batched because the reports that matter most are written while the phone has no network —
+ * a local alarm firing during an outage is the case the whole fallback exists for — so they
+ * queue locally and leave in a group when the radio comes back.
+ */
+@Serializable
+data class DeliveryReportDto(
+    val dedupeKey: String,
+    val outcome: String,
+    val channel: String,
+    val occurredAtUtc: String,
+)
+
+@Serializable
+data class DeliveryReportRequest(val reports: List<DeliveryReportDto>)
+
+@Serializable
+data class DeliveryReportResponse(val recorded: Int = 0, val unknown: Int = 0)
+
 // ---- sync ----
 
 /**

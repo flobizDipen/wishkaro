@@ -1,0 +1,43 @@
+-- What this device did with a reminder, waiting to be told to the server (FR-REM-10).
+--
+-- An outbox rather than a fire-and-forget POST, for one reason: the deliveries that matter
+-- most to the G1 metric are the ones that happen while the phone has NO NETWORK. A local
+-- alarm firing during an outage is exactly the case the whole fallback exists for, and it is
+-- precisely the case a direct POST cannot report. So the report is written locally first and
+-- drained by the sync engine whenever the network comes back — the same shape as the person
+-- and event outboxes, for the same reason.
+--
+-- Keyed on dedupe_key, so a reminder that is reported twice (both paths racing, or a retry)
+-- collapses to one row. `outcome` is deliberately last-write-wins EXCEPT that the server
+-- refuses to downgrade a SHOWN, which is where that rule belongs: on the side that owns the
+-- metric.
+CREATE TABLE delivery_report (
+    dedupe_key   TEXT NOT NULL PRIMARY KEY,
+    outcome      TEXT NOT NULL,
+    channel      TEXT NOT NULL,
+    -- When the device acted, not when it managed to tell anyone. A report can be days late.
+    occurred_at  TEXT NOT NULL,
+    pending_sync INTEGER NOT NULL DEFAULT 1
+);
+
+record:
+INSERT INTO delivery_report(dedupe_key, outcome, channel, occurred_at, pending_sync)
+VALUES (?, ?, ?, ?, 1);
+
+-- SQLite 3.24's ON CONFLICT DO UPDATE is not available at minSdk 26, so an overwrite is an
+-- explicit UPDATE guarded by the caller. Same constraint the rest of this schema works under.
+updateReport:
+UPDATE delivery_report SET outcome = ?, channel = ?, occurred_at = ?, pending_sync = 1
+WHERE dedupe_key = ?;
+
+exists:
+SELECT EXISTS(SELECT 1 FROM delivery_report WHERE dedupe_key = ?);
+
+pending:
+SELECT * FROM delivery_report WHERE pending_sync = 1 ORDER BY occurred_at LIMIT ?;
+
+clearPending:
+UPDATE delivery_report SET pending_sync = 0 WHERE dedupe_key IN ?;
+
+deleteAll:
+DELETE FROM delivery_report;

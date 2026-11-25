@@ -88,6 +88,14 @@ class WishKaroApi(
             client.post("$baseUrl/v1/reminders/test") { header("Authorization", "Bearer $token") }
         }.decode()
 
+    override suspend fun reportDelivery(body: DeliveryReportRequest): DeliveryReportResponse =
+        authed { token ->
+            client.post("$baseUrl/v1/reminders/delivery") {
+                header("Authorization", "Bearer $token")
+                setBody(body)
+            }
+        }.decode()
+
     override suspend fun syncPull(cursor: String?): SyncPullResponse =
         authed { token ->
             client.get("$baseUrl/v1/sync") {

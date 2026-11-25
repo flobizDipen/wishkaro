@@ -373,6 +373,83 @@ export class RemindersService {
   }
 
   // -------------------------------------------------------------------------
+  // Delivery reporting (FR-REM-10)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Records what the device says happened to a batch of reminders.
+   *
+   * Three things make this more than a status setter:
+   *
+   * 1. **It is scoped to the caller.** `userId` is in the WHERE clause, not just the body,
+   *    so a report can only ever touch the reporter's own reminders.
+   * 2. **An unknown key is accepted, not rejected.** The client arms a local alarm for an
+   *    event created offline that the server has never materialised (docs/M2_PLAN.md §1.3),
+   *    and that alarm's report names a key with no row behind it. That is a real delivery
+   *    the G1 metric should count, and 400-ing it would hide exactly the case this exists to
+   *    measure. Counted and logged instead.
+   * 3. **`channel` records who WON.** A reminder created as FCM and delivered by the phone's
+   *    own alarm flips to LOCAL, so `count(channel = LOCAL) / count(*)` is the FCM failure
+   *    rate rather than a restatement of how we scheduled things (docs/M2_PLAN.md §2.2).
+   *
+   * Idempotent: the same report arriving twice — which it will, because the client keeps a
+   * report in its outbox until the server confirms — writes the same row twice and changes
+   * nothing. `SHOWN` is sticky: once a notification has been drawn, a later
+   * SUPPRESSED_DUPLICATE from the other path must not downgrade it, or every successful
+   * de-duplication would erase the delivery it de-duplicated.
+   */
+  async recordDelivery(
+    userId: string,
+    reports: readonly {
+      dedupeKey: string;
+      outcome: string;
+      channel: 'FCM' | 'LOCAL';
+      occurredAtUtc: string;
+    }[],
+  ): Promise<{ recorded: number; unknown: number }> {
+    let recorded = 0;
+    let unknown = 0;
+
+    for (const report of reports) {
+      const occurredAt = new Date(report.occurredAtUtc);
+
+      const existing = await this.prisma.reminder.findFirst({
+        where: { dedupeKey: report.dedupeKey, userId },
+        select: { id: true, status: true, deliveryOutcome: true },
+      });
+
+      if (!existing) {
+        unknown += 1;
+        this.logger.log(
+          `Delivery report for an unknown key ${report.dedupeKey} (user ${userId}, ` +
+            `${report.outcome} via ${report.channel}) — a local alarm for an event this ` +
+            `server has not materialised yet`,
+        );
+        continue;
+      }
+
+      // Never downgrade a delivery that already happened.
+      if (existing.deliveryOutcome === 'SHOWN' && report.outcome !== 'SHOWN') {
+        recorded += 1;
+        continue;
+      }
+
+      await this.prisma.reminder.update({
+        where: { id: existing.id },
+        data: {
+          deliveryOutcome: report.outcome,
+          deliveredAt: occurredAt,
+          channel: report.channel,
+          ...(report.outcome === 'SHOWN' ? { status: 'DELIVERED' as const } : {}),
+        },
+      });
+      recorded += 1;
+    }
+
+    return { recorded, unknown };
+  }
+
+  // -------------------------------------------------------------------------
   // Sending
   // -------------------------------------------------------------------------
 

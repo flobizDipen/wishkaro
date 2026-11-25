@@ -3,6 +3,8 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.remote.DeliveryReportDto
+import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.SyncEventPush
 import `in`.wishkaro.app.data.remote.SyncPersonPush
 import `in`.wishkaro.app.data.remote.SyncPushRequest
@@ -23,6 +25,8 @@ import kotlin.time.Instant
  * A mutex serialises runs. Sync is triggered from several places — app start, after a write,
  * after a push arrives — and two concurrent runs would double-push the same outbox rows.
  */
+private const val DELIVERY_REPORT_BATCH = 200L
+
 class SyncEngine(
     private val api: SyncApi,
     private val local: SyncStore,
@@ -43,13 +47,52 @@ class SyncEngine(
          * the difference used to be invisible to everything above this class.
          */
         val rejected: List<SyncSkipped> = emptyList(),
+        /** How many delivery reports this run managed to hand over (FR-REM-10). */
+        val deliveryReported: Int = 0,
     )
 
     suspend fun sync(): kotlin.Result<Result> = mutex.withLock {
         runCatching {
+            // Delivery reports first, before anything can fail.
+            //
+            // They are the measurement the rest of M2 is judged by (FR-REM-10), and they are
+            // written in exactly the conditions that make them hardest to send: a local alarm
+            // firing during an outage, on a phone that may not come back for days. If a
+            // person push 400s, the reports that were waiting behind it should still have
+            // gone. Its own failure is swallowed for the same reason in reverse — losing the
+            // user's data because the metrics endpoint was down would be an absurd trade.
+            val reported = runCatching { drainDeliveryReports() }.getOrDefault(0)
             val (pushed, rejected) = push()
-            Result(pushed = pushed, pulled = pull(), rejected = rejected)
+            Result(pushed = pushed, pulled = pull(), rejected = rejected, deliveryReported = reported)
         }
+    }
+
+    /**
+     * Hands the server everything this device has observed about reminder delivery.
+     *
+     * Rows are cleared only on a confirmed 200. A report the server never acknowledged stays
+     * pending and goes again next time — re-sending is harmless because `recordDelivery` is
+     * idempotent on the dedupe key, whereas dropping one silently deletes a data point from
+     * the one number that says whether this product works.
+     */
+    private suspend fun drainDeliveryReports(): Int {
+        val pending = local.pendingDeliveryReports(DELIVERY_REPORT_BATCH)
+        if (pending.isEmpty()) return 0
+
+        api.reportDelivery(
+            DeliveryReportRequest(
+                pending.map {
+                    DeliveryReportDto(
+                        dedupeKey = it.dedupe_key,
+                        outcome = it.outcome,
+                        channel = it.channel,
+                        occurredAtUtc = it.occurred_at,
+                    )
+                },
+            ),
+        )
+        local.clearDeliveryPending(pending.map { it.dedupe_key })
+        return pending.size
     }
 
     /**

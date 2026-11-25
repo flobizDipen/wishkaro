@@ -1,0 +1,16 @@
+-- Schema version 3 -> 4 (M2: the delivery-report outbox).
+--
+-- `verifyMigrations` is on, so this file existing is what keeps an installed app from
+-- crashing on first launch after an update: AndroidSqliteDriver replays .sqm files, and a
+-- column added to a .sq with no matching .sqm compiles, installs, and then dies on the one
+-- phone that already has data — which is the phone every one of these milestones is proved
+-- on.
+--
+-- A new table rather than an altered one, so there is nothing to back-fill.
+CREATE TABLE delivery_report (
+    dedupe_key   TEXT NOT NULL PRIMARY KEY,
+    outcome      TEXT NOT NULL,
+    channel      TEXT NOT NULL,
+    occurred_at  TEXT NOT NULL,
+    pending_sync INTEGER NOT NULL DEFAULT 1
+);
