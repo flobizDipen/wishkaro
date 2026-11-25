@@ -14,22 +14,27 @@ class CompletenessTest {
     private fun person(
         suggestions: List<String>,
         isMinor: Boolean = false,
+        phone: String? = null,
+        notes: String? = null,
+        relation: String? = null,
+        events: List<PersonEvent> = emptyList(),
+        traits: List<PersonTrait> = emptyList(),
     ) = Person(
         id = "p1",
         displayName = "Aarav",
-        relationToOwner = null,
+        relationToOwner = relation,
         isSelf = false,
         gender = null,
-        phone = null,
+        phone = phone,
         email = null,
-        notes = null,
+        notes = notes,
         isDeceased = false,
         isMinor = isMinor,
         completenessScore = 40,
         completenessSuggestions = suggestions,
         deletedAt = null,
-        events = emptyList(),
-        traits = emptyList(),
+        events = events,
+        traits = traits,
     )
 
     @Test
@@ -57,6 +62,47 @@ class CompletenessTest {
     fun an_unknown_field_name_is_skipped_rather_than_shown_raw() {
         val p = person(listOf("somethingNewTheServerAdded", "phone"))
         assertEquals(CompletenessField.PHONE, p.nextImprovement)
+    }
+
+    /**
+     * The mirrored list goes stale between syncs. Fill in a phone number in aeroplane mode
+     * and the server's list still names it, so the app would ask for something already on
+     * the screen. The order stays the server's; "is it filled in" is answered locally.
+     */
+    @Test
+    fun a_field_already_filled_in_locally_is_skipped_even_if_the_server_still_suggests_it() {
+        val p = person(listOf("phone", "notes"), phone = "+919812345678")
+        assertEquals(CompletenessField.NOTES, p.nextImprovement)
+    }
+
+    @Test
+    fun a_locally_added_trait_is_skipped_too() {
+        val p = person(
+            listOf("hobby", "like"),
+            traits = listOf(PersonTrait("t1", "p1", TraitKind.HOBBY, "cricket")),
+        )
+        assertEquals(CompletenessField.LIKE, p.nextImprovement)
+    }
+
+    @Test
+    fun nothing_is_asked_once_everything_suggested_is_filled_in() {
+        val p = person(listOf("phone", "relation"), phone = "+91", relation = "Brother")
+        assertNull(p.nextImprovement)
+    }
+
+    /** FR-EVT-02: a birthday with no year does not satisfy the birth-year field. */
+    @Test
+    fun a_year_unknown_birthday_does_not_satisfy_the_birth_year_field() {
+        val noYear = PersonEvent(
+            "e1", "p1", EventType.BIRTHDAY, Sentiment.CELEBRATORY, null, false, EventDate(7, 7, null),
+        )
+        assertEquals(
+            CompletenessField.BIRTH_YEAR,
+            person(listOf("birthYear"), events = listOf(noYear)).nextImprovement,
+        )
+
+        val withYear = noYear.copy(date = EventDate(7, 7, 1960))
+        assertNull(person(listOf("birthYear"), events = listOf(withYear)).nextImprovement)
     }
 
     @Test

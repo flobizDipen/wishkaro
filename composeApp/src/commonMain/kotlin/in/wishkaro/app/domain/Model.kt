@@ -106,9 +106,24 @@ data class Person(
 
     val traitsByKind: Map<TraitKind, List<PersonTrait>> get() = traits.groupBy { it.kind }
 
-    /** The single next thing worth adding, or null when there is nothing to ask for. */
+    /**
+     * The single next thing worth adding, or null when there is nothing to ask for.
+     *
+     * The ORDER is the server's — that is where COMPLETENESS_WEIGHTS lives, and a second
+     * copy of the weights on the client is the duplication BUILD_PROMPT_M1 rules out.
+     *
+     * But the list is a mirror, and a mirror goes stale. Fill in a phone number in aeroplane
+     * mode and the synced list still says "phone" until the next pull, so the app would
+     * cheerfully ask for something already on the screen. Each candidate is therefore
+     * re-checked against what the device can see right now, and the first one still genuinely
+     * missing wins. Ordering stays server-side; "is it filled in" is answered locally,
+     * offline, from data the client already holds.
+     */
     val nextImprovement: CompletenessField?
-        get() = completenessSuggestions.firstNotNullOfOrNull { CompletenessField.from(it) }
+        get() = completenessSuggestions
+            .asSequence()
+            .mapNotNull { CompletenessField.from(it) }
+            .firstOrNull { !it.isSatisfiedBy(this) }
 }
 
 /**
@@ -129,6 +144,26 @@ enum class CompletenessField(val wire: String, val prompt: String) {
     DISLIKE("dislike", "something they dislike"),
     BUDGET_BAND("budgetBand", "a budget band"),
     ;
+
+    /**
+     * Whether the device can already see this field filled in, without asking the server.
+     *
+     * Deliberately NOT a score: it answers "is there something here", not "how much is it
+     * worth". The weighting stays in one place, on the server.
+     */
+    fun isSatisfiedBy(person: Person): Boolean = when (this) {
+        RELATION -> !person.relationToOwner.isNullOrBlank()
+        // A birthday with no year does not count, exactly as the server has it (FR-EVT-02).
+        BIRTH_YEAR -> person.events.any { it.type == EventType.BIRTHDAY && it.date.year != null }
+        GENDER -> !person.gender.isNullOrBlank()
+        PHONE -> !person.phone.isNullOrBlank()
+        EMAIL -> !person.email.isNullOrBlank()
+        NOTES -> !person.notes.isNullOrBlank()
+        HOBBY -> person.traits.any { it.kind == TraitKind.HOBBY }
+        LIKE -> person.traits.any { it.kind == TraitKind.LIKE }
+        DISLIKE -> person.traits.any { it.kind == TraitKind.DISLIKE }
+        BUDGET_BAND -> person.traits.any { it.kind == TraitKind.BUDGET_BAND }
+    }
 
     companion object {
         fun from(wire: String): CompletenessField? = entries.firstOrNull { it.wire == wire }
