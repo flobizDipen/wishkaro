@@ -130,6 +130,11 @@ export class AuthService {
           name: input.name,
           photoUrl: input.photoUrl,
           timezone,
+          // The deployment's default delivery hour (FR-REM-03). Seeded here rather than read
+          // at send time, so that changing the env var on the server cannot silently move
+          // the reminders of people who have already chosen an hour for themselves.
+          reminderHour: this.env.DEFAULT_REMINDER_HOUR,
+          digestHour: this.env.DEFAULT_REMINDER_HOUR,
         },
       });
 

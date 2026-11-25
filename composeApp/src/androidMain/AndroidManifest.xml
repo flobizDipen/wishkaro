@@ -6,6 +6,24 @@
     <!-- Android 13+ runtime permission. Requested with a rationale right after sign-in. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        Re-arm alarms after a reboot. AlarmManager clears every alarm in the system on boot,
+        so without this the first restart silently disables the whole local fallback.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
+        User-grantable, and deliberately NOT USE_EXACT_ALARM.
+
+        USE_EXACT_ALARM is granted at install, but Play restricts it to apps whose core
+        function is an alarm clock or a calendar. A birthday reminder is a plausible but not
+        a certain fit, and betting the listing on it inside a milestone about reliability is
+        not a bet to make quietly. Delivery degrades to setAndAllowWhileIdle when this is
+        denied — minutes of drift rather than hours — and Settings offers the user the
+        permission. See docs/M2_PLAN.md §5.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:name=".WishKaroApplication"
         android:allowBackup="false"
@@ -43,6 +61,33 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- The local half of the reminder engine (FR-REM-02). Not exported: nothing
+             outside this app has any business firing a reminder. -->
+        <receiver
+            android:name=".push.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Snooze 1h and Mark done (FR-REM-04). -->
+        <receiver
+            android:name=".push.ReminderActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="in.wishkaro.app.action.SNOOZE" />
+                <action android:name="in.wishkaro.app.action.MARK_DONE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Alarms do not survive a reboot or an app update; this re-arms them from the
+             stored plan. Exported, because the system is the sender. -->
+        <receiver
+            android:name=".push.ReminderBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

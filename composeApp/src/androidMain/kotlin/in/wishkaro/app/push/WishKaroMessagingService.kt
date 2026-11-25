@@ -1,26 +1,16 @@
 package `in`.wishkaro.app.push
 
-import android.Manifest
-import android.app.PendingIntent
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import `in`.wishkaro.app.MainActivity
-import `in`.wishkaro.app.R
 import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.domain.DeliverableReminder
+import `in`.wishkaro.app.domain.DeliveryChannel
 import `in`.wishkaro.app.data.repository.AuthRepository
-import `in`.wishkaro.app.platform.NotificationChannels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -59,65 +49,28 @@ class WishKaroMessagingService : FirebaseMessagingService(), KoinComponent {
         }
 
         scope.launch {
-            // FR-REM-02: the server may retry, and from M2 a local alarm fires for the same
-            // event. The user must still see exactly one notification.
-            val isFirstTime = local.claimReminder(dedupeKey, Clock.System.now().toString())
-            if (!isFirstTime) {
-                Log.i(TAG, "Duplicate reminder $dedupeKey suppressed")
-                return@launch
-            }
-            show(
-                title = data["title"] ?: "WishKaro",
-                body = data["body"].orEmpty(),
-                deepLink = data["deepLink"],
-                channelId = if (data["type"] == "TEST") {
-                    NotificationChannels.SELF_TEST
-                } else {
-                    NotificationChannels.MORNING_OF
-                },
-                notificationId = dedupeKey.hashCode(),
+            // One implementation of claim -> draw -> report, shared with the local alarm.
+            // The two paths must produce exactly one notification between them (FR-REM-02),
+            // and the surest way to make that true is for there to be only one piece of code
+            // that can draw one.
+            val outcome = ReminderPresenter.present(
+                context = applicationContext,
+                local = local,
+                reminder = DeliverableReminder(
+                    dedupeKey = dedupeKey,
+                    title = data["title"] ?: "WishKaro",
+                    body = data["body"].orEmpty(),
+                    offset = data["offset"] ?: "D0",
+                    type = data["type"] ?: "REMINDER",
+                    personId = data["personId"],
+                    personName = data["personName"],
+                    sentiment = data["sentiment"],
+                    deepLink = data["deepLink"],
+                ),
+                channel = DeliveryChannel.FCM,
             )
+            Log.i(TAG, "Push $dedupeKey -> $outcome")
         }
-    }
-
-    private fun show(
-        title: String,
-        body: String,
-        deepLink: String?,
-        channelId: String,
-        notificationId: Int,
-    ) {
-        if (
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED &&
-            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
-        ) {
-            Log.w(TAG, "Reminder arrived but POST_NOTIFICATIONS is not granted")
-            return
-        }
-
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            if (deepLink != null) data = Uri.parse(deepLink)
-        }
-        val pending = PendingIntent.getActivity(
-            this,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(pending)
-            .build()
-
-        NotificationManagerCompat.from(this).notify(notificationId, notification)
     }
 
     private companion object {

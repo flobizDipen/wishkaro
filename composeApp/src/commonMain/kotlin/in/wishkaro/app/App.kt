@@ -18,6 +18,7 @@ import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
 import `in`.wishkaro.app.ui.person.EventEditorScreen
 import `in`.wishkaro.app.ui.person.PersonDetailScreen
+import `in`.wishkaro.app.ui.settings.SettingsScreen
 import `in`.wishkaro.app.ui.signin.SignInScreen
 import `in`.wishkaro.app.ui.theme.WishKaroTheme
 import org.koin.compose.koinInject
@@ -36,6 +37,9 @@ fun App(modifier: Modifier = Modifier) {
         val busy by store.busy.collectAsState()
         val message by store.message.collectAsState()
         val focused by store.focusedPersonId.collectAsState()
+        val settings by store.settings.collectAsState()
+        val reliability by store.reliability.collectAsState()
+        val selfTest by store.selfTest.collectAsState()
         val snackbar = remember { SnackbarHostState() }
 
         LaunchedEffect(Unit) { store.start() }
@@ -66,7 +70,7 @@ fun App(modifier: Modifier = Modifier) {
                     onClearFilter = store::clearFilter,
                     onOpenDeleted = store::openDeleted,
                     onRefresh = store::refresh,
-                    onTestReminder = store::sendTestReminder,
+                    onOpenSettings = store::openSettings,
                     onSignOut = store::signOut,
                     modifier = inner,
                 )
@@ -115,6 +119,19 @@ fun App(modifier: Modifier = Modifier) {
                     onSave = { type, label, date ->
                         store.saveEvent(current.personId, current.eventId, type, label, date)
                     },
+                    modifier = inner,
+                )
+
+                Screen.Settings -> SettingsScreen(
+                    settings = settings,
+                    reliability = reliability,
+                    selfTest = selfTest,
+                    onBack = store::back,
+                    onChange = store::updateSettings,
+                    onSendTest = store::sendTestReminder,
+                    onDismissTest = store::dismissSelfTest,
+                    onOpenBatterySettings = store::openBatterySettings,
+                    onRequestExactAlarms = store::requestExactAlarms,
                     modifier = inner,
                 )
 

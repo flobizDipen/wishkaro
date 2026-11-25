@@ -1,0 +1,75 @@
+-- The reminder plan the server handed down, and the alarms armed from it (FR-REM-02).
+--
+-- This table is the TRUTH; the AlarmManager alarms are derived state. Alarms do not survive
+-- a reboot, an app update or a force-stop, and on several Indian OEMs force-stop is what the
+-- battery manager does to you overnight — so re-arming has to be possible from something
+-- durable, and this is it.
+--
+-- Everything here was rendered by the server (GET /v1/reminders/plan). The client does not
+-- compute the schedule or the copy: see docs/M2_PLAN.md §1.3. The one exception is a
+-- LOCAL_FALLBACK row for an event created offline that the server has never seen, which
+-- carries deliberately tone-neutral text.
+CREATE TABLE scheduled_reminder (
+    dedupe_key    TEXT NOT NULL PRIMARY KEY,
+    scheduled_at  TEXT NOT NULL,
+    offset_rung   TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    body          TEXT NOT NULL,
+    person_id     TEXT,
+    person_name   TEXT,
+    event_type    TEXT,
+    sentiment     TEXT,
+    deep_link     TEXT,
+    -- PLAN           — from the server's plan, and owned by it: a refresh deletes any row
+    --                  the latest plan no longer contains.
+    -- LOCAL_FALLBACK — computed here for an event the server has never seen, and owned by
+    --                  rebuildLocalFallbacks(), which withdraws it once the event syncs.
+    -- SNOOZE         — written by the user tapping Snooze 1h, and owned by NOBODY but the
+    --                  alarm itself. It is a third value rather than a flag on
+    --                  LOCAL_FALLBACK because both reconciliations work by deleting whatever
+    --                  they do not currently want, and a snooze is by definition not wanted
+    --                  by either of them — it was asked for.
+    source        TEXT NOT NULL DEFAULT 'PLAN',
+    -- Set once the alarm has actually fired, so a re-arm after reboot does not replay it.
+    fired_at      TEXT
+);
+
+CREATE INDEX scheduled_reminder_at ON scheduled_reminder(scheduled_at);
+
+upsert:
+INSERT OR REPLACE INTO scheduled_reminder(
+    dedupe_key, scheduled_at, offset_rung, title, body,
+    person_id, person_name, event_type, sentiment, deep_link, source, fired_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT fired_at FROM scheduled_reminder WHERE dedupe_key = ?));
+
+byKey:
+SELECT * FROM scheduled_reminder WHERE dedupe_key = ?;
+
+-- Everything still ahead of us, soonest first. What the re-arm pass walks.
+upcoming:
+SELECT * FROM scheduled_reminder WHERE fired_at IS NULL AND scheduled_at >= ? ORDER BY scheduled_at LIMIT ?;
+
+-- Anything whose moment passed while the device was off or force-stopped. Caught up on the
+-- next launch rather than lost, which is the whole point of the fallback.
+overdue:
+SELECT * FROM scheduled_reminder WHERE fired_at IS NULL AND scheduled_at < ? ORDER BY scheduled_at;
+
+markFired:
+UPDATE scheduled_reminder SET fired_at = ? WHERE dedupe_key = ?;
+
+-- Rows the latest plan no longer contains: a reminder the server cancelled, muted or moved
+-- to a different key. Deleted so their alarms can be cancelled.
+staleFromPlan:
+SELECT * FROM scheduled_reminder WHERE source = 'PLAN' AND dedupe_key NOT IN ?;
+
+delete:
+DELETE FROM scheduled_reminder WHERE dedupe_key = ?;
+
+deleteLocalFallbacksFor:
+DELETE FROM scheduled_reminder WHERE source = 'LOCAL_FALLBACK' AND person_id = ?;
+
+localFallbacks:
+SELECT * FROM scheduled_reminder WHERE source = 'LOCAL_FALLBACK';
+
+deleteAll:
+DELETE FROM scheduled_reminder;

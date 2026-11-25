@@ -13,5 +13,19 @@ INSERT OR IGNORE INTO seen_reminder(dedupe_key, seen_at) VALUES (?, ?);
 wasSeen:
 SELECT EXISTS(SELECT 1 FROM seen_reminder WHERE dedupe_key = ?);
 
+-- Gives a claim back when the notification could not actually be drawn.
+--
+-- Without this the claim is permanent, and a reminder blocked by a missing POST_NOTIFICATIONS
+-- permission is lost for good: the catch-up pass in rearmAll() — which exists precisely to
+-- deliver a reminder whose moment passed while the app was dead — takes the "already seen"
+-- branch and suppresses it as a duplicate. The user grants permission half an hour later and
+-- the reminder never arrives, and does not come round again for a year.
+--
+-- It also keeps the self-test honest: wasSeen() is what FR-REM-07 polls, so a claim with
+-- nothing drawn would report a blocked notification as delivered — on exactly the phones
+-- whose blocking that feature exists to diagnose.
+releaseClaim:
+DELETE FROM seen_reminder WHERE dedupe_key = ?;
+
 deleteAll:
 DELETE FROM seen_reminder;

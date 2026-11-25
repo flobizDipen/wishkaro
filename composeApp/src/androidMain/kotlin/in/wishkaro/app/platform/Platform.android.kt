@@ -5,7 +5,6 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import `in`.wishkaro.app.BuildConfig
 import java.util.TimeZone
-import java.util.UUID
 import wishkaro.db.WishKaroDb
 
 actual class DatabaseDriverFactory(private val context: Context) {
@@ -24,4 +23,3 @@ actual object PlatformConfig {
 
 actual fun currentTimeZoneId(): String = TimeZone.getDefault().id
 
-actual fun newId(): String = UUID.randomUUID().toString()

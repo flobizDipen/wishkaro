@@ -155,11 +155,50 @@ export const TraitUpsertSchema = z
   })
   .strict();
 
+/**
+ * The user's reminder settings, riding on the sync batch rather than being a fourth cursor
+ * entity (FR-REM-03 / FR-REM-09). One row per user: paging it would be absurd, and a cursor
+ * for a single row is a third ordering key for every client to get right.
+ *
+ * Optional, because most pushes are people and events. Carries its own `updatedAt` so the
+ * same per-record last-write-wins applies here as everywhere else.
+ */
+const SettingsPushSchema = z
+  .object({
+    reminderHour: z.number().int().min(0).max(23),
+    ladderD7: z.boolean(),
+    ladderD1: z.boolean(),
+    ladderD0: z.boolean(),
+    /**
+     * Nullish, not nullable.
+     *
+     * The client serialises with `explicitNulls = false`, so a null quiet-hours window is
+     * OMITTED from the JSON rather than sent as `null`. A required-but-nullable field
+     * therefore rejects every push made with quiet hours switched off — which is the default
+     * state, so it rejected almost everything. Observed on the phone: a settings change sat
+     * in the outbox forever and the sync kept returning 400.
+     *
+     * An absent key means null here, not "leave it alone", because this is a whole-blob push:
+     * every other field is required, so the batch is always the complete settings state.
+     */
+    quietHoursStart: z.number().int().min(0).max(23).nullish().transform((v) => v ?? null),
+    quietHoursEnd: z.number().int().min(0).max(23).nullish().transform((v) => v ?? null),
+    digestEnabled: z.boolean(),
+    digestHour: z.number().int().min(0).max(23),
+    updatedAt: IsoInstant,
+  })
+  .strict()
+  .refine((v) => (v.quietHoursStart === null) === (v.quietHoursEnd === null), {
+    message: 'quiet hours must be set or cleared together — a half-set window silences the app',
+    path: ['quietHoursEnd'],
+  });
+
 export const SyncPushSchema = z
   .object({
     people: z.array(PersonUpsertSchema).max(500).default([]),
     events: z.array(EventUpsertSchema).max(500).default([]),
     traits: z.array(TraitUpsertSchema).max(500).default([]),
+    settings: SettingsPushSchema.optional(),
   })
   .strict();
 

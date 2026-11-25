@@ -1,6 +1,7 @@
 package `in`.wishkaro.app.data.remote
 
 import `in`.wishkaro.app.data.TokenStore
+import `in`.wishkaro.app.data.repository.PlanApi
 import `in`.wishkaro.app.data.repository.SyncApi
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -18,6 +19,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 
 class ApiException(
@@ -39,7 +42,10 @@ class WishKaroApi(
     private val tokens: TokenStore,
     engine: HttpClientEngine? = null,
     private val onSessionExpired: suspend () -> Unit = {},
-) : SyncApi {
+) : SyncApi, PlanApi {
+    /** Serialises token rotation. See [renewAccessToken] for why this is load-bearing. */
+    private val refreshMutex = Mutex()
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -88,6 +94,22 @@ class WishKaroApi(
             client.post("$baseUrl/v1/reminders/test") { header("Authorization", "Bearer $token") }
         }.decode()
 
+    override suspend fun fetchPlan(days: Int): PlanResponse =
+        authed { token ->
+            client.get("$baseUrl/v1/reminders/plan") {
+                header("Authorization", "Bearer $token")
+                parameter("days", days)
+            }
+        }.decode()
+
+    override suspend fun reportDelivery(body: DeliveryReportRequest): DeliveryReportResponse =
+        authed { token ->
+            client.post("$baseUrl/v1/reminders/delivery") {
+                header("Authorization", "Bearer $token")
+                setBody(body)
+            }
+        }.decode()
+
     override suspend fun syncPull(cursor: String?): SyncPullResponse =
         authed { token ->
             client.get("$baseUrl/v1/sync") {
@@ -112,6 +134,32 @@ class WishKaroApi(
         val response = call(access)
         if (response.status != HttpStatusCode.Unauthorized) return response
 
+        val renewed = renewAccessToken(usedToken = access)
+        return call(renewed)
+    }
+
+    /**
+     * Exchanges the refresh token for a new pair — at most once, however many callers need it.
+     *
+     * The mutex is not an optimisation. Refresh tokens ROTATE: using one invalidates it and
+     * mints a replacement, which is what makes a stolen token detectable (see RefreshToken in
+     * schema.prisma). So two coroutines that both hit a 401 on an expired access token and
+     * both POST the same refresh token produce one success and one failure — and the failure
+     * path clears the session and signs the user out.
+     *
+     * M0 and M1 never saw this because they only ever made one authenticated call at a time.
+     * M2 fetches the reminder plan alongside a sync and drains the delivery outbox alongside
+     * a push, so the race became reachable, and it was observed: the phone signed itself out
+     * on the first launch after the M2 server deployed.
+     *
+     * [usedToken] is the access token the caller already found to be rejected. Re-reading the
+     * store after taking the lock and finding something different means another coroutine has
+     * already refreshed, so this one takes that result instead of burning a second rotation.
+     */
+    private suspend fun renewAccessToken(usedToken: String): String = refreshMutex.withLock {
+        val current = tokens.accessToken()
+        if (current != null && current != usedToken) return@withLock current
+
         val refreshToken = tokens.refreshToken()
         if (refreshToken == null) {
             onSessionExpired()
@@ -125,7 +173,7 @@ class WishKaroApi(
             throw ApiException(401, "SESSION_EXPIRED", "Please sign in again")
         }
         tokens.save(renewed.accessToken, renewed.refreshToken)
-        return call(renewed.accessToken)
+        renewed.accessToken
     }
 
     private suspend inline fun <reified T> HttpResponse.decode(): T {

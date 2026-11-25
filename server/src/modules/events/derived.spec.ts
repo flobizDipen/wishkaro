@@ -275,3 +275,65 @@ describe('completenessSuggestions', () => {
     expect(completenessSuggestions(profile({ isMinor: true }))).toEqual([]);
   });
 });
+
+/**
+ * The invariant the CLIENT leans on to tell "complete" apart from "not scored yet".
+ *
+ * `person_detail` has only two signals: the score and the mirrored suggestion list. A person
+ * the server has never scored has an empty list AND a score of 0, which is indistinguishable
+ * from a perfect profile unless this holds — so it is asserted here rather than assumed over
+ * there. Breaking it would make a freshly added person claim there is nothing left to add.
+ */
+describe('a sub-100 score always has something to suggest (non-minor)', () => {
+  const base: CompletenessInput = {
+    relationToOwner: null,
+    gender: null,
+    phone: null,
+    email: null,
+    notes: null,
+    birthday: null,
+    traitKinds: [],
+    isMinor: false,
+  };
+
+  it('holds for an empty profile', () => {
+    expect(completenessScore(base)).toBe(0);
+    expect(completenessSuggestions(base).length).toBeGreaterThan(0);
+  });
+
+  it('holds for every partially-filled profile reachable by one field', () => {
+    const variations: Array<Partial<CompletenessInput>> = [
+      { relationToOwner: 'Friend' },
+      { gender: 'female' },
+      { phone: '+919812345678' },
+      { email: 'a@b.test' },
+      { notes: 'likes trains' },
+      { birthday: { day: 2, month: 12, year: 1990 } },
+      { traitKinds: ['HOBBY'] },
+      { traitKinds: ['HOBBY', 'LIKE'] },
+      { traitKinds: ['HOBBY', 'LIKE', 'DISLIKE'] },
+    ];
+    for (const v of variations) {
+      const input = { ...base, ...v };
+      const score = completenessScore(input);
+      const suggestions = completenessSuggestions(input);
+      expect(score).toBeLessThan(100);
+      expect(suggestions.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('and only a 100 score has nothing left', () => {
+    const complete: CompletenessInput = {
+      relationToOwner: 'Friend',
+      gender: 'female',
+      phone: '+919812345678',
+      email: 'a@b.test',
+      notes: 'likes trains',
+      birthday: { day: 2, month: 12, year: 1990 },
+      traitKinds: ['HOBBY', 'LIKE', 'DISLIKE', 'BUDGET_BAND'],
+      isMinor: false,
+    };
+    expect(completenessScore(complete)).toBe(100);
+    expect(completenessSuggestions(complete)).toEqual([]);
+  });
+});

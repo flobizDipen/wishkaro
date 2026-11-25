@@ -106,6 +106,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
             implementation(libs.ktor.client.mock)
+            implementation(libs.koin.test)
         }
 
         androidMain.dependencies {
@@ -119,6 +120,7 @@ kotlin {
             implementation(libs.sqldelight.android.driver)
 
             implementation(libs.androidx.security.crypto)
+            implementation(libs.androidx.work.runtime)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.googleid)

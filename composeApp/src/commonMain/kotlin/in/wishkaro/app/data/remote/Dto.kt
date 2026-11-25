@@ -51,6 +51,93 @@ data class TestReminderResponse(
     val message: String? = null,
 )
 
+/**
+ * What this device did with a reminder (FR-REM-10).
+ *
+ * Batched because the reports that matter most are written while the phone has no network —
+ * a local alarm firing during an outage is the case the whole fallback exists for — so they
+ * queue locally and leave in a group when the radio comes back.
+ */
+@Serializable
+data class DeliveryReportDto(
+    val dedupeKey: String,
+    val outcome: String,
+    val channel: String,
+    val occurredAtUtc: String,
+)
+
+@Serializable
+data class DeliveryReportRequest(val reports: List<DeliveryReportDto>)
+
+/**
+ * The user's reminder settings as the server sends them DOWN (FR-REM-03, FR-REM-08,
+ * FR-REM-09).
+ *
+ * Not the push shape — see [SettingsPush]. `timezone` is on this one and not on that one,
+ * because the device reports its timezone through POST /v1/devices and the server's write
+ * schema is `.strict()`: sending it back up is a 400, not a no-op. Two types rather than one,
+ * for the same reason SyncPersonDto and SyncPersonPush are two types — so the next person to
+ * add a field gets a compile error instead of a field report.
+ */
+@Serializable
+data class SettingsDto(
+    val reminderHour: Int = 9,
+    val ladderD7: Boolean = true,
+    val ladderD1: Boolean = true,
+    val ladderD0: Boolean = true,
+    val quietHoursStart: Int? = null,
+    val quietHoursEnd: Int? = null,
+    val digestEnabled: Boolean = false,
+    val digestHour: Int = 9,
+    val timezone: String = "Asia/Kolkata",
+    val updatedAt: String = "1970-01-01T00:00:00Z",
+)
+
+/**
+ * One already-rendered reminder from GET /v1/reminders/plan (FR-REM-02).
+ *
+ * The client does not build any of this. The title and body were written by the server's copy
+ * layer, which is the only place the SOLEMN string set exists — see docs/M2_PLAN.md §1.3.
+ */
+@Serializable
+data class PlanReminderDto(
+    val dedupeKey: String,
+    val scheduledAtUtc: String,
+    val offset: String = "D0",
+    val type: String = "REMINDER",
+    val title: String,
+    val body: String = "",
+    val personId: String? = null,
+    val personName: String? = null,
+    val eventType: String? = null,
+    val sentiment: String? = null,
+    val deepLink: String? = null,
+)
+
+@Serializable
+data class PlanResponse(
+    val horizonDays: Int = 60,
+    val reminders: List<PlanReminderDto> = emptyList(),
+    val serverTime: String? = null,
+)
+
+@Serializable
+data class DeliveryReportResponse(val recorded: Int = 0, val unknown: Int = 0)
+
+/** What the client is allowed to write. Every field here is the user's own choice. */
+@Serializable
+data class SettingsPush(
+    val reminderHour: Int,
+    val ladderD7: Boolean,
+    val ladderD1: Boolean,
+    val ladderD0: Boolean,
+    val quietHoursStart: Int? = null,
+    val quietHoursEnd: Int? = null,
+    val digestEnabled: Boolean,
+    val digestHour: Int,
+    val updatedAt: String,
+)
+
 // ---- sync ----
 
 /**
@@ -151,6 +238,8 @@ data class SyncPullResponse(
     val people: List<SyncPersonDto> = emptyList(),
     val events: List<SyncEventDto> = emptyList(),
     val traits: List<SyncTraitDto> = emptyList(),
+    /** Always present from M2; nullable so an older server does not break the client. */
+    val settings: SettingsDto? = null,
     val cursor: String,
     val hasMore: Boolean = false,
     val serverTime: String? = null,
@@ -161,6 +250,7 @@ data class SyncPushRequest(
     val people: List<SyncPersonPush> = emptyList(),
     val events: List<SyncEventPush> = emptyList(),
     val traits: List<SyncTraitPush> = emptyList(),
+    val settings: SettingsPush? = null,
 )
 
 @Serializable
@@ -173,6 +263,8 @@ data class SyncSkipped(val id: String, val entity: String, val reason: String)
 data class SyncPushResponse(
     val applied: SyncApplied = SyncApplied(),
     val skipped: List<SyncSkipped> = emptyList(),
+    /** The settings as they stand after the push — present only when the client sent some. */
+    val settings: SettingsDto? = null,
     val serverTime: String? = null,
 )
 

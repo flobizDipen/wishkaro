@@ -25,6 +25,10 @@ androidx-activity = "1.10.1"
 # Same reason as androidx-activity: 1.19.0 requires AGP 9.1+ and compileSdk 37.
 androidx-core = "1.16.0"
 androidx-security-crypto = "1.1.0"
+# WorkManager is the NET under AlarmManager, not a replacement for it: it cannot express an
+# exact time, and a 09:00 reminder arriving at 14:00 is the failure M2 exists to prevent.
+# Its job is to re-arm alarms a force-stop or a reboot destroyed. See docs/M2_PLAN.md §5.
+androidx-work = "2.10.1"
 androidx-credentials = "1.6.0"
 googleid = "1.2.1"
 firebase-bom = "35.2.0"
@@ -52,6 +56,10 @@ koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-android = { module = "io.insert-koin:koin-android", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
+# Test-only. Module.verify() checks every constructor dependency against the declared
+# definitions WITHOUT instantiating anything — which is the one class of bug that compiles,
+# passes every unit test, and then throws on the first launch.
+koin-test = { module = "io.insert-koin:koin-test", version.ref = "koin" }
 
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
@@ -63,6 +71,7 @@ sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", versi
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidx-security-crypto" }
+androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "androidx-credentials" }
 androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "androidx-credentials" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }

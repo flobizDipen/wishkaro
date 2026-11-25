@@ -140,6 +140,20 @@ export function yearsAt(spec: EventDateSpec, occurrenceYear: number): number | n
   return occurrenceYear - spec.year;
 }
 
+/**
+ * A civil date shifted by whole days. Negative moves earlier — which is every use it has,
+ * because the ladder's rungs are all *before* the occurrence (FR-REM-03).
+ *
+ * Calendar arithmetic, not 86400-second arithmetic: the 1 Jan occurrence's T-7 rung is
+ * 25 December of the previous year, and the month, year and leap-year rollovers all have to
+ * be right. Done in UTC on purpose — these are dates with no time, and routing them through
+ * a zone to subtract a week is how a DST transition turns T-7 into T-7-and-a-bit.
+ */
+export function shiftCivil(date: CivilDate, days: number): CivilDate {
+  const shifted = DateTime.fromObject(date, { zone: 'utc' }).plus({ days });
+  return { year: shifted.year, month: shifted.month, day: shifted.day };
+}
+
 /** Whole days from today to the occurrence, in the owner's timezone. 0 means today. */
 export function daysUntil(occursOn: CivilDate, zone: string, now: Date): number {
   const today = todayIn(zone, now);

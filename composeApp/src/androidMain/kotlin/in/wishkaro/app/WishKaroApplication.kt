@@ -8,6 +8,8 @@ import `in`.wishkaro.app.di.platformModule
 import `in`.wishkaro.app.platform.NotificationChannels
 import org.koin.android.ext.koin.androidContext
 import `in`.wishkaro.app.platform.NotificationGateway
+import `in`.wishkaro.app.platform.ReminderScheduler
+import `in`.wishkaro.app.push.ReminderUpkeepWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -33,6 +35,27 @@ class WishKaroApplication : Application() {
         NotificationChannels.createAll(this)
 
         logPushTokenInDebugBuilds()
+        armReminders()
+    }
+
+    /**
+     * Re-arms the local alarms, and schedules the repair job that keeps doing it.
+     *
+     * Done at process start rather than when the UI appears, because the two things that
+     * destroy alarms — a force-stop by an OEM battery manager, and the user swiping the app
+     * away — both leave the next launch as the first chance to notice. The launch may well be
+     * a push or an alarm waking the process rather than a person opening the app, which is
+     * exactly when it matters most.
+     *
+     * Reads only the stored plan, so it works with no network and finishes in milliseconds.
+     */
+    private fun armReminders() {
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                GlobalContext.get().get<ReminderScheduler>().rearmAll()
+                ReminderUpkeepWorker.enqueue(this@WishKaroApplication)
+            }.onFailure { Log.w("WishKaro", "Could not arm reminders at launch", it) }
+        }
     }
 
     /**

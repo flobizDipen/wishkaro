@@ -1,0 +1,58 @@
+-- The user's reminder settings (FR-REM-03, FR-REM-08, FR-REM-09), mirrored locally.
+--
+-- Exactly one row, id = 0, like sync_state. Not a sync-cursor entity: there is one row per
+-- user and paging it would be absurd, so the blob rides on the /v1/sync pull and push and
+-- `updated_at` decides whose copy is newer — the same per-record last-write-wins everything
+-- else uses.
+--
+-- Seeded with the server's own defaults so the Settings screen has something to draw before
+-- the first sync, and so a reminder scheduled offline uses the same hour the server would.
+CREATE TABLE user_settings (
+    id                 INTEGER NOT NULL PRIMARY KEY,
+    reminder_hour      INTEGER NOT NULL DEFAULT 9,
+    ladder_d7          INTEGER NOT NULL DEFAULT 1,
+    ladder_d1          INTEGER NOT NULL DEFAULT 1,
+    ladder_d0          INTEGER NOT NULL DEFAULT 1,
+    quiet_hours_start  INTEGER,
+    quiet_hours_end    INTEGER,
+    digest_enabled     INTEGER NOT NULL DEFAULT 0,
+    digest_hour        INTEGER NOT NULL DEFAULT 9,
+    timezone           TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    updated_at         TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+    pending_sync       INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT OR IGNORE INTO user_settings(id) VALUES (0);
+
+select:
+SELECT * FROM user_settings WHERE id = 0;
+
+-- A local edit. `pending_sync = 1` puts it in the outbox; the clock is the device's, and the
+-- server accepts it only if it is strictly newer than its own.
+saveLocal:
+UPDATE user_settings SET
+    reminder_hour = ?, ladder_d7 = ?, ladder_d1 = ?, ladder_d0 = ?,
+    quiet_hours_start = ?, quiet_hours_end = ?,
+    digest_enabled = ?, digest_hour = ?,
+    updated_at = ?, pending_sync = 1
+WHERE id = 0;
+
+-- The server's copy. Overwrites unconditionally; the caller compares timestamps first.
+applyRemote:
+UPDATE user_settings SET
+    reminder_hour = ?, ladder_d7 = ?, ladder_d1 = ?, ladder_d0 = ?,
+    quiet_hours_start = ?, quiet_hours_end = ?,
+    digest_enabled = ?, digest_hour = ?, timezone = ?,
+    updated_at = ?, pending_sync = 0
+WHERE id = 0;
+
+clearPending:
+UPDATE user_settings SET pending_sync = 0 WHERE id = 0;
+
+reset:
+UPDATE user_settings SET
+    reminder_hour = 9, ladder_d7 = 1, ladder_d1 = 1, ladder_d0 = 1,
+    quiet_hours_start = NULL, quiet_hours_end = NULL,
+    digest_enabled = 0, digest_hour = 9, timezone = 'Asia/Kolkata',
+    updated_at = '1970-01-01T00:00:00Z', pending_sync = 0
+WHERE id = 0;

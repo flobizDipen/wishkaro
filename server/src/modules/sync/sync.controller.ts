@@ -28,9 +28,16 @@ export class SyncController {
     @Body(new ZodValidationPipe(SyncPushSchema)) body: z.infer<typeof SyncPushSchema>,
   ): Promise<SyncPushResult> {
     const result = await this.sync.push(userId, body);
-    if (result.applied.events > 0 || result.applied.people > 0) {
-      // Close the loop immediately: a birthday added on the phone should be scheduled before
-      // the user has finished putting the phone down.
+    // Close the loop immediately: a birthday added on the phone should be scheduled before
+    // the user has finished putting the phone down.
+    //
+    // A settings blob counts, because the hour, the ladder toggles and the quiet window all
+    // move the instants of reminders that already exist — a change made offline and synced
+    // later must take effect on arrival, not at the next ten-minute tick. `body.settings`
+    // rather than `result.settings`, since the result is also returned when the client's copy
+    // LOST, and losing changed nothing.
+    const settingsPushed = body.settings !== undefined && result.settings !== undefined;
+    if (result.applied.events > 0 || result.applied.people > 0 || settingsPushed) {
       await this.scheduler.materialiseNow(userId);
     }
     return result;

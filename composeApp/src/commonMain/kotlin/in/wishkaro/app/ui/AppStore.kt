@@ -10,7 +10,15 @@ import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
+import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.data.repository.ReminderPlanRepository
+import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.platform.NotificationGateway
+import `in`.wishkaro.app.platform.OemBatteryHelper
+import `in`.wishkaro.app.platform.OemHelperOutcome
+import `in`.wishkaro.app.platform.OemInstructions
+import `in`.wishkaro.app.platform.OemVendor
+import `in`.wishkaro.app.platform.ReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -19,8 +27,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.todayIn
 
@@ -34,6 +44,35 @@ sealed interface Screen {
     /** `eventId == null` means a new event on that person. */
     data class EventEditor(val personId: String, val eventId: String?) : Screen
     data object Deleted : Screen
+
+    /** M2 creates this screen; the app had no settings at all before now (FR-SET-01). */
+    data object Settings : Screen
+}
+
+/**
+ * What the Settings screen knows about this device's ability to actually deliver a reminder
+ * (FR-SET-02, FR-REM-06).
+ *
+ * Kept apart from [ReminderSettings] because none of it is a user preference — it is what the
+ * operating system is currently willing to let this app do, and it changes underneath the app
+ * without any write from here.
+ */
+data class ReliabilityState(
+    val notificationsAllowed: Boolean = true,
+    val exactAlarmsAllowed: Boolean = true,
+    val batteryUnrestricted: Boolean = true,
+    val vendor: OemVendor = OemVendor.OTHER,
+    val instructions: List<String> = emptyList(),
+)
+
+/** What the self-test has observed so far (FR-REM-07). */
+sealed interface SelfTestState {
+    data object Idle : SelfTestState
+    data object Queueing : SelfTestState
+    data class Waiting(val dedupeKey: String, val since: Instant) : SelfTestState
+    data class Delivered(val secondsTaken: Long) : SelfTestState
+    data class NotArrived(val dedupeKey: String) : SelfTestState
+    data class Failed(val reason: String) : SelfTestState
 }
 
 /** Search and filter state for the people list (FR-PPL-10). */
@@ -56,7 +95,12 @@ class AppStore(
     private val auth: AuthRepository,
     private val people: PeopleRepository,
     private val notifications: NotificationGateway,
+    private val local: LocalStore,
+    private val plan: ReminderPlanRepository,
+    private val scheduler: ReminderScheduler,
+    private val oem: OemBatteryHelper,
     private val scope: CoroutineScope,
+    private val now: () -> Instant = Clock.System::now,
 ) {
     private val backStack = ArrayDeque<Screen>()
 
@@ -78,6 +122,15 @@ class AppStore(
      */
     private val _duplicates = MutableStateFlow<List<Person>>(emptyList())
     val duplicates: StateFlow<List<Person>> = _duplicates.asStateFlow()
+
+    private val _settings = MutableStateFlow(ReminderSettings())
+    val settings: StateFlow<ReminderSettings> = _settings.asStateFlow()
+
+    private val _reliability = MutableStateFlow(ReliabilityState())
+    val reliability: StateFlow<ReliabilityState> = _reliability.asStateFlow()
+
+    private val _selfTest = MutableStateFlow<SelfTestState>(SelfTestState.Idle)
+    val selfTest: StateFlow<SelfTestState> = _selfTest.asStateFlow()
 
     /** Set when a notification was tapped, so the list can highlight them. */
     private val _focusedPersonId = MutableStateFlow<String?>(null)
@@ -172,13 +225,99 @@ class AppStore(
                 _message.value = "Could not register for notifications: ${it.message}"
             }
             people.syncNow().onFailure { _message.value = "Sync failed: ${it.message}" }
+            // Settings first, so the Settings screen and any local fallback are working from
+            // the user's real hours rather than the defaults.
+            _settings.value = local.reminderSettings()
+            // Then the plan, which also re-arms every alarm. Failure is silent by design:
+            // the alarms already on the device keep working, and that is the whole reason
+            // they are stored rather than held in memory.
+            plan.refresh()
+            refreshReliability()
         }
     }
 
+    // -----------------------------------------------------------------------------------
+    // Settings (FR-REM-03, FR-REM-08, FR-REM-09, FR-SET-01)
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Saves a settings change locally, then syncs.
+     *
+     * Local first, always. The screen must respond with the network off — that is the whole
+     * architecture — and the server's materialiser re-runs the moment the push lands, so a
+     * change made in aeroplane mode takes effect on the device immediately and on the server
+     * as soon as it can.
+     */
+    fun updateSettings(transform: (ReminderSettings) -> ReminderSettings) {
+        scope.launch {
+            val next = transform(_settings.value)
+            _settings.value = next
+            local.saveSettingsLocally(next, now().toString())
+            people.syncNow()
+            // The server may have rewritten every pending instant — a new delivery hour, a
+            // new quiet window — so the local plan is stale until it is refetched.
+            _settings.value = local.reminderSettings()
+            plan.refresh()
+        }
+    }
+
+    fun refreshReliability() {
+        scope.launch {
+            val vendor = oem.vendor()
+            _reliability.value = ReliabilityState(
+                notificationsAllowed = notifications.hasPermission(),
+                exactAlarmsAllowed = scheduler.canScheduleExact(),
+                batteryUnrestricted = oem.isIgnoringBatteryOptimisations(),
+                vendor = vendor,
+                instructions = _reliability.value.instructions,
+            )
+        }
+    }
+
+    /**
+     * Opens the OEM's own autostart / battery screen (FR-REM-06).
+     *
+     * The instructions shown afterwards depend on where the user actually LANDED, not on
+     * what we hoped would open — telling someone to look for "Autostart" on a screen headed
+     * "Battery optimisation" is how a helper becomes noise.
+     */
+    fun openBatterySettings() {
+        scope.launch {
+            val vendor = oem.vendor()
+            val outcome = oem.openSettings()
+            _reliability.value = _reliability.value.copy(
+                vendor = vendor,
+                instructions = OemInstructions.forVendor(vendor, outcome),
+            )
+            if (outcome == OemHelperOutcome.NOTHING) {
+                _message.value = "Could not open your phone's battery settings — see the steps below"
+            }
+        }
+    }
+
+    fun requestExactAlarms() {
+        scheduler.requestExactAlarmPermission()
+    }
+
+    /**
+     * Pull to refresh, and everything that word has to mean now.
+     *
+     * Records are only half of it. The reminder plan is what the device's own alarms are
+     * armed from, so a sync that updates the people list and leaves a stale plan behind
+     * produces an app that LOOKS up to date and will fire yesterday's reminders. Settings
+     * are re-read for the same reason: the server may have handed down a copy that moved
+     * every pending instant.
+     */
     fun refresh() {
         scope.launch {
             _busy.value = true
             people.syncNow().onFailure { _message.value = "Sync failed: ${it.message}" }
+            _settings.value = local.reminderSettings()
+            // Silent on failure, like every other call site: the alarms already armed keep
+            // working, which is the whole reason the plan is stored rather than held in
+            // memory.
+            plan.refresh()
+            refreshReliability()
             _busy.value = false
         }
     }
@@ -191,15 +330,44 @@ class AppStore(
         }
     }
 
-    /** FR-REM-07: the user proves delivery to themselves, without waiting until 09:00. */
+    /**
+     * FR-REM-07: the user proves delivery to themselves, without waiting until 09:00.
+     *
+     * The endpoint has existed since M0 and it fired and forgot. That is the half that does
+     * not help: the point is for the user to end up CONVINCED, and "queued" is not evidence.
+     * So the key is held and the device's own de-duplication table is polled — the one place
+     * that knows for certain whether a notification was drawn on this handset.
+     *
+     * A timeout reports "never arrived" rather than failing silently, because that outcome is
+     * the whole reason the feature exists: it is what tells a Xiaomi owner that the battery
+     * manager is eating their reminders, and it is the cue for the OEM helper above.
+     */
     fun sendTestReminder() {
         scope.launch {
-            _busy.value = true
-            auth.requestTestReminder()
-                .onSuccess { _message.value = "Test reminder queued — it lands in about 2 minutes" }
-                .onFailure { _message.value = "Could not queue a test: ${it.message}" }
-            _busy.value = false
+            _selfTest.value = SelfTestState.Queueing
+            val queued = auth.requestTestReminder()
+                .onFailure {
+                    _selfTest.value = SelfTestState.Failed(it.message ?: "Could not reach the server")
+                }
+                .getOrNull() ?: return@launch
+
+            val startedAt = now()
+            _selfTest.value = SelfTestState.Waiting(queued.dedupeKey, startedAt)
+
+            repeat(SELF_TEST_POLLS) {
+                delay(SELF_TEST_POLL_MS)
+                if (local.wasReminderSeen(queued.dedupeKey)) {
+                    val seconds = (now() - startedAt).inWholeSeconds
+                    _selfTest.value = SelfTestState.Delivered(seconds)
+                    return@launch
+                }
+            }
+            _selfTest.value = SelfTestState.NotArrived(queued.dedupeKey)
         }
+    }
+
+    fun dismissSelfTest() {
+        _selfTest.value = SelfTestState.Idle
     }
 
     // -----------------------------------------------------------------------------------
@@ -220,6 +388,12 @@ class AppStore(
     fun openEditPerson(personId: String) = go(Screen.EditPerson(personId))
     fun openEventEditor(personId: String, eventId: String?) = go(Screen.EventEditor(personId, eventId))
     fun openDeleted() = go(Screen.Deleted)
+
+    fun openSettings() {
+        scope.launch { _settings.value = local.reminderSettings() }
+        refreshReliability()
+        go(Screen.Settings)
+    }
 
     fun back() {
         val previous = backStack.removeLastOrNull()
@@ -377,3 +551,7 @@ class AppStore(
         _message.value = null
     }
 }
+
+/** Two minutes of waiting plus a margin, polled often enough to feel live. */
+private const val SELF_TEST_POLLS = 40
+private const val SELF_TEST_POLL_MS = 5_000L
