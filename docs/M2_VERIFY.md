@@ -256,7 +256,7 @@ existed. Two details worth recording:
 
 ---
 
-## 5. Quiet hours — **server-side PASS, device UNCHECKED**
+## 5. Quiet hours — **PASS, on the device**
 
 ```bash
 curl -s -X PATCH $U/v1/me/settings -H "Authorization: Bearer $TOK" \
@@ -278,12 +278,38 @@ the client needs the rule for a local fallback the server has never seen. **The 
 prompt names first** — Asia/Kolkata, 22:00–07:00, a reminder due at 09:00 — is *outside* the
 window and is pinned not to move.
 
-**Unchecked on the device:** a reminder actually arriving at the end of a quiet window. That
-needs a real overnight wait.
+### On the phone, against Railway
+
+Settings → delivery time **11pm**, **Stay quiet overnight** on (22:00–07:00). After the sync,
+the plan the device holds:
+
+```
+ D7  2026-11-26T01:30:00Z  🎁 Offline Check M2's birthday is in a week
+ D1  2026-12-02T01:30:00Z  🎂 Offline Check M2's birthday is tomorrow
+ D0  2026-12-03T01:30:00Z  🎂 Offline Check M2's birthday is today
+ D7  2026-12-04T01:30:00Z  🎁 Ladder Proof's birthday is in a week
+ …
+```
+
+`01:30Z` is **07:00 Asia/Kolkata** — every rung deferred from 23:00 to the end of the window,
+and the dates rolled forward by one because 23:00 is on the near side of midnight. Switching
+the window off puts them all back to `03:30Z`.
+
+Note the first row: at a 09:00 delivery hour, Offline Check M2 had no D7 because its T-7 had
+already passed. At 23:00 it had not, so the rung materialised — and was then deferred to the
+next morning. Both behaviours fall out of the same two rules.
+
+**An observation, not a bug, but worth a decision later.** Choosing a delivery hour that sits
+inside your own quiet window pushes *morning-of* into the following day: a 2 December birthday
+notified at 07:00 on the 3rd. FR-REM-09 says deferred and not dropped, and that is what
+happens — but the Settings screen says nothing about it, and it probably should.
+
+**Unchecked on the device:** a deferred reminder actually arriving at 07:00. That needs a real
+overnight wait.
 
 ---
 
-## 6. Digest — **server-side PASS, device UNCHECKED**
+## 6. Digest — **PASS, on the device**
 
 ```bash
 curl -s -X PATCH $U/v1/me/settings -H "Authorization: Bearer $TOK" \
@@ -306,11 +332,45 @@ In 7 days: Ravi (birthday)
 with no emoji and no celebratory verb anywhere, because that list has to be safe on a line
 directly above a death anniversary.
 
-**Unchecked on the device:** a digest notification actually arriving.
+### On the phone, against Railway
+
+Settings → **One notification a day**. After the sync, the plan the device holds:
+
+```
+ DIGEST  2026-12-01T03:30:00Z  1 date coming up   Tomorrow: Offline Check M2 (birthday)
+ DIGEST  2026-12-02T03:30:00Z  1 date coming up   Today: Offline Check M2 (birthday)
+ DIGEST  2026-12-03T03:30:00Z  1 date coming up   In 7 days: Ladder Proof (birthday)
+ DIGEST  2026-12-09T03:30:00Z  1 date coming up   Tomorrow: Ladder Proof (birthday)
+ DIGEST  2026-12-10T03:30:00Z  1 date coming up   Today: Ladder Proof (birthday)
+ DIGEST  2026-12-14T03:30:00Z  1 date coming up   Tomorrow: Solemn Proof (remembrance)
+ DIGEST  2026-12-15T03:30:00Z  1 date coming up   Today: Solemn Proof (remembrance)
+```
+
+Not one per-event rung left, including the T-7 and T-1 ones — which is the decision in
+`M2_PLAN.md` §2.1 made visible. The solemn entry reads "(remembrance)", not "anniversary",
+and nothing in the list carries an emoji.
+
+Switching it off puts the full ladder back on the next sync, D7 included.
+
+The Settings screen also greys out the delivery-time picker while digest is on, with "The
+daily summary decides the time while it is on." — the FR-REM-03 / FR-REM-08 interaction said
+out loud rather than left for the user to discover.
+
+**Unchecked on the device:** a digest notification actually arriving at 09:00.
 
 ---
 
 ## 7. Self-test — **PASS**
+
+Observed on the phone, 19:26–19:28 IST:
+
+> **Check it works**
+> Arrived after **145 seconds**. Delivery works on this phone.
+
+with `WishKaroFcm: Push test:01a211dc-…:1795615088632 -> SHOWN` in the log and the
+notification on screen. The server had queued it two minutes out, so 145 seconds is the
+two-minute delay plus the send worker's 30-second tick.
+
 
 Settings → **Send a test reminder**. The screen moves through *Asking the server…* →
 *Waiting for it to arrive — keep this screen open.* → the outcome.
@@ -352,8 +412,8 @@ component names are the part most likely to be wrong.
 | 1 | Three notifications at T-7, T-1, morning-of, user's hour and timezone | **Pass** as scheduled rows and armed alarms on the device (§2.4). The 09:00 firing on 3 Dec has not been waited for |
 | 2 | SOLEMN produces two, never three, neither offering Gift ideas | **Pass**, on the device (§2.4, §2.5) |
 | 3 | Aeroplane mode through morning-of; exactly ONE notification | **Pass** — both paths real, one notification (§3). The multi-day version has not been run |
-| 4 | Quiet hours deferral on both paths | **Server pass**, device unchecked (§5) |
-| 5 | Digest on: one notification, no per-event ones | **Server pass**, device unchecked (§6) |
+| 4 | Quiet hours deferral on both paths | **Pass** on the device for the schedule (§5); a deferred reminder has not been watched arriving at 07:00 |
+| 5 | Digest on: one notification, no per-event ones | **Pass** on the device for the schedule (§6); a digest has not been watched arriving |
 | 6 | Self-test reports delivery from a real phone | **Pass** (§7) |
 | 7 | OEM helper opens the right screen on a real non-Pixel | **UNCHECKED** — no such device (§8) |
 | 8 | Unit tests: midnight quiet hours, solemn ladder, dedupe key, digest grouping | **Pass** — 205 server, 55 client |
@@ -371,11 +431,17 @@ component names are the part most likely to be wrong.
 - **A real 09:00.** Several checks would be stronger for an overnight run. None of them are
   blocked on code.
 
-### Two bugs this milestone found in earlier code
+### Four bugs this milestone found, three of them in earlier code
 
-Recorded because both were invisible to every test that ran one path at a time:
+Recorded because all four were invisible to every test that ran one thing at a time:
 
 - **The delivery report downgrade** (§3), found by the two-path test on its first run.
+- **Two settings-push field mismatches** (`a7e3408`). The client sent `timezone`, which the
+  strict schema rightly refuses; and it OMITS a null quiet-hours window rather than sending
+  null, because its Json uses `explicitNulls = false`, so a required-but-nullable pair
+  rejected almost every push. Both presented as "my edits stopped syncing", because
+  validation runs before anything is applied and one bad settings blob took the people and
+  events in the same batch with it. Settings now go in a request of their own.
 - **Token rotation under concurrency** (`3759cbc`). The phone signed itself out within a
   minute of the M2 server deploying. `authed` had no mutual exclusion, so two coroutines that
   both hit a 401 on the same expired access token both posted the same refresh token: one
