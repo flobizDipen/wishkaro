@@ -2,6 +2,7 @@ package `in`.wishkaro.app.data.local
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import `in`.wishkaro.app.data.repository.SyncStore
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
@@ -63,7 +64,7 @@ private fun sameTombstone(a: String?, b: String?): Boolean {
  * and the next pull corrects them, which is why a person's tone can lag a local edit by one
  * sync but can never be invented by the client.
  */
-class LocalStore(private val db: WishKaroDb) {
+class LocalStore(private val db: WishKaroDb) : SyncStore {
 
     private val people = db.personQueries
     private val events = db.eventQueries
@@ -324,29 +325,49 @@ class LocalStore(private val db: WishKaroDb) {
     // Sync plumbing
     // -----------------------------------------------------------------------------------
 
-    suspend fun pendingPeople() = withContext(Dispatchers.Default) {
-        people.selectPendingSync().executeAsList()
-    }
+    override suspend fun pendingPeople(): List<wishkaro.db.Person> =
+        withContext(Dispatchers.Default) { people.selectPendingSync().executeAsList() }
 
-    suspend fun pendingEvents() = withContext(Dispatchers.Default) {
-        events.selectPendingSync().executeAsList()
-    }
+    override suspend fun pendingEvents(): List<wishkaro.db.Event> =
+        withContext(Dispatchers.Default) { events.selectPendingSync().executeAsList() }
 
-    suspend fun pendingTraits() = withContext(Dispatchers.Default) {
-        traits.selectPendingSync().executeAsList()
-    }
+    override suspend fun pendingTraits(): List<wishkaro.db.Person_trait> =
+        withContext(Dispatchers.Default) { traits.selectPendingSync().executeAsList() }
 
-    suspend fun clearPersonPending(ids: List<String>) = withContext(Dispatchers.Default) {
+    override suspend fun clearPersonPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(people::clearPendingSync) }
     }
 
-    suspend fun clearEventPending(ids: List<String>) = withContext(Dispatchers.Default) {
+    override suspend fun clearEventPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(events::clearPendingSync) }
     }
 
-    suspend fun clearTraitPending(ids: List<String>) = withContext(Dispatchers.Default) {
+    override suspend fun clearTraitPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(traits::clearPendingSync) }
     }
+
+    /**
+     * Put a rejected write back on the wire instead of discarding it.
+     *
+     * `updated_at` is the only thing last-write-wins compares, so a row the server called
+     * STALE can only ever lose again until its timestamp moves. The sync engine passes a
+     * value just past the server's own clock, which is what makes the retry terminate rather
+     * than bounce once per sync forever.
+     */
+    override suspend fun restampPersonPending(ids: List<String>, updatedAt: String) =
+        withContext(Dispatchers.Default) {
+            db.transaction { ids.forEach { people.restampPending(updatedAt, it) } }
+        }
+
+    override suspend fun restampEventPending(ids: List<String>, updatedAt: String) =
+        withContext(Dispatchers.Default) {
+            db.transaction { ids.forEach { events.restampPending(updatedAt, it) } }
+        }
+
+    override suspend fun restampTraitPending(ids: List<String>, updatedAt: String) =
+        withContext(Dispatchers.Default) {
+            db.transaction { ids.forEach { traits.restampPending(updatedAt, it) } }
+        }
 
     /**
      * Applies a page pulled from the server.
@@ -356,7 +377,7 @@ class LocalStore(private val db: WishKaroDb) {
      * the local edit has not reached the server yet, so the server's copy is by definition
      * the older one.
      */
-    suspend fun applyRemote(
+    override suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
         remoteEvents: List<RemoteEvent>,
         remoteTraits: List<RemoteTrait>,
@@ -433,7 +454,7 @@ class LocalStore(private val db: WishKaroDb) {
         }
     }
 
-    suspend fun cursor(): String? = withContext(Dispatchers.Default) {
+    override suspend fun cursor(): String? = withContext(Dispatchers.Default) {
         sync.selectCursor().executeAsOneOrNull()?.cursor
     }
 

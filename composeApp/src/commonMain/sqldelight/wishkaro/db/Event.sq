@@ -73,5 +73,9 @@ SELECT * FROM event WHERE month = ? AND deleted_at IS NULL;
 clearPendingSync:
 UPDATE event SET pending_sync = 0 WHERE id = ?;
 
+-- See person.restampPending: re-assert a local edit the server rejected as STALE.
+restampPending:
+UPDATE event SET updated_at = ?, pending_sync = 1 WHERE id = ?;
+
 deleteAll:
 DELETE FROM event;

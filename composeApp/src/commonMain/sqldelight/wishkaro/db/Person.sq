@@ -89,5 +89,14 @@ UPDATE person SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id =
 clearPendingSync:
 UPDATE person SET pending_sync = 0 WHERE id = ?;
 
+-- Re-assert a local edit the server rejected as STALE.
+--
+-- The server's copy carried a newer `updated_at` — which it can do without anybody editing
+-- anything, because the server bumps that column when it re-derives completeness or is_minor.
+-- Clearing the outbox there would throw away a real offline edit, so the row keeps its
+-- pending flag and is re-stamped just past the server's clock, which the next push wins.
+restampPending:
+UPDATE person SET updated_at = ?, pending_sync = 1 WHERE id = ?;
+
 deleteAll:
 DELETE FROM person;

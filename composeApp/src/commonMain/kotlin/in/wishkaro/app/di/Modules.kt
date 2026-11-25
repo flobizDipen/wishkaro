@@ -42,7 +42,7 @@ val appModule = module {
         )
     }
 
-    single { SyncEngine(api = get(), local = get()) }
+    single { SyncEngine(api = get<WishKaroApi>(), local = get<LocalStore>()) }
     single { PeopleRepository(local = get(), sync = get(), scope = get()) }
 
     single {

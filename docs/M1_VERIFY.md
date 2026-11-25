@@ -302,6 +302,43 @@ survive aeroplane mode on a real handset.**
 
 ---
 
+### What the outbox does when the server refuses a write
+
+Added after the M1 code review, which found that `SyncEngine.push()` cleared `pending_sync`
+for everything it sent, whatever the server answered. The justification was that a record
+skipped as `STALE` is settled anyway, because the server's copy is newer.
+
+M1 broke that justification. `PersonDerivationService` moves `updated_at` from its own
+recomputation — a completeness backfill, a child turning eighteen — with no user edit behind
+it, so a genuine offline edit can now come back `STALE` because a housekeeping sweep touched
+the row. Cleared there, the edit is gone: no retry, no error, nothing on screen.
+
+The rules now, one per answer the server can give:
+
+| Server said | The row | Why |
+|---|---|---|
+| nothing (applied) | `pending_sync` cleared | as before — the response lists rejections, not acceptances |
+| `STALE` | stays pending, `updated_at` re-stamped to **1 ms past the response's `serverTime`** | the next push then carries a timestamp the server must accept, so a user edit beats a derived bump and the retry ends after exactly one round |
+| `UNKNOWN_PERSON` | stays pending, unchanged | the parent person has not reached the server yet; a new timestamp would not make them exist |
+| `NOT_OWNED` | cleared | it belongs to another account and no number of retries changes that |
+| anything unrecognised | cleared | a newer server inventing a reason code must not be able to wedge an old client into pushing one row forever |
+
+`serverTime` rather than the device clock, deliberately: a handset running behind the server
+would otherwise re-stamp into the past and bounce on every sync for the life of the install.
+
+The cost, recorded rather than hidden: for `STALE`, two devices editing one record resolve as
+*whichever synced later wins* rather than *whichever edited later wins*. WishKaro v1 is one
+device per account, and `docs/M0_PLAN.md` §2 already documents per-record last-write-wins as
+the limit of what the v1 schema can express. Losing a real edit to a housekeeping sweep is the
+worse of the two failures.
+
+Covered by `composeApp/src/commonTest/.../SyncEngineTest.kt` — which runs the real engine
+against a fake server, because neither `WishKaroApi` nor `LocalStore` can be built in
+`commonTest`. Still not covered: any of this on a real handset in aeroplane mode, per the
+sentence above.
+
+---
+
 ## 5a. The server, proven with curl
 
 Two scripts, checked in, so "proven with curl" survives the terminal they were run in.
