@@ -200,14 +200,38 @@ wishkaro.apiBaseUrl=http://192.168.1.20:3000
 
 ### Verifying a real birthday reminder without waiting for 09:00
 
-Move an occurrence into the near future and let the worker pick it up:
+Make the reminder **already due**, so the next send-worker scan claims it:
 
 ```bash
-docker exec wishkaro-db-1 psql -U wishkaro -d wishkaro -c "UPDATE reminder SET scheduled_at_utc = now() + interval '30 seconds', status = 'PENDING' WHERE status = 'PENDING';"
+docker exec wishkaro-db-1 psql -U wishkaro -d wishkaro -c "UPDATE reminder SET scheduled_at_utc = now() - interval '5 seconds' WHERE status = 'PENDING' AND event_occurrence_id IS NOT NULL;"
 ```
 
 The send worker scans every 30 seconds, so the push lands within about a minute — this time
 carrying the real birthday copy and a deep link to that person, not the self-test copy.
+
+**Do not move it into the future instead.** Two background jobs disagree about that row:
+
+| Job | Period | What it does |
+|---|---|---|
+| `reminders-send` | 30 s | sends every `PENDING` reminder whose time has passed |
+| `occurrences-materialise` | 10 min | resets any `PENDING` reminder whose time disagrees with the one computed from the event |
+
+A reminder parked 30 seconds in the future is a row the reconciler considers wrong, and it will
+put it back — silently, with no error anywhere — if it happens to run first. That is correct
+behaviour (edit someone's birthday and their reminder follows it), but it means the obvious
+version of this trick fails perhaps one time in twenty, and the failure looks exactly like a
+broken push. Setting the time in the *past* closes the window: the row is claimed on the next
+scan, seconds later. It must still be inside the two-hour late grace, or it is `SUPPRESSED`
+rather than sent.
+
+Afterwards, **put the row back**, or that person's real reminder will never fire:
+
+```bash
+docker exec wishkaro-db-1 psql -U wishkaro -d wishkaro -c "UPDATE reminder SET status = 'PENDING', scheduled_at_utc = '2027-09-22 03:30:00', sent_at = NULL WHERE id = '<the reminder id>';"
+```
+
+Use the date the row had before you touched it. The reconciler will not fix this for you: it
+only reschedules rows that are still `PENDING`, so one left `SENT` stays spent for good.
 
 ---
 
@@ -251,6 +275,7 @@ plus the server key is enough to push to that phone.
 | Reminder row is `FAILED`, log says `registration-token-not-registered` | A stale FCM token; the send worker deletes it. Relaunch the app to register a fresh one |
 | Reminder `SENT` but nothing on the phone | `POST_NOTIFICATIONS` not granted, or the OEM killed the app. The battery-optimisation helper is M2 |
 | Reminder stuck `PENDING` past its time | The send worker is not running — check `Reminder queues started` in the log and that Redis is up |
+| A reminder you moved by hand jumps back to its real date | `occurrences-materialise` reconciled it. See the note in §5 — move it into the past, not the future |
 | Reminder is `SUPPRESSED` | Its 09:00 passed more than two hours ago. Deliberate: a morning-of reminder at 4pm is worse than none |
 
 ---
