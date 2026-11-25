@@ -493,6 +493,12 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
      *
      * Upsert by hand — `ON CONFLICT DO UPDATE` needs SQLite 3.24 and `minSdk 26` can be
      * older than that, a constraint the rest of this schema already works under.
+     *
+     * SHOWN is sticky, enforced in the UPDATE's own WHERE clause rather than here. Observed
+     * on a real device: the local alarm reported SHOWN, a push for the same key arrived two
+     * minutes later and reported SUPPRESSED_DUPLICATE, and the second report overwrote the
+     * first — so the only record of an actual delivery was replaced by a record of a
+     * suppression, before either had reached the server.
      */
     suspend fun recordDelivery(
         dedupeKey: String,

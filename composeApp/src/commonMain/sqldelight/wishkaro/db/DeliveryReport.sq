@@ -26,9 +26,17 @@ VALUES (?, ?, ?, ?, 1);
 
 -- SQLite 3.24's ON CONFLICT DO UPDATE is not available at minSdk 26, so an overwrite is an
 -- explicit UPDATE guarded by the caller. Same constraint the rest of this schema works under.
+--
+-- SHOWN is STICKY, and the WHERE clause is where that is enforced rather than in Kotlin, so
+-- no future caller can forget it. Both delivery paths report, and the one that loses the race
+-- says SUPPRESSED_DUPLICATE — which is the de-duplication WORKING. Letting that overwrite the
+-- SHOWN beside it erases the delivery it de-duplicated, and because the reports sit in an
+-- outbox the first one may never have reached the server at all. The G1 number would then
+-- fall as reliability rose. The server refuses the same downgrade; this is the other half,
+-- and it is the half that matters when the device is offline.
 updateReport:
 UPDATE delivery_report SET outcome = ?, channel = ?, occurred_at = ?, pending_sync = 1
-WHERE dedupe_key = ?;
+WHERE dedupe_key = ? AND outcome != 'SHOWN';
 
 exists:
 SELECT EXISTS(SELECT 1 FROM delivery_report WHERE dedupe_key = ?);

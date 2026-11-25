@@ -1,6 +1,6 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.4 — M0 and M1 built and merged; M2 prompt written
+> **Status:** v0.5 — M0 and M1 built and merged; M2 built
 > **Date:** 2026-11-25
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
@@ -243,10 +243,10 @@ Every item below was accepted on 2026-11-24. Kept in the doc rather than deleted
 | FR-REM-02 | The client **also** schedules a local alarm per upcoming event as a fallback. Both paths carry the same `notification_id`; the client de-duplicates so the user never sees a double. |
 | FR-REM-03 | Default ladder: **T-7 days** (framed around gifting), **T-1 day**, **morning-of** (default 09:00 local). All three individually toggleable; the delivery hour is user-configurable globally and overridable per person. |
 | FR-REM-04 | Notification actions: **Send wish**, **Gift ideas**, **Snooze 1h**, **Mark done**. T-7 leads with Gift ideas; morning-of leads with Send wish. |
-| FR-REM-05 | A dedicated Android notification channel per ladder step, so users can tune them separately. |
+| FR-REM-05 | A dedicated Android notification channel per ladder step, so users can tune them separately. Plus one for the digest and one for the self-test. All are created at first launch, because an Android channel's importance cannot be raised after creation — adding a *new* id later is fine, raising an existing one is not. |
 | FR-REM-06 | Onboarding and Settings include an OEM battery-optimisation helper: detects Xiaomi/Oppo/Vivo/Realme/Samsung and deep-links to the correct autostart/battery settings screen with instructions. This is the single highest-impact reliability feature in the app. |
 | FR-REM-07 | A self-test: "Send me a test reminder in 2 minutes" in Settings, so the user can verify delivery themselves. |
-| FR-REM-08 | Daily digest option: one notification at a chosen hour listing everything happening today, instead of per-event notifications. |
+| FR-REM-08 | Daily digest option: one notification at a chosen hour **replacing the whole ladder** — the day's T-7, T-1 and morning-of reminders are grouped into one notification (*Today · Tomorrow · In 7 days*) instead of firing per-event. *(Clarified in M2. v1 said "everything happening today, instead of per-event notifications", which pulls apart once the ladder exists: a T-7 reminder is not about something happening today. Leaving D7 and D1 firing per-event would mean a user who chose a digest still got two pings per birthday, which is not a digest. `M2_PLAN.md` §2.1.)* |
 | FR-REM-09 | Quiet hours — no notifications in a user-defined window; deferred to the window's end. |
 | FR-REM-10 | If FCM delivery fails or the device has been offline > 48h, the local alarm must still fire. Delivery outcome is reported back to the server for the G1 metric. |
 | FR-REM-11 | **Solemn ladder.** `SOLEMN` events use T-1 and morning-of only — no T-7 gifting nudge. Notification copy is gentle, carries no emoji, and offers only **Send message** and **Mark done**; the Gift ideas action is absent. |
@@ -384,11 +384,19 @@ Every item below was accepted on 2026-11-24. Kept in the doc rather than deleted
 
 ```
 user              id, google_sub, email, name, photo_url, locale, timezone,
+                  reminder_hour, ladder_d7, ladder_d1, ladder_d0,
+                  quiet_hours_start, quiet_hours_end,
+                  digest_enabled, digest_hour, settings_updated_at,
                   created_at, deleted_at
+                  -- reminder settings added in M2 (FR-REM-03/08/09). Quiet hours are LOCAL
+                  -- HOURS, not instants: the window belongs to the user's day, so storing
+                  -- instants would mean rewriting them every time they travelled. Both ends
+                  -- are set or cleared together.
 
 person            id, user_id (owner), display_name, photo_key, gender,
                   phone, email, relation_to_owner, is_self, is_deceased,
                   is_minor (derived), notes, completeness_score,
+                  reminder_hour_override,          -- M2, FR-REM-03
                   created_at, updated_at, deleted_at
 
 person_trait      id, person_id, kind (HOBBY|LIKE|DISLIKE|BUDGET_BAND|...),
@@ -406,10 +414,19 @@ event_occurrence  id, event_id, occurs_on (date), override_date (nullable),
                   milestone_label, computed_at     -- materialised per year
                   -- effective date = COALESCE(override_date, occurs_on)
 
-reminder          id, event_occurrence_id, user_id, offset (D7|D1|D0),
+reminder          id, event_occurrence_id, user_id,
+                  offset (D7|D1|D0|DIGEST),
                   scheduled_at_utc, channel (FCM|LOCAL),
                   status (PENDING|SENT|DELIVERED|FAILED|SUPPRESSED),
-                  dedupe_key, sent_at
+                  dedupe_key, sent_at,
+                  delivered_at, delivery_outcome   -- M2, FR-REM-10
+                  -- `channel` is the channel that DELIVERED it, not the one it was
+                  -- scheduled on: dedupe_key is UNIQUE across the table, so one rung
+                  -- cannot have both an FCM row and a LOCAL row. count(channel = LOCAL)
+                  -- over count(*) is therefore the FCM failure rate (M2_PLAN.md §2.2).
+                  -- DIGEST is not a ladder rung; it is a per-user per-day row with no
+                  -- occurrence, and it is an enum value rather than a key prefix so that
+                  -- `where offset = 'D0'` cannot silently sweep up every digest.
 
 wish_log          id, person_id, event_occurrence_id, channel, tone,
                   language, message_text, asset_id, sent_at
@@ -626,7 +643,7 @@ wishkaro/                        (public GitHub repo)
 |---|---|---|
 | **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
 | **M1** | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first. ✅ merged `722830d` 2026-11-25 |
-| M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest. Also carries the M0 offline check, still never run on a device (`M1_PLAN.md` §2.5), and the unproven mobile-data leg of the Railway deploy (§2.6) |
+| M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest, delivery reporting, and the first Settings screen. The M0 offline check was **finally run and passed** (`M2_PLAN.md` §0.1). The mobile-data leg of the Railway deploy is still unproven — the SIM would not register (`M2_PLAN.md` §0.2) |
 | M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |
 | M5 | Wish sending | AI drafts, tone/language, WhatsApp handoff, wish history |
