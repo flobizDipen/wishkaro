@@ -281,6 +281,23 @@ private fun CompletenessBar(person: Person, onImprove: () -> Unit) {
         when {
             // FR-PPL-09: a minor is excluded from profiling, so nothing is ever asked.
             person.isMinor -> Unit
+
+            /*
+             * "Nothing left to add" is only true when the profile is actually complete.
+             *
+             * The suggestion list is the SERVER's, mirrored locally, and a person the server
+             * has never scored has an empty one — so a freshly added person read
+             * "Profile 0% complete" directly above "Nothing left to add." Both lines were
+             * drawn from the same absence of data and they contradicted each other.
+             *
+             * The score disambiguates it, and provably: `completenessSuggestions` returns
+             * every unsatisfied field, so for a non-minor a score below 100 ALWAYS comes with
+             * a non-empty list (asserted in derived.spec.ts). An empty list with a score
+             * below 100 therefore cannot mean "complete" — it can only mean "not scored yet",
+             * and the honest thing to show for that is nothing at all.
+             */
+            next == null && person.completenessScore < 100 -> Unit
+
             next == null -> Text(
                 "Nothing left to add.",
                 style = MaterialTheme.typography.bodySmall,

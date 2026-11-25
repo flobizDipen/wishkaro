@@ -1,5 +1,6 @@
 package `in`.wishkaro.app.platform
 
+import `in`.wishkaro.app.domain.newUuidV7
 import app.cash.sqldelight.db.SqlDriver
 
 /** Creates the SQLDelight driver. Android: AndroidSqliteDriver. iOS: NativeSqliteDriver. */
@@ -16,8 +17,14 @@ expect object PlatformConfig {
 /** The device's IANA timezone, e.g. "Asia/Kolkata". Reported to the server on sign-in. */
 expect fun currentTimeZoneId(): String
 
-/** A new, stable identifier for a record created on this device. */
-expect fun newId(): String
+/**
+ * A new, stable identifier for a record created on this device (D23).
+ *
+ * No longer a platform seam. Both platforms used to reach for their own UUID type, which gave
+ * v4 ids where M0 and M1 both documented v7 — and gave them in different letter cases. One
+ * shared implementation is the fix: see [newUuidV7].
+ */
+fun newId(): String = newUuidV7()
 
 /**
  * The outcome of asking the platform to sign the user in with Google.

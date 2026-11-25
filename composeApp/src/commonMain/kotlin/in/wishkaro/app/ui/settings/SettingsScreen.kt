@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import `in`.wishkaro.app.domain.QuietHours
 import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.ui.ReliabilityState
@@ -121,6 +122,22 @@ fun SettingsScreen(
             )
         }
 
+        /*
+         * The one place the two clocks can quietly fight each other.
+         *
+         * Nothing here is broken — FR-REM-09 says a reminder inside the quiet window is
+         * deferred to the window's end and not dropped, and that is exactly what happens. But
+         * picking a delivery hour that sits inside your OWN quiet window moves morning-of to
+         * the following day: a 2 December birthday notified at 07:00 on the 3rd. That is
+         * surprising enough that the screen should say it rather than leave it to be
+         * discovered on the day.
+         */
+        if (!settings.digestEnabled) {
+            quietHoursClashNote(settings.reminderHour, settings)?.let { warning ->
+                item { ClashNote(warning) }
+            }
+        }
+
         // ---- Quiet hours (FR-REM-09) ---------------------------------------------------
         item { SectionHeader("Quiet hours") }
 
@@ -178,6 +195,9 @@ fun SettingsScreen(
                     hour = settings.digestHour,
                     onPick = { h -> onChange { it.copy(digestHour = h) } },
                 )
+            }
+            quietHoursClashNote(settings.digestHour, settings)?.let { warning ->
+                item { ClashNote(warning) }
             }
         }
 
@@ -288,6 +308,41 @@ private fun SelfTestCard(
             }
         }
     }
+}
+
+/**
+ * Says, in the user's own numbers, what the quiet window will do to the hour they picked.
+ *
+ * Null when there is nothing to say — no window, or an hour outside it. The same
+ * [QuietHours.isQuietHour] the fallback alarm uses, so the screen cannot disagree with the
+ * behaviour it is describing.
+ */
+private fun quietHoursClashNote(hour: Int, settings: ReminderSettings): String? {
+    val start = settings.quietHoursStart ?: return null
+    val end = settings.quietHoursEnd ?: return null
+    if (!QuietHours.isQuietHour(hour, start, end)) return null
+
+    // Before midnight the deferral lands on the NEXT day, which is the part worth spelling
+    // out: an on-the-day reminder then arrives the morning after the day itself.
+    val sameDay = hour < end
+    return if (sameDay) {
+        "${formatHour(hour)} is inside your quiet hours, so reminders will arrive at " +
+            "${formatHour(end)} instead."
+    } else {
+        "${formatHour(hour)} is inside your quiet hours, so reminders will arrive at " +
+            "${formatHour(end)} the NEXT morning — an on-the-day reminder would reach you " +
+            "the day after."
+    }
+}
+
+@Composable
+private fun ClashNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 @Composable

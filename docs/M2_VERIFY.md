@@ -299,10 +299,20 @@ Note the first row: at a 09:00 delivery hour, Offline Check M2 had no D7 because
 already passed. At 23:00 it had not, so the rung materialised — and was then deferred to the
 next morning. Both behaviours fall out of the same two rules.
 
-**An observation, not a bug, but worth a decision later.** Choosing a delivery hour that sits
-inside your own quiet window pushes *morning-of* into the following day: a 2 December birthday
-notified at 07:00 on the 3rd. FR-REM-09 says deferred and not dropped, and that is what
-happens — but the Settings screen says nothing about it, and it probably should.
+**The surprise this exposes, now named on screen.** Choosing a delivery hour that sits inside
+your own quiet window pushes *morning-of* into the following day: a 2 December birthday
+notified at 07:00 on the 3rd. FR-REM-09 says deferred and not dropped, and that is exactly
+what happens — it is a configuration conflict, not a bug. Settings now says so in the user's
+own numbers, using the same `isQuietHour` the fallback alarm uses so the screen cannot
+disagree with the behaviour it describes:
+
+| delivery hour | window | what the screen says |
+|---|---|---|
+| 3am | 22:00–07:00 | "3am is inside your quiet hours, so reminders will arrive at 7am instead." |
+| 11pm | 22:00–07:00 | "11pm is inside your quiet hours, so reminders will arrive at 7am the NEXT morning — an on-the-day reminder would reach you the day after." |
+| 9am | 22:00–07:00 | nothing — 9am is outside the window |
+
+All three observed on the device.
 
 **Unchecked on the device:** a deferred reminder actually arriving at 07:00. That needs a real
 overnight wait.

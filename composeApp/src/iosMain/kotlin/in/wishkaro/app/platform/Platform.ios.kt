@@ -3,16 +3,17 @@ package `in`.wishkaro.app.platform
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import platform.Foundation.NSTimeZone
-import platform.Foundation.NSUUID
 import platform.Foundation.localTimeZone
 import wishkaro.db.WishKaroDb
 
 /**
  * iOS is kept COMPILING, not shipped (D15 / BUILD_PROMPT_M0 scope).
  *
- * The driver, timezone and id generation are real — they cost nothing and keep the shared
- * data layer honest. Sign-in and notifications are stubs that fail loudly rather than
- * silently pretending to work, so nobody mistakes this for a working iOS build.
+ * The driver and timezone are real — they cost nothing and keep the shared data layer
+ * honest. Id generation is now shared code (see newUuidV7), so there is nothing left here
+ * for the two platforms to disagree about. Sign-in and notifications are stubs that fail
+ * loudly rather than silently pretending to work, so nobody mistakes this for a working
+ * iOS build.
  */
 actual class DatabaseDriverFactory {
     actual fun create(): SqlDriver = NativeSqliteDriver(WishKaroDb.Schema, "wishkaro.db")
@@ -26,8 +27,6 @@ actual object PlatformConfig {
 }
 
 actual fun currentTimeZoneId(): String = NSTimeZone.localTimeZone.name
-
-actual fun newId(): String = NSUUID().UUIDString()
 
 class IosGoogleSignInClient : GoogleSignInClient {
     override suspend fun signIn(): GoogleSignInResult =

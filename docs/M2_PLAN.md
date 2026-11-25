@@ -76,13 +76,18 @@ is that a server-derived value the client cannot invent came back down.
 Two things noticed while doing it. Neither is M2's to fix; both are written down rather than
 left in a screenshot:
 
-- A never-synced person's detail screen reads **"Profile 0% complete"** directly above
-  **"Nothing left to add."** `completeness_score` is server-derived, so it is 0 until the first
-  sync, while the suggestion list is computed locally — the two disagree for exactly as long as
-  the record is offline. Cosmetic, M1's, and a one-line fix whenever someone is in there.
-- Client-generated ids are **UUIDv4** (`0b6c4ca3-2173-4cc6-…`), not the UUIDv7 that `M1_PLAN.md`
-  attributes to D23. Harmless — `id` is only the tiebreaker in the `(updated_at, id)` cursor, so
-  nothing depends on it sorting by time — but the doc and the code disagree.
+- ~~A never-synced person's detail screen reads **"Profile 0% complete"** directly above
+  **"Nothing left to add."**~~ **Fixed.** The two lines were drawn from the same absence of
+  data and contradicted each other. The score disambiguates it provably: for a non-minor,
+  `completenessSuggestions` returns every unsatisfied field, so a score below 100 always comes
+  with a non-empty list — asserted in `derived.spec.ts`. An empty list below 100 therefore
+  means "not scored yet", and the screen now shows nothing rather than a false claim.
+- ~~Client-generated ids are **UUIDv4**, not the UUIDv7 that `M1_PLAN.md` attributes to D23.~~
+  **Fixed, by moving the code to the decision rather than the decision to the code.** `newId()`
+  is no longer a platform seam — both platforms reached for their own UUID type, which gave v4
+  and, incidentally, different letter cases. One shared `newUuidV7()` now mints them, which
+  also buys index locality in the Postgres b-trees these ids share with the server's own
+  `uuid(7)` columns, and makes the sync cursor's tiebreak creation order rather than noise.
 
 ### 0.2 The mobile-data leg — **checked today, still unproven, still not faked**
 
