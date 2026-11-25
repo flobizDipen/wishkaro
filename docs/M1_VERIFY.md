@@ -342,6 +342,35 @@ grieving is not.
 `ToneTest` enumerates every event type against a banned lexicon and an emoji check rather than
 sampling, so a sixth type fails it until someone writes its solemn copy.
 
+### Two bugs the walkthrough found that the tests did not
+
+Both were found by using the app on the handset, not by reading it.
+
+**Restoring a person returned them empty.** Delete → Recently removed → Restore brought the
+person back with no dates, no countdown and no reminders. `POST /v1/people/:id/restore`
+un-deleted their events; the local path and the sync path did not. The same user action meant
+three different things depending on which route it took.
+
+**Underneath it: sync was comparing timestamps as strings.** The device's database showed one
+moment spelled two ways:
+
+```
+person   2026-11-25T10:16:21.410233Z   kotlinx Instant.toString(), microseconds
+event    2026-11-25T10:16:21.410Z      the same instant after Prisma timestamp(3)
+```
+
+The client writes nanosecond precision, Postgres stores milliseconds, and JavaScript's
+`toISOString()` always emits exactly three decimals while kotlinx trims them. `applyRemote`
+compared those spellings with `>=` on the strings, and `"…410233Z"` sorts BEFORE `"…410Z"`
+because `'2' < 'Z'` — so the client would treat its own fresh write as older than the
+server's echo of it. **Last-write-wins losing to string formatting, latent since M0.** The
+tombstone match was simply the first thing to trip over it.
+
+Sync now parses both sides. Ordering comparisons keep full precision, which is the right
+answer for "is the local row at least as new"; tombstone matching truncates to milliseconds,
+because "were these written by the same delete" is a different question. `TimestampComparisonTest`
+pins the formats, including the whole-second case where the two ends disagree the other way.
+
 ---
 
 ## 6a. Derived values repair themselves
