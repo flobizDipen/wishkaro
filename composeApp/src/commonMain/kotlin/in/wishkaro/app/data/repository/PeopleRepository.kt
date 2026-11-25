@@ -2,7 +2,9 @@ package `in`.wishkaro.app.data.repository
 
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.domain.EventDate
+import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.platform.newId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -22,20 +24,128 @@ class PeopleRepository(
 ) {
     fun observePeople(): Flow<List<Person>> = local.observePeople()
 
+    fun observePerson(id: String): Flow<Person?> = local.observePerson(id)
+
+    fun observeDeleted(): Flow<List<Person>> = local.observeDeleted()
+
     suspend fun findPerson(id: String): Person? = local.findPerson(id)
 
-    suspend fun addPerson(displayName: String, relation: String?, date: EventDate): String {
+    private fun now(): String = Clock.System.now().toString()
+
+    suspend fun addPerson(
+        displayName: String,
+        relation: String?,
+        type: EventType,
+        label: String?,
+        date: EventDate,
+    ): String {
         val personId = newId()
         local.addPersonLocally(
             personId = personId,
             eventId = newId(),
             displayName = displayName.trim(),
             relation = relation,
+            type = type,
+            label = label,
             date = date,
-            nowIso = Clock.System.now().toString(),
+            nowIso = now(),
         )
         syncInBackground()
         return personId
+    }
+
+    suspend fun updatePerson(
+        personId: String,
+        displayName: String,
+        relation: String?,
+        gender: String?,
+        phone: String?,
+        email: String?,
+        notes: String?,
+        isDeceased: Boolean,
+    ) {
+        local.updatePersonLocally(
+            personId = personId,
+            displayName = displayName.trim(),
+            relation = relation,
+            gender = gender?.takeIf { it.isNotBlank() },
+            phone = phone?.takeIf { it.isNotBlank() },
+            email = email?.takeIf { it.isNotBlank() },
+            notes = notes?.takeIf { it.isNotBlank() },
+            isDeceased = isDeceased,
+            nowIso = now(),
+        )
+        syncInBackground()
+    }
+
+    suspend fun deletePerson(personId: String) {
+        local.deletePersonLocally(personId, now())
+        syncInBackground()
+    }
+
+    suspend fun restorePerson(personId: String) {
+        local.restorePersonLocally(personId, now())
+        syncInBackground()
+    }
+
+    suspend fun addEvent(
+        personId: String,
+        type: EventType,
+        label: String?,
+        date: EventDate,
+    ): String {
+        val eventId = newId()
+        local.addEventLocally(eventId, personId, type, label, date, now())
+        syncInBackground()
+        return eventId
+    }
+
+    suspend fun updateEvent(eventId: String, type: EventType, label: String?, date: EventDate) {
+        local.updateEventLocally(eventId, type, label, date, now())
+        syncInBackground()
+    }
+
+    suspend fun setEventMuted(eventId: String, muted: Boolean) {
+        local.setEventMuted(eventId, muted, now())
+        syncInBackground()
+    }
+
+    suspend fun deleteEvent(eventId: String) {
+        local.deleteEventLocally(eventId, now())
+        syncInBackground()
+    }
+
+    suspend fun restoreEvent(eventId: String) {
+        local.restoreEventLocally(eventId, now())
+        syncInBackground()
+    }
+
+    suspend fun addTrait(personId: String, kind: TraitKind, value: String) {
+        local.addTraitLocally(newId(), personId, kind, value.trim(), now())
+        syncInBackground()
+    }
+
+    suspend fun removeTrait(traitId: String) {
+        local.deleteTraitLocally(traitId, now())
+        syncInBackground()
+    }
+
+    /**
+     * Possible duplicates of a name about to be added (FR-PPL-06).
+     *
+     * Run against the LOCAL database rather than the server's /duplicates endpoint, because
+     * adding a person has to work with the radio off and a duplicate prompt that only
+     * appears when online is worse than one that always appears.
+     */
+    suspend fun findDuplicates(displayName: String, date: EventDate?): List<Person> {
+        val wanted = nameTokens(displayName)
+        if (wanted.isEmpty()) return emptyList()
+        return local.allPeopleOnce().filter { person ->
+            if (person.deletedAt != null) return@filter false
+            if (nameTokens(person.displayName).none { it in wanted }) return@filter false
+            if (date == null) return@filter true
+            person.events.any { it.date.day == date.day && it.date.month == date.month }
+        }
     }
 
     fun syncInBackground() {
@@ -44,3 +154,14 @@ class PeopleRepository(
 
     suspend fun syncNow(): Result<SyncEngine.Result> = sync.sync()
 }
+
+/**
+ * Lower-cased tokens of two or more characters, so word order and punctuation do not matter.
+ * Mirrors the server's rule in people.service.ts — "Jansari Jaydatt" and "Jaydatt Jansari"
+ * are one person, and no edit distance would say so.
+ */
+private fun nameTokens(name: String): Set<String> =
+    name.lowercase()
+        .split(Regex("[^\\p{L}\\p{N}]+"))
+        .filter { it.length >= 2 }
+        .toSet()

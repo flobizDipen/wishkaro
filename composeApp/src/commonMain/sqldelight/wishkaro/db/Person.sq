@@ -3,6 +3,11 @@
 -- `pending_sync` is the outbox: a row written on the device is marked 1 and the sync engine
 -- clears it once the server has acknowledged that write. Soft deletes are tombstones, never
 -- DELETE, so a deletion made offline can still be pushed (D23).
+-- COLUMN ORDER IS LOAD-BEARING. `ALTER TABLE ... ADD COLUMN` can only append, so a column
+-- added by 1.sqm sits at the end of the physical table. `verifyMigrations` compares this
+-- declaration against the result of replaying the migrations and fails the BUILD on any
+-- difference, ordinal positions included. So M1's columns go after pending_sync, however
+-- much they would prefer to sit beside the fields they relate to.
 CREATE TABLE person (
     id                TEXT    NOT NULL PRIMARY KEY,
     display_name      TEXT    NOT NULL,
@@ -10,7 +15,19 @@ CREATE TABLE person (
     is_self           INTEGER NOT NULL DEFAULT 0,
     updated_at        TEXT    NOT NULL,
     deleted_at        TEXT,
-    pending_sync      INTEGER NOT NULL DEFAULT 0
+    pending_sync      INTEGER NOT NULL DEFAULT 0,
+    -- ---- added in M1 (schema version 2) ----
+    -- Profile fields (FR-PPL-04). photo_key is reserved; uploads are M6.
+    photo_key         TEXT,
+    gender            TEXT,
+    phone             TEXT,
+    email             TEXT,
+    notes             TEXT,
+    -- Derived SERVER-SIDE and mirrored here for offline reads. The client never computes
+    -- these and never pushes them; they arrive on a sync pull like any other column.
+    is_deceased       INTEGER NOT NULL DEFAULT 0,
+    is_minor          INTEGER NOT NULL DEFAULT 0,
+    completeness_score INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX person_pending_sync ON person(pending_sync);
@@ -32,8 +49,38 @@ SELECT * FROM person WHERE pending_sync = 1;
 -- it is easier to read anyway.
 
 insertOrReplace:
-INSERT OR REPLACE INTO person(id, display_name, relation_to_owner, is_self, updated_at, deleted_at, pending_sync)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO person(
+    id, display_name, relation_to_owner, is_self,
+    photo_key, gender, phone, email, notes,
+    is_deceased, is_minor, completeness_score,
+    updated_at, deleted_at, pending_sync
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- Search and filter (FR-PPL-10). Done in SQL rather than in Kotlin so it still works with
+-- the radio off and stays O(index) at 1,000 people.
+search:
+SELECT * FROM person
+WHERE deleted_at IS NULL
+  AND (:query IS NULL OR display_name LIKE '%' || :query || '%' COLLATE NOCASE)
+  AND (:relation IS NULL OR relation_to_owner = :relation COLLATE NOCASE)
+ORDER BY display_name;
+
+selectDeleted:
+SELECT * FROM person WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC;
+
+-- A local edit: bumps updated_at and re-queues the row for sync.
+updateProfile:
+UPDATE person SET
+    display_name = ?, relation_to_owner = ?, gender = ?, phone = ?, email = ?, notes = ?,
+    is_deceased = ?, updated_at = ?, pending_sync = 1
+WHERE id = ?;
+
+-- Soft delete, as a tombstone the sync engine will push (D23).
+markDeleted:
+UPDATE person SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+markRestored:
+UPDATE person SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
 
 clearPendingSync:
 UPDATE person SET pending_sync = 0 WHERE id = ?;

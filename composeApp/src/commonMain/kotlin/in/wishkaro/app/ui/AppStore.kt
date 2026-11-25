@@ -5,7 +5,10 @@ import `in`.wishkaro.app.data.repository.AuthState
 import `in`.wishkaro.app.data.repository.PeopleRepository
 import `in`.wishkaro.app.data.repository.SignInCancelled
 import `in`.wishkaro.app.domain.EventDate
+import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
+import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
 import `in`.wishkaro.app.platform.NotificationGateway
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,14 +28,29 @@ sealed interface Screen {
     data object SignIn : Screen
     data object People : Screen
     data object AddPerson : Screen
+    data class PersonDetail(val personId: String) : Screen
+    data class EditPerson(val personId: String) : Screen
+
+    /** `eventId == null` means a new event on that person. */
+    data class EventEditor(val personId: String, val eventId: String?) : Screen
+    data object Deleted : Screen
+}
+
+/** Search and filter state for the people list (FR-PPL-10). */
+data class PeopleFilter(
+    val query: String = "",
+    val relation: String? = null,
+    val month: Int? = null,
+) {
+    val isActive: Boolean get() = query.isNotBlank() || relation != null || month != null
 }
 
 /**
  * The whole app's state, in one place.
  *
- * M0 has three screens and no back stack worth the name, so a sealed `Screen` plus a
- * StateFlow is the honest amount of machinery. A navigation library arrives when there is
- * something to navigate.
+ * M1 has seven screens, so there is now a real back stack — a list rather than a navigation
+ * library, because seven screens and one linear history is not yet an argument for a
+ * dependency. The moment it needs deep links into a nested graph, it gets one.
  */
 class AppStore(
     private val auth: AuthRepository,
@@ -39,6 +58,8 @@ class AppStore(
     private val notifications: NotificationGateway,
     private val scope: CoroutineScope,
 ) {
+    private val backStack = ArrayDeque<Screen>()
+
     private val _screen = MutableStateFlow<Screen>(Screen.SignIn)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
 
@@ -48,13 +69,23 @@ class AppStore(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    /** Set when a notification was tapped, so the list can scroll to and highlight them. */
+    private val _filter = MutableStateFlow(PeopleFilter())
+    val filter: StateFlow<PeopleFilter> = _filter.asStateFlow()
+
+    /**
+     * Possible duplicates of the name currently being typed into Add Person (FR-PPL-06).
+     * Non-empty means the screen shows "Is this the same person?" before it will save.
+     */
+    private val _duplicates = MutableStateFlow<List<Person>>(emptyList())
+    val duplicates: StateFlow<List<Person>> = _duplicates.asStateFlow()
+
+    /** Set when a notification was tapped, so the list can highlight them. */
     private val _focusedPersonId = MutableStateFlow<String?>(null)
     val focusedPersonId: StateFlow<String?> = _focusedPersonId.asStateFlow()
 
     val authState: StateFlow<AuthState> = auth.state
 
-    val cards: StateFlow<List<PersonCard>> = people.observePeople()
+    private val allCards: StateFlow<List<PersonCard>> = people.observePeople()
         .map { list ->
             val zone = TimeZone.currentSystemDefault()
             val today = Clock.System.todayIn(zone)
@@ -62,6 +93,46 @@ class AppStore(
                 .sortedWith(compareBy({ it.daysUntil ?: Int.MAX_VALUE }, { it.person.displayName }))
         }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The filtered list. Applied here rather than in SQL so that typing is instant and does
+     * not re-run a query per keystroke; the list is bounded by what one person can remember
+     * about, and the SQL path exists for when it is not.
+     */
+    val cards: StateFlow<List<PersonCard>> = combine(allCards, _filter) { list, f ->
+        list.filter { card ->
+            val p = card.person
+            val matchesQuery = f.query.isBlank() ||
+                p.displayName.contains(f.query.trim(), ignoreCase = true)
+            val matchesRelation = f.relation == null ||
+                p.relationToOwner.equals(f.relation, ignoreCase = true)
+            val matchesMonth = f.month == null || p.events.any { it.date.month == f.month }
+            matchesQuery && matchesRelation && matchesMonth
+        }
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Every relation actually in use, for the filter chips. */
+    val knownRelations: StateFlow<List<String>> = allCards
+        .map { list -> list.mapNotNull { it.person.relationToOwner }.distinct().sorted() }
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val deletedPeople: StateFlow<List<Person>> = people.observeDeleted()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** The person behind whichever detail-ish screen is open. Null when none is. */
+    val selectedPerson: StateFlow<Person?> = combine(_screen, allCards) { screen, list ->
+        val id = when (screen) {
+            is Screen.PersonDetail -> screen.personId
+            is Screen.EditPerson -> screen.personId
+            is Screen.EventEditor -> screen.personId
+            else -> null
+        }
+        id?.let { pid -> list.firstOrNull { it.person.id == pid }?.person }
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // -----------------------------------------------------------------------------------
+    // Session
+    // -----------------------------------------------------------------------------------
 
     fun start() {
         auth.restore()
@@ -112,11 +183,11 @@ class AppStore(
         }
     }
 
-    fun addPerson(displayName: String, relation: String?, date: EventDate) {
+    fun signOut() {
         scope.launch {
-            people.addPerson(displayName, relation, date)
-            _screen.value = Screen.People
-            _message.value = "$displayName saved"
+            auth.signOut()
+            backStack.clear()
+            _screen.value = Screen.SignIn
         }
     }
 
@@ -131,27 +202,175 @@ class AppStore(
         }
     }
 
-    fun signOut() {
-        scope.launch {
-            auth.signOut()
-            _screen.value = Screen.SignIn
-        }
+    // -----------------------------------------------------------------------------------
+    // Navigation
+    // -----------------------------------------------------------------------------------
+
+    private fun go(screen: Screen) {
+        backStack.addLast(_screen.value)
+        _screen.value = screen
     }
 
     fun openAddPerson() {
-        _screen.value = Screen.AddPerson
+        _duplicates.value = emptyList()
+        go(Screen.AddPerson)
     }
 
+    fun openPerson(personId: String) = go(Screen.PersonDetail(personId))
+    fun openEditPerson(personId: String) = go(Screen.EditPerson(personId))
+    fun openEventEditor(personId: String, eventId: String?) = go(Screen.EventEditor(personId, eventId))
+    fun openDeleted() = go(Screen.Deleted)
+
     fun back() {
-        _screen.value = if (auth.state.value is AuthState.SignedIn) Screen.People else Screen.SignIn
+        val previous = backStack.removeLastOrNull()
+        _screen.value = when {
+            previous != null -> previous
+            auth.state.value is AuthState.SignedIn -> Screen.People
+            else -> Screen.SignIn
+        }
     }
 
     /** Called when a notification is tapped (deep link `wishkaro://person/<id>`). */
     fun focusPerson(personId: String?) {
         _focusedPersonId.value = personId
         if (personId != null && auth.state.value is AuthState.SignedIn) {
-            _screen.value = Screen.People
+            backStack.clear()
+            backStack.addLast(Screen.People)
+            _screen.value = Screen.PersonDetail(personId)
         }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Filtering
+    // -----------------------------------------------------------------------------------
+
+    fun setQuery(value: String) = _filter.update { it.copy(query = value) }
+    fun setRelationFilter(value: String?) = _filter.update { it.copy(relation = value) }
+    fun setMonthFilter(value: Int?) = _filter.update { it.copy(month = value) }
+    fun clearFilter() { _filter.value = PeopleFilter() }
+
+    private inline fun MutableStateFlow<PeopleFilter>.update(block: (PeopleFilter) -> PeopleFilter) {
+        value = block(value)
+    }
+
+    // -----------------------------------------------------------------------------------
+    // People
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Checks for duplicates before saving (FR-PPL-06). Returns true when the caller should
+     * stop and show the prompt instead of saving.
+     */
+    suspend fun checkDuplicates(displayName: String, date: EventDate): Boolean {
+        val found = people.findDuplicates(displayName, date)
+        _duplicates.value = found
+        return found.isNotEmpty()
+    }
+
+    fun dismissDuplicates() { _duplicates.value = emptyList() }
+
+    fun addPerson(
+        displayName: String,
+        relation: String?,
+        type: EventType,
+        label: String?,
+        date: EventDate,
+    ) {
+        scope.launch {
+            val id = people.addPerson(displayName, relation, type, label, date)
+            _duplicates.value = emptyList()
+            backStack.clear()
+            backStack.addLast(Screen.People)
+            _screen.value = Screen.PersonDetail(id)
+            _message.value = "$displayName saved"
+        }
+    }
+
+    fun savePerson(
+        personId: String,
+        displayName: String,
+        relation: String?,
+        gender: String?,
+        phone: String?,
+        email: String?,
+        notes: String?,
+        isDeceased: Boolean,
+    ) {
+        scope.launch {
+            people.updatePerson(personId, displayName, relation, gender, phone, email, notes, isDeceased)
+            back()
+            _message.value = "Saved"
+        }
+    }
+
+    fun deletePerson(personId: String, displayName: String) {
+        scope.launch {
+            people.deletePerson(personId)
+            backStack.clear()
+            _screen.value = Screen.People
+            // FR-PPL-08: the window is the feature, so the confirmation states it.
+            _message.value = "$displayName removed. Restorable for 30 days."
+        }
+    }
+
+    fun restorePerson(personId: String) {
+        scope.launch {
+            people.restorePerson(personId)
+            _message.value = "Restored"
+        }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Events
+    // -----------------------------------------------------------------------------------
+
+    fun saveEvent(
+        personId: String,
+        eventId: String?,
+        type: EventType,
+        label: String?,
+        date: EventDate,
+    ) {
+        scope.launch {
+            if (eventId == null) {
+                people.addEvent(personId, type, label, date)
+            } else {
+                people.updateEvent(eventId, type, label, date)
+            }
+            back()
+            // The person's tone can change as a result of this write (FR-EVT-04), but the
+            // server owns that decision — so the message says what was saved, not what it
+            // implies. The screen will show the real answer after the next sync.
+            _message.value = if (eventId == null) "Date added" else "Date updated"
+        }
+    }
+
+    fun setEventMuted(eventId: String, muted: Boolean) {
+        scope.launch { people.setEventMuted(eventId, muted) }
+    }
+
+    fun deleteEvent(eventId: String) {
+        scope.launch {
+            people.deleteEvent(eventId)
+            _message.value = "Date removed"
+        }
+    }
+
+    fun restoreEvent(eventId: String) {
+        scope.launch { people.restoreEvent(eventId) }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Traits
+    // -----------------------------------------------------------------------------------
+
+    fun addTrait(personId: String, kind: TraitKind, value: String) {
+        if (value.isBlank()) return
+        scope.launch { people.addTrait(personId, kind, value) }
+    }
+
+    fun removeTrait(traitId: String) {
+        scope.launch { people.removeTrait(traitId) }
     }
 
     fun clearMessage() {

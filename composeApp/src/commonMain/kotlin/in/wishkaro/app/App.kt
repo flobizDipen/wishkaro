@@ -14,6 +14,10 @@ import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.Screen
 import `in`.wishkaro.app.ui.addperson.AddPersonScreen
 import `in`.wishkaro.app.ui.people.PeopleListScreen
+import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
+import `in`.wishkaro.app.ui.person.EditPersonScreen
+import `in`.wishkaro.app.ui.person.EventEditorScreen
+import `in`.wishkaro.app.ui.person.PersonDetailScreen
 import `in`.wishkaro.app.ui.signin.SignInScreen
 import `in`.wishkaro.app.ui.theme.WishKaroTheme
 import org.koin.compose.koinInject
@@ -24,6 +28,11 @@ fun App(modifier: Modifier = Modifier) {
         val store: AppStore = koinInject()
         val screen by store.screen.collectAsState()
         val cards by store.cards.collectAsState()
+        val filter by store.filter.collectAsState()
+        val relations by store.knownRelations.collectAsState()
+        val deleted by store.deletedPeople.collectAsState()
+        val selected by store.selectedPerson.collectAsState()
+        val duplicates by store.duplicates.collectAsState()
         val busy by store.busy.collectAsState()
         val message by store.message.collectAsState()
         val focused by store.focusedPersonId.collectAsState()
@@ -40,14 +49,22 @@ fun App(modifier: Modifier = Modifier) {
 
         Scaffold(modifier = modifier, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             val inner = Modifier.padding(padding)
-            when (screen) {
+            when (val current = screen) {
                 Screen.SignIn -> SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
 
                 Screen.People -> PeopleListScreen(
                     cards = cards,
+                    filter = filter,
+                    knownRelations = relations,
                     focusedPersonId = focused,
                     busy = busy,
+                    onOpenPerson = store::openPerson,
                     onAddPerson = store::openAddPerson,
+                    onQueryChange = store::setQuery,
+                    onRelationFilter = store::setRelationFilter,
+                    onMonthFilter = store::setMonthFilter,
+                    onClearFilter = store::clearFilter,
+                    onOpenDeleted = store::openDeleted,
                     onRefresh = store::refresh,
                     onTestReminder = store::sendTestReminder,
                     onSignOut = store::signOut,
@@ -55,8 +72,56 @@ fun App(modifier: Modifier = Modifier) {
                 )
 
                 Screen.AddPerson -> AddPersonScreen(
+                    duplicates = duplicates,
+                    onCheckDuplicates = store::checkDuplicates,
+                    onDismissDuplicates = store::dismissDuplicates,
                     onSave = store::addPerson,
+                    onOpenExisting = store::openPerson,
                     onCancel = store::back,
+                    modifier = inner,
+                )
+
+                is Screen.PersonDetail -> PersonDetailScreen(
+                    person = selected,
+                    onBack = store::back,
+                    onEdit = { store.openEditPerson(current.personId) },
+                    onAddEvent = { store.openEventEditor(current.personId, null) },
+                    onEditEvent = { store.openEventEditor(current.personId, it) },
+                    onDeleteEvent = store::deleteEvent,
+                    onToggleMute = store::setEventMuted,
+                    onDelete = {
+                        store.deletePerson(current.personId, selected?.displayName ?: "They")
+                    },
+                    onAddTrait = { kind, value -> store.addTrait(current.personId, kind, value) },
+                    onRemoveTrait = store::removeTrait,
+                    modifier = inner,
+                )
+
+                is Screen.EditPerson -> EditPersonScreen(
+                    person = selected,
+                    onBack = store::back,
+                    onSave = { name, relation, gender, phone, email, notes, deceased ->
+                        store.savePerson(
+                            current.personId, name, relation, gender, phone, email, notes, deceased,
+                        )
+                    },
+                    modifier = inner,
+                )
+
+                is Screen.EventEditor -> EventEditorScreen(
+                    person = selected,
+                    eventId = current.eventId,
+                    onBack = store::back,
+                    onSave = { type, label, date ->
+                        store.saveEvent(current.personId, current.eventId, type, label, date)
+                    },
+                    modifier = inner,
+                )
+
+                Screen.Deleted -> DeletedPeopleScreen(
+                    people = deleted,
+                    onBack = store::back,
+                    onRestore = store::restorePerson,
                     modifier = inner,
                 )
             }

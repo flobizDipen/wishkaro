@@ -185,6 +185,23 @@ sqldelight {
             // code would need backticks the generator does not always emit. The app id and
             // the Android namespace are unaffected — this names generated classes only.
             packageName.set("wishkaro.db")
+
+            /**
+             * M1 adds columns to `person` and `event` and a whole `person_trait` table, and
+             * there are real installs out there — the handset M0 was proved on among them.
+             *
+             * `AndroidSqliteDriver` replays the `.sqm` files on upgrade. Without one, the new
+             * `.sq` schema compiles and installs happily and then throws
+             * "no such column" on the first query against an existing database. That is a
+             * crash on exactly the device this milestone is meant to be verified on.
+             *
+             * `schemaOutputDirectory` holds the snapshot of each released schema;
+             * `verifyMigrations` makes the BUILD fail if applying the migrations to that
+             * snapshot does not reproduce the current `.sq` files. So the next person to add
+             * a column gets a build error rather than a field report.
+             */
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
+            verifyMigrations.set(true)
         }
     }
 }

@@ -3,9 +3,11 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
-import `in`.wishkaro.app.data.remote.SyncEventDto
-import `in`.wishkaro.app.data.remote.SyncPersonDto
+import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.remote.SyncEventPush
+import `in`.wishkaro.app.data.remote.SyncPersonPush
 import `in`.wishkaro.app.data.remote.SyncPushRequest
+import `in`.wishkaro.app.data.remote.SyncTraitPush
 import `in`.wishkaro.app.data.remote.WishKaroApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,51 +28,63 @@ class SyncEngine(
 ) {
     private val mutex = Mutex()
 
-    data class Result(
-        val pushedPeople: Int = 0,
-        val pushedEvents: Int = 0,
-        val pulledPeople: Int = 0,
-        val pulledEvents: Int = 0,
-    )
-
-    suspend fun sync(): kotlin.Result<Result> = mutex.withLock {
-        runCatching {
-            val pushed = push()
-            val pulled = pull()
-            Result(
-                pushedPeople = pushed.first,
-                pushedEvents = pushed.second,
-                pulledPeople = pulled.first,
-                pulledEvents = pulled.second,
-            )
-        }
+    data class Counts(val people: Int = 0, val events: Int = 0, val traits: Int = 0) {
+        val total: Int get() = people + events + traits
     }
 
-    private suspend fun push(): Pair<Int, Int> {
+    data class Result(val pushed: Counts = Counts(), val pulled: Counts = Counts())
+
+    suspend fun sync(): kotlin.Result<Result> = mutex.withLock {
+        runCatching { Result(pushed = push(), pulled = pull()) }
+    }
+
+    private suspend fun push(): Counts {
         val people = local.pendingPeople()
         val events = local.pendingEvents()
-        if (people.isEmpty() && events.isEmpty()) return 0 to 0
+        val traits = local.pendingTraits()
+        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) return Counts()
 
+        // The push DTOs omit every server-derived field. The server's write schemas are
+        // .strict(), so including `sentiment`, `isMinor` or `completenessScore` would make
+        // each sync a 400 — and silently dropping them, which is what a lenient schema used
+        // to do, would hide a client bug rather than report it.
         api.syncPush(
             SyncPushRequest(
                 people = people.map {
-                    SyncPersonDto(
+                    SyncPersonPush(
                         id = it.id,
                         displayName = it.display_name,
                         relationToOwner = it.relation_to_owner,
                         isSelf = it.is_self != 0L,
+                        gender = it.gender,
+                        phone = it.phone,
+                        email = it.email,
+                        notes = it.notes,
+                        isDeceased = it.is_deceased != 0L,
                         updatedAt = it.updated_at,
                         deletedAt = it.deleted_at,
                     )
                 },
                 events = events.map {
-                    SyncEventDto(
+                    SyncEventPush(
                         id = it.id,
                         personId = it.person_id,
                         type = it.type,
+                        label = it.label,
+                        isMuted = it.is_muted != 0L,
                         day = it.day.toInt(),
                         month = it.month.toInt(),
                         year = it.year?.toInt(),
+                        updatedAt = it.updated_at,
+                        deletedAt = it.deleted_at,
+                    )
+                },
+                traits = traits.map {
+                    SyncTraitPush(
+                        id = it.id,
+                        personId = it.person_id,
+                        kind = it.kind,
+                        value = it.value_,
                         updatedAt = it.updated_at,
                         deletedAt = it.deleted_at,
                     )
@@ -83,12 +97,12 @@ class SyncEngine(
         // pull below will bring it down.
         local.clearPersonPending(people.map { it.id })
         local.clearEventPending(events.map { it.id })
-        return people.size to events.size
+        local.clearTraitPending(traits.map { it.id })
+        return Counts(people.size, events.size, traits.size)
     }
 
-    private suspend fun pull(): Pair<Int, Int> {
-        var people = 0
-        var events = 0
+    private suspend fun pull(): Counts {
+        var counts = Counts()
         var cursor = local.cursor()
 
         // The server pages; keep going until it says there is nothing left. Bounded so a
@@ -102,6 +116,13 @@ class SyncEngine(
                         displayName = it.displayName,
                         relationToOwner = it.relationToOwner,
                         isSelf = it.isSelf,
+                        gender = it.gender,
+                        phone = it.phone,
+                        email = it.email,
+                        notes = it.notes,
+                        isDeceased = it.isDeceased,
+                        isMinor = it.isMinor,
+                        completenessScore = it.completenessScore,
                         updatedAt = it.updatedAt,
                         deletedAt = it.deletedAt,
                     )
@@ -111,6 +132,9 @@ class SyncEngine(
                         id = it.id,
                         personId = it.personId,
                         type = it.type,
+                        sentiment = it.sentiment,
+                        label = it.label,
+                        isMuted = it.isMuted,
                         day = it.day,
                         month = it.month,
                         year = it.year,
@@ -118,14 +142,28 @@ class SyncEngine(
                         deletedAt = it.deletedAt,
                     )
                 },
+                remoteTraits = page.traits.map {
+                    RemoteTrait(
+                        id = it.id,
+                        personId = it.personId,
+                        kind = it.kind,
+                        value = it.value,
+                        source = it.source,
+                        updatedAt = it.updatedAt,
+                        deletedAt = it.deletedAt,
+                    )
+                },
                 cursor = page.cursor,
             )
-            people += page.people.size
-            events += page.events.size
+            counts = Counts(
+                counts.people + page.people.size,
+                counts.events + page.events.size,
+                counts.traits + page.traits.size,
+            )
             cursor = page.cursor
-            if (!page.hasMore) return people to events
+            if (!page.hasMore) return counts
         }
-        return people to events
+        return counts
     }
 
     private companion object {
