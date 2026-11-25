@@ -20,7 +20,15 @@ CREATE TABLE scheduled_reminder (
     event_type    TEXT,
     sentiment     TEXT,
     deep_link     TEXT,
-    -- PLAN (from the server) or LOCAL_FALLBACK (computed here for an unsynced event).
+    -- PLAN           — from the server's plan, and owned by it: a refresh deletes any row
+    --                  the latest plan no longer contains.
+    -- LOCAL_FALLBACK — computed here for an event the server has never seen, and owned by
+    --                  rebuildLocalFallbacks(), which withdraws it once the event syncs.
+    -- SNOOZE         — written by the user tapping Snooze 1h, and owned by NOBODY but the
+    --                  alarm itself. It is a third value rather than a flag on
+    --                  LOCAL_FALLBACK because both reconciliations work by deleting whatever
+    --                  they do not currently want, and a snooze is by definition not wanted
+    --                  by either of them — it was asked for.
     source        TEXT NOT NULL DEFAULT 'PLAN',
     -- Set once the alarm has actually fired, so a re-arm after reboot does not replay it.
     fired_at      TEXT

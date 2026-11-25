@@ -14,8 +14,10 @@ import androidx.core.content.ContextCompat
 import `in`.wishkaro.app.MainActivity
 import `in`.wishkaro.app.R
 import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.domain.DeliverableReminder
+import `in`.wishkaro.app.domain.DeliveryChannel
+import `in`.wishkaro.app.domain.ReminderDelivery
 import `in`.wishkaro.app.platform.NotificationChannels
-import kotlin.time.Clock
 
 /**
  * Draws a reminder, exactly once, whichever path delivered it.
@@ -28,55 +30,31 @@ import kotlin.time.Clock
  */
 object ReminderPresenter {
 
-    const val OUTCOME_SHOWN = "SHOWN"
-    const val OUTCOME_SUPPRESSED_DUPLICATE = "SUPPRESSED_DUPLICATE"
-    const val OUTCOME_BLOCKED_NO_PERMISSION = "BLOCKED_NO_PERMISSION"
-
-    const val CHANNEL_FCM = "FCM"
-    const val CHANNEL_LOCAL = "LOCAL"
-
     private const val TAG = "WishKaroReminder"
 
-    data class Reminder(
-        val dedupeKey: String,
-        val title: String,
-        val body: String,
-        val offset: String,
-        val type: String,
-        val personId: String?,
-        val personName: String?,
-        val sentiment: String?,
-        val deepLink: String?,
-    )
-
     /**
-     * Claims the key, draws the notification and records the outcome.
+     * Draws a reminder, exactly once, whichever path delivered it.
      *
-     * Returns what happened, so the caller can log it; the delivery report is written here
-     * regardless, because a path that forgot to report would be indistinguishable from a
-     * path that never fired — and telling those apart is the whole point of FR-REM-10.
+     * The ORDERING — claim, draw, release the claim if the draw failed, record the outcome —
+     * lives in [ReminderDelivery] in common code, because it is the whole of FR-REM-02 and it
+     * has to be testable without a device. What is left here is what is genuinely Android:
+     * notification channels, the action buttons, and NotificationManagerCompat.
      */
     suspend fun present(
         context: Context,
         local: LocalStore,
-        reminder: Reminder,
+        reminder: DeliverableReminder,
         channel: String,
     ): String {
-        val nowIso = Clock.System.now().toString()
-
-        val first = local.claimReminder(reminder.dedupeKey, nowIso)
-        if (!first) {
-            Log.i(TAG, "Duplicate reminder ${reminder.dedupeKey} suppressed (via $channel)")
-            local.recordDelivery(reminder.dedupeKey, OUTCOME_SUPPRESSED_DUPLICATE, channel, nowIso)
-            return OUTCOME_SUPPRESSED_DUPLICATE
-        }
-
-        val outcome = if (show(context, reminder)) OUTCOME_SHOWN else OUTCOME_BLOCKED_NO_PERMISSION
-        local.recordDelivery(reminder.dedupeKey, outcome, channel, nowIso)
+        val outcome = ReminderDelivery(
+            store = local,
+            notifier = { drawn -> show(context, drawn) },
+        ).deliver(reminder, channel)
+        Log.i(TAG, "${reminder.dedupeKey} via $channel -> $outcome")
         return outcome
     }
 
-    private fun show(context: Context, reminder: Reminder): Boolean {
+    private fun show(context: Context, reminder: DeliverableReminder): Boolean {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -112,7 +90,7 @@ object ReminderPresenter {
      * An offset this build does not recognise falls back to morning-of rather than being
      * dropped: an unknown rung from a newer server is still a reminder someone is waiting for.
      */
-    private fun channelFor(reminder: Reminder): String = when {
+    private fun channelFor(reminder: DeliverableReminder): String = when {
         reminder.type == "TEST" -> NotificationChannels.SELF_TEST
         reminder.offset == "DIGEST" -> NotificationChannels.DIGEST
         reminder.offset == "D7" -> NotificationChannels.WEEK_BEFORE
@@ -120,7 +98,7 @@ object ReminderPresenter {
         else -> NotificationChannels.MORNING_OF
     }
 
-    private fun openIntent(context: Context, reminder: Reminder, id: Int): PendingIntent {
+    private fun openIntent(context: Context, reminder: DeliverableReminder, id: Int): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             reminder.deepLink?.let { data = Uri.parse(it) }
@@ -135,7 +113,7 @@ object ReminderPresenter {
 
     private data class Action(
         val label: String,
-        val intent: (Context, Reminder, Int) -> PendingIntent,
+        val intent: (Context, DeliverableReminder, Int) -> PendingIntent,
     )
 
     /**
@@ -156,7 +134,7 @@ object ReminderPresenter {
      * set. The client does not know what the server knows, so it offers nothing that assumes
      * a mood.
      */
-    private fun actionsFor(reminder: Reminder): List<Action> {
+    private fun actionsFor(reminder: DeliverableReminder): List<Action> {
         if (reminder.type == "TEST" || reminder.type == "DIGEST") return emptyList()
         if (reminder.personId == null) return emptyList()
 

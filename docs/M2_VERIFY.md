@@ -504,6 +504,90 @@ component names are the part most likely to be wrong.
 
 ---
 
+## 8.5 What the code review of PR #3 found
+
+Three bugs, all in seams rather than in pure functions, and the first two in the local-alarm
+path — the half of M2 that exists for when everything else fails.
+
+### 8.5.1 Snooze 1h was cancelled by the next plan refresh — **fixed**
+
+`ReminderActionReceiver.snooze()` wrote its row through `upsertLocalFallback`, which hardcoded
+`source = 'LOCAL_FALLBACK'`. `rebuildLocalFallbacks()` reconciles by deleting every
+LOCAL_FALLBACK row it does not currently want, and a snooze key —
+`${dedupeKey}:snooze:${millis}` — can never be in that wanted set.
+
+So: tap **Snooze 1h** at 09:00, row stored, alarm armed for 10:00. Any of the four things that
+call `refresh()` — app launch, a completed sync, the Settings screen, the upkeep worker —
+deletes the row and cancels the alarm. 10:00 passes in silence and nothing is recorded.
+
+Fixed with a third `source` value, `SNOOZE`, which `localFallbacks()` does not return, so the
+reconciliation keeps its "delete whatever is not wanted" shape and simply does not own snooze
+rows. Deliberately **not** a special case on the `:snooze:` key suffix, which would put the
+rule back in a string.
+
+Reproduced and confirmed on the device, end to end:
+
+1. aeroplane mode on, seed a `PLAN` row 80 seconds out, launch — `refresh()` fails silently
+   and `rearmAll()` still arms from the table, so the alarm survives to fire;
+2. it fires offline — `WishKaroReminder: snooze-proof:2026:D0 via LOCAL -> SHOWN`;
+3. tap **Snooze 1h** — `WishKaroAction: Snoozed snooze-proof:2026:D0 until 17:14:59Z`, and the
+   row is written `source = SNOOZE`;
+4. radio back, relaunch, which runs a real plan refresh.
+
+Afterwards:
+
+```
+snooze-proof:2026:D0:snooze:1795626899963 | SNOOZE   <- survived
+snooze-proof:2026:D0                      | gone     <- a PLAN row the server's plan
+                                                        no longer contains, correctly removed
+```
+
+and `dumpsys alarm` shows `origWhen=2026-11-25 22:44:59`, one hour on. The same run proves
+8.5.3: the stale `PLAN` row was deleted by `replacePlan` **and** its alarm cancelled.
+
+### 8.5.2 A blocked reminder was lost for good — **fixed**
+
+`present()` claimed the dedupe key *before* drawing, and `seen_reminder` had no release path.
+When `show()` returned false because POST_NOTIFICATIONS was not granted, the claim stayed for
+ever — so the catch-up pass in `rearmAll()`, which exists precisely to deliver a reminder whose
+moment passed while the app was dead, took the already-seen branch and suppressed it as a
+duplicate. Grant the permission half an hour later and the reminder never arrives; it does not
+come round again for a year.
+
+It corrupted the self-test too: `wasReminderSeen()` reads the same table, so FR-REM-07 reported
+a blocked notification as delivered — on exactly the phones whose blocking it exists to
+diagnose.
+
+Fixed by releasing the claim when the draw fails. The order is still claim-then-draw, because
+drawing first loses the race outright — both paths would draw before either claimed. The
+remaining window is the duration of `show()` rather than for ever, and the reasoning is
+written into `ReminderDelivery`.
+
+That fix needed a seam: the ordering moved to `ReminderDelivery` in common code, with the
+Android side reduced to what is genuinely Android — channels, action buttons,
+`NotificationManagerCompat`. It is now testable without a device, which is why it has tests at
+all.
+
+### 8.5.3 Alarms for cancelled reminders stayed armed — **fixed**
+
+`refresh()` discarded `PlanDiff.removed`, which both `LocalStore` and `ScheduledReminder.sq`
+document as the list whose alarms should be cancelled. `rearmAll()` only ARMS from the table,
+so a deleted row left its alarm behind: a stale `RTC_WAKEUP` waking the device to find nothing.
+Mute an event or switch digest on and every suppressed rung leaves one, on exactly the OEM
+phones this milestone is about.
+
+### 8.5.4 The shape they share
+
+All three are the same shape as M1's reviewed bugs: a value that says what changed is computed
+and then dropped (`PlanDiff.removed`; M1's `skipped` list), or a reconciliation loop is correct
+for the rows it was written for and wrong for rows that arrived another way
+(`rebuildLocalFallbacks` over snooze rows; M1's sweep filtered to unmuted events). The pure
+functions are not where this codebase breaks. The seams between them are — which is why the
+tests added for each of these drive the seam rather than the function, and why each was
+confirmed by reverting the fix and watching the test go red.
+
+---
+
 ## 9. The honest summary
 
 | # | Definition of done | State |

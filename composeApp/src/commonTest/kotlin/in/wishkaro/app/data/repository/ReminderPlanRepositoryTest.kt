@@ -2,8 +2,11 @@ package `in`.wishkaro.app.data.repository
 
 import `in`.wishkaro.app.data.local.PlanDiff
 import `in`.wishkaro.app.data.local.ScheduledReminderRow
+import `in`.wishkaro.app.data.remote.PlanReminderDto
+import `in`.wishkaro.app.data.remote.PlanResponse
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.ReminderSettings
+import `in`.wishkaro.app.domain.ReminderSource
 import `in`.wishkaro.app.platform.ReminderScheduler
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -157,12 +160,99 @@ class ReminderPlanRepositoryTest {
         assertEquals(Instant.parse("2026-12-20T03:30:00Z"), at)
     }
 
-    private fun repo(store: FakePlanStore) =
+    /**
+     * Snooze 1h survives a plan refresh.
+     *
+     * `rebuildLocalFallbacks()` reconciles by deleting every LOCAL_FALLBACK row it does not
+     * currently want, and a snooze key — `${'$'}{dedupeKey}:snooze:${'$'}{millis}` — can never be in
+     * that wanted set. Written as LOCAL_FALLBACK it was therefore deleted and its alarm
+     * cancelled by the next refresh: app launch, any completed sync, or the upkeep worker.
+     * The user taps Snooze at 09:00 and 10:00 passes in silence.
+     */
+    @Test
+    fun aSnoozedReminderSurvivesAPlanRefresh() = runTest {
+        val store = FakePlanStore()
+        store.addSnooze(
+            ScheduledReminderRow(
+                dedupeKey = "e1:2026:D0:snooze:1795615088632",
+                scheduledAt = "2026-11-25T10:00:00Z",
+                offset = "D0",
+                title = "Ravi — today",
+                body = "A date you saved is today.",
+                personId = "p1",
+            ),
+        )
+
+        repo(store).rebuildLocalFallbacks()
+
+        assertTrue(
+            "e1:2026:D0:snooze:1795615088632" in store.rows,
+            "the snooze row was deleted by the fallback reconciliation",
+        )
+        assertTrue(store.cancelled.isEmpty(), "the snooze alarm was cancelled")
+    }
+
+    /**
+     * And the fix must not disable the reconciliation it sits inside: a fallback for an event
+     * that has since reached the server is still withdrawn, snooze row present or not.
+     */
+    @Test
+    fun stillWithdrawsASyncedFallbackWhileASnoozeIsPending() = runTest {
+        val store = FakePlanStore(unsynced = listOf(event("e1", day = 20, month = 12)))
+        repo(store).rebuildLocalFallbacks()
+        assertEquals(1, store.fallbacks.size)
+
+        store.addSnooze(
+            ScheduledReminderRow(
+                dedupeKey = "e9:2026:D0:snooze:1",
+                scheduledAt = "2026-11-25T10:00:00Z",
+                offset = "D0",
+                title = "x",
+                body = "y",
+                personId = "p9",
+            ),
+        )
+        store.unsynced = emptyList()
+        repo(store).rebuildLocalFallbacks()
+
+        assertEquals(0, store.fallbacks.size, "the synced event's fallback was not withdrawn")
+        assertEquals(listOf("e1:2026:D0"), store.cancelled)
+        assertTrue("e9:2026:D0:snooze:1" in store.rows, "the snooze was collateral damage")
+    }
+
+    /**
+     * A plan refresh cancels the alarms for rows the new plan no longer contains.
+     *
+     * `rearmAll()` only ARMS from the table, so a row deleted by `replacePlan` left its alarm
+     * behind: a stale RTC_WAKEUP waking the device to find nothing. Mute an event or switch
+     * digest on and every suppressed rung leaves one, on exactly the OEM phones where
+     * AndroidReminderScheduler notes that arming a lot of alarms attracts attention.
+     */
+    @Test
+    fun cancelsAlarmsForRowsTheNewPlanDropped() = runTest {
+        val store = FakePlanStore(removedByPlan = listOf("e1:2026:D7", "e1:2026:D1"))
+
+        repo(store, plan = emptyList()).refresh()
+
+        assertEquals(listOf("e1:2026:D7", "e1:2026:D1"), store.cancelled)
+    }
+
+    @Test
+    fun cancelsNothingWhenThePlanIsUnchanged() = runTest {
+        val store = FakePlanStore()
+
+        repo(store, plan = emptyList()).refresh()
+
+        assertTrue(store.cancelled.isEmpty())
+    }
+
+    private fun repo(store: FakePlanStore, plan: List<PlanReminderDto>? = null) =
         ReminderPlanRepository(
-            // The fallback path never touches the network, so a call here would be a bug.
             api = object : PlanApi {
                 override suspend fun fetchPlan(days: Int) =
-                    throw UnsupportedOperationException("the fallback path must not fetch")
+                    // The fallback path never fetches, so a call there would be a bug.
+                    plan?.let { PlanResponse(reminders = it) }
+                        ?: throw UnsupportedOperationException("the fallback path must not fetch")
             },
             local = store,
             scheduler = store.scheduler,
@@ -208,8 +298,14 @@ private class FakePlanStore(
     var unsynced: List<wishkaro.db.Event> = emptyList(),
     private val people: Map<String, Person> = emptyMap(),
     private val settings: ReminderSettings = ReminderSettings(),
+    /** What `staleFromPlan` would find: rows the incoming plan no longer contains. */
+    private val removedByPlan: List<String> = emptyList(),
 ) : PlanStore {
-    val fallbacks = mutableMapOf<String, ScheduledReminderRow>()
+    /** Keyed by dedupe key, valued by (row, source) — the SQL stores a source per row. */
+    val rows = mutableMapOf<String, Pair<ScheduledReminderRow, String>>()
+    val fallbacks: Map<String, ScheduledReminderRow>
+        get() = rows.filterValues { it.second == ReminderSource.LOCAL_FALLBACK }
+            .mapValues { it.value.first }
     private val fired = mutableSetOf<String>()
     val cancelled = mutableListOf<String>()
 
@@ -223,10 +319,12 @@ private class FakePlanStore(
     fun markFired(key: String) { fired += key }
 
     override suspend fun reminderSettings() = settings
-    override suspend fun replacePlan(entries: List<ScheduledReminderRow>) = PlanDiff(emptyList(), emptyList())
+    override suspend fun replacePlan(entries: List<ScheduledReminderRow>) =
+        PlanDiff(added = entries.map { it.dedupeKey }, removed = removedByPlan)
     override suspend fun unsyncedEvents() = unsynced
     override suspend fun findPerson(id: String) = people[id]
 
+    /** Mirrors `SELECT * FROM scheduled_reminder WHERE source = 'LOCAL_FALLBACK'`. */
     override suspend fun localFallbacks(): List<wishkaro.db.Scheduled_reminder> =
         fallbacks.values.map {
             wishkaro.db.Scheduled_reminder(
@@ -240,16 +338,21 @@ private class FakePlanStore(
                 event_type = it.eventType,
                 sentiment = it.sentiment,
                 deep_link = it.deepLink,
-                source = "LOCAL_FALLBACK",
+                source = ReminderSource.LOCAL_FALLBACK,
                 fired_at = if (it.dedupeKey in fired) "2026-12-20T03:30:00Z" else null,
             )
         }
 
     override suspend fun upsertLocalFallback(entry: ScheduledReminderRow) {
-        fallbacks[entry.dedupeKey] = entry
+        rows[entry.dedupeKey] = entry to ReminderSource.LOCAL_FALLBACK
+    }
+
+    /** What `LocalStore.upsertSnooze` does: the same table, a different owner. */
+    fun addSnooze(entry: ScheduledReminderRow) {
+        rows[entry.dedupeKey] = entry to ReminderSource.SNOOZE
     }
 
     override suspend fun deleteScheduled(dedupeKey: String) {
-        fallbacks.remove(dedupeKey)
+        rows.remove(dedupeKey)
     }
 }

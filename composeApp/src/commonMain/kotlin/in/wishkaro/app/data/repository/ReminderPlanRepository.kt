@@ -94,7 +94,7 @@ class ReminderPlanRepository(
     suspend fun refresh(horizonDays: Int = PLAN_HORIZON_DAYS): Boolean {
         val response = runCatching { api.fetchPlan(horizonDays) }.getOrNull() ?: return false
 
-        local.replacePlan(
+        val diff = local.replacePlan(
             response.reminders.map {
                 ScheduledReminderRow(
                     dedupeKey = it.dedupeKey,
@@ -110,6 +110,15 @@ class ReminderPlanRepository(
                 )
             },
         )
+        // Cancel the alarms for rows the latest plan no longer contains — an event muted, a
+        // person deleted, digest switched on. `rearmAll()` only ARMS from the table, so
+        // without this their alarms survive the row that justified them: a stale RTC_WAKEUP
+        // that wakes the device to find nothing, on precisely the OEM phones where
+        // AndroidReminderScheduler already notes that arming a lot of alarms attracts the
+        // battery manager's attention. `rebuildLocalFallbacks()` has always done this for
+        // withdrawn fallbacks; the plan path was the half that did not.
+        for (key in diff.removed) scheduler.cancel(key)
+
         rebuildLocalFallbacks()
         scheduler.rearmAll()
         return true

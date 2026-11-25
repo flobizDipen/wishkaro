@@ -15,7 +15,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import `in`.wishkaro.app.data.repository.PlanStore
+import `in`.wishkaro.app.domain.DeliveryStore
 import `in`.wishkaro.app.domain.ReminderSettings
+import `in`.wishkaro.app.domain.ReminderSource
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
 import wishkaro.db.WishKaroDb
@@ -66,7 +68,7 @@ private fun sameTombstone(a: String?, b: String?): Boolean {
  * and the next pull corrects them, which is why a person's tone can lag a local edit by one
  * sync but can never be invented by the client.
  */
-class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
+class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliveryStore {
 
     private val people = db.personQueries
     private val events = db.eventQueries
@@ -468,7 +470,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
     // -----------------------------------------------------------------------------------
 
     /** True the FIRST time a dedupe key is seen; false on every repeat (FR-REM-02). */
-    suspend fun claimReminder(dedupeKey: String, nowIso: String): Boolean =
+    override suspend fun claimReminder(dedupeKey: String, nowIso: String): Boolean =
         withContext(Dispatchers.Default) {
             db.transactionWithResult {
                 val already = seen.wasSeen(dedupeKey).executeAsOne()
@@ -501,12 +503,12 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
      * first — so the only record of an actual delivery was replaced by a record of a
      * suppression, before either had reached the server.
      */
-    suspend fun recordDelivery(
+    override suspend fun recordDelivery(
         dedupeKey: String,
         outcome: String,
         channel: String,
         occurredAtIso: String,
-    ) = withContext(Dispatchers.Default) {
+    ): Unit = withContext(Dispatchers.Default) {
         db.transaction {
             if (delivery.exists(dedupeKey).executeAsOne()) {
                 delivery.updateReport(outcome, channel, occurredAtIso, dedupeKey)
@@ -635,6 +637,21 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
         withContext(Dispatchers.Default) { scheduled.markFired(nowIso, dedupeKey) }
 
     override suspend fun upsertLocalFallback(entry: ScheduledReminderRow): Unit =
+        write(entry, ReminderSource.LOCAL_FALLBACK)
+
+    /**
+     * A snoozed reminder (FR-REM-04).
+     *
+     * Deliberately a different `source` from a local fallback. `rebuildLocalFallbacks()`
+     * reconciles by deleting every LOCAL_FALLBACK row it does not currently want, and a
+     * snooze key can never be in that wanted set — so writing one as LOCAL_FALLBACK meant the
+     * next plan refresh silently cancelled it, usually within the hour the user had just
+     * asked to be reminded in.
+     */
+    suspend fun upsertSnooze(entry: ScheduledReminderRow): Unit =
+        write(entry, ReminderSource.SNOOZE)
+
+    private suspend fun write(entry: ScheduledReminderRow, source: String): Unit =
         withContext(Dispatchers.Default) {
             scheduled.upsert(
                 dedupe_key = entry.dedupeKey,
@@ -647,7 +664,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
                 event_type = entry.eventType,
                 sentiment = entry.sentiment,
                 deep_link = entry.deepLink,
-                source = "LOCAL_FALLBACK",
+                source = source,
                 dedupe_key_ = entry.dedupeKey,
             )
         }
@@ -673,6 +690,16 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
     suspend fun wasReminderSeen(dedupeKey: String): Boolean = withContext(Dispatchers.Default) {
         seen.wasSeen(dedupeKey).executeAsOne()
     }
+
+    /**
+     * Hands a claim back when nothing was actually drawn.
+     *
+     * See ReminderDelivery: claiming before drawing is what keeps two racing paths to one
+     * notification, and releasing on a failed draw is what stops a reminder blocked by a
+     * missing permission from being lost for ever.
+     */
+    override suspend fun releaseReminderClaim(dedupeKey: String): Unit =
+        withContext(Dispatchers.Default) { seen.releaseClaim(dedupeKey) }
 
     /** Sign-out wipes local data (FR-AUTH-07). */
     suspend fun wipe() = withContext(Dispatchers.Default) {

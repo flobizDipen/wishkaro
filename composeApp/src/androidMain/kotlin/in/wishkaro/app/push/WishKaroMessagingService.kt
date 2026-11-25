@@ -4,6 +4,8 @@ import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.domain.DeliverableReminder
+import `in`.wishkaro.app.domain.DeliveryChannel
 import `in`.wishkaro.app.data.repository.AuthRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +56,7 @@ class WishKaroMessagingService : FirebaseMessagingService(), KoinComponent {
             val outcome = ReminderPresenter.present(
                 context = applicationContext,
                 local = local,
-                reminder = ReminderPresenter.Reminder(
+                reminder = DeliverableReminder(
                     dedupeKey = dedupeKey,
                     title = data["title"] ?: "WishKaro",
                     body = data["body"].orEmpty(),
@@ -65,7 +67,7 @@ class WishKaroMessagingService : FirebaseMessagingService(), KoinComponent {
                     sentiment = data["sentiment"],
                     deepLink = data["deepLink"],
                 ),
-                channel = ReminderPresenter.CHANNEL_FCM,
+                channel = DeliveryChannel.FCM,
             )
             Log.i(TAG, "Push $dedupeKey -> $outcome")
         }

@@ -7,6 +7,8 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.domain.DeliverableReminder
+import `in`.wishkaro.app.domain.DeliveryChannel
 import `in`.wishkaro.app.platform.ReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +66,7 @@ class ReminderAlarmReceiver : BroadcastReceiver(), KoinComponent {
         val outcome = ReminderPresenter.present(
             context = context,
             local = local,
-            reminder = ReminderPresenter.Reminder(
+            reminder = DeliverableReminder(
                 dedupeKey = row.dedupe_key,
                 title = row.title,
                 body = row.body,
@@ -75,7 +77,7 @@ class ReminderAlarmReceiver : BroadcastReceiver(), KoinComponent {
                 sentiment = row.sentiment,
                 deepLink = row.deep_link,
             ),
-            channel = ReminderPresenter.CHANNEL_LOCAL,
+            channel = DeliveryChannel.LOCAL,
         )
 
         // Marked fired whatever the outcome, including a suppressed duplicate: the alarm has
@@ -136,7 +138,11 @@ class ReminderActionReceiver : BroadcastReceiver(), KoinComponent {
         val at = Clock.System.now().plus(kotlin.time.Duration.parse("1h"))
         val snoozedKey = "$dedupeKey:snooze:${at.toEpochMilliseconds()}"
 
-        local.upsertLocalFallback(
+        // upsertSnooze, not upsertLocalFallback. A snooze row written as LOCAL_FALLBACK is
+        // deleted by the next rebuildLocalFallbacks() — which runs on app launch, after every
+        // sync and from the upkeep worker — so the snooze was silently cancelled, usually
+        // inside the hour the user had just asked to be reminded in.
+        local.upsertSnooze(
             `in`.wishkaro.app.data.local.ScheduledReminderRow(
                 dedupeKey = snoozedKey,
                 scheduledAt = at.toString(),
@@ -177,7 +183,7 @@ class ReminderActionReceiver : BroadcastReceiver(), KoinComponent {
         fun pendingIntent(
             context: Context,
             action: String,
-            reminder: ReminderPresenter.Reminder,
+            reminder: DeliverableReminder,
             notificationId: Int,
         ): PendingIntent {
             val intent = Intent(context, ReminderActionReceiver::class.java).apply {
