@@ -29,6 +29,16 @@ const LATE_GRACE_MS = 2 * 60 * 60 * 1000;
 
 const TEST_REMINDER_DELAY_MS = 2 * 60 * 1000;
 
+/**
+ * How many reminders one plan fetch will hand the client.
+ *
+ * A ceiling rather than a page: AlarmManager is a shared, finite system resource and a phone
+ * that arms two thousand alarms is a phone the OEM battery manager will take an interest in.
+ * Sixty days of a normal address book is a few dozen; anyone past this limit gets the
+ * soonest ones, which are the ones that matter.
+ */
+const PLAN_LIMIT = 200;
+
 export interface MaterialiseSummary {
   eventsConsidered: number;
   occurrencesWritten: number;
@@ -769,6 +779,83 @@ export class RemindersService {
   }
 
   // -------------------------------------------------------------------------
+  // The plan the client replays (FR-REM-02, FR-REM-10)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Every reminder due in the next `horizonDays`, already rendered.
+   *
+   * This is the other half of the dedupe decision in docs/M2_PLAN.md §1. Making the KEY
+   * derivable lets both sides agree on identity; it does not make the SCHEDULE or the COPY
+   * derivable. For the phone to fire at the right instant on its own it would otherwise have
+   * to reimplement, in Kotlin, the ladder, the solemn suppression of D7, per-person hours,
+   * quiet-hours deferral, digest grouping, and override_date — which it cannot even see. And
+   * to draw the notification it would have to reimplement buildReminderCopy, including the
+   * SOLEMN string set that M1 wrapped in a 210-case cross-product test.
+   *
+   * Two implementations of the tone rules in two languages is the thing this project has
+   * twice decided not to have. So the server ships the plan and the client replays it: all
+   * derivation stays here, and both paths carry identical keys by construction rather than by
+   * two implementations agreeing.
+   *
+   * Sixty days by default, comfortably past FR-REM-10's "offline > 48h".
+   */
+  async plan(
+    userId: string,
+    horizonDays = 60,
+    now: Date = new Date(),
+  ): Promise<{ horizonDays: number; reminders: Record<string, string>[]; serverTime: string }> {
+    const until = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
+
+    const due = await this.prisma.reminder.findMany({
+      where: {
+        userId,
+        status: 'PENDING',
+        scheduledAtUtc: { gte: new Date(now.getTime() - LATE_GRACE_MS), lte: until },
+      },
+      include: {
+        eventOccurrence: { include: { event: { include: { person: true } } } },
+        user: { include: { devices: true } },
+      },
+      orderBy: { scheduledAtUtc: 'asc' },
+      take: PLAN_LIMIT,
+    });
+
+    // The digest rows in `due` need the day's contents, and those live on SUPPRESSED rungs —
+    // so they cannot come from `due` itself. Fetched once for the whole window rather than
+    // once per digest, which would be sixty queries for a sixty-day plan.
+    const digestSource = due.some((r) => r.offset === 'DIGEST')
+      ? await this.prisma.reminder.findMany({
+          where: {
+            userId,
+            offset: { in: ['D7', 'D1', 'D0'] },
+            scheduledAtUtc: { gte: new Date(now.getTime() - LATE_GRACE_MS), lte: until },
+            eventOccurrence: {
+              event: { deletedAt: null, isMuted: false, person: { deletedAt: null } },
+            },
+          },
+          include: { eventOccurrence: { include: { event: { include: { person: true } } } } },
+          orderBy: { scheduledAtUtc: 'asc' },
+        })
+      : [];
+
+    const reminders = due.map((reminder) =>
+      reminder.offset === 'DIGEST'
+        ? this.digestPayloadFrom(reminder, digestSource)
+        : this.buildPayload(reminder),
+    );
+
+    return {
+      horizonDays,
+      reminders: reminders.map((payload, index) => ({
+        ...payload,
+        scheduledAtUtc: due[index]!.scheduledAtUtc.toISOString(),
+      })),
+      serverTime: now.toISOString(),
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // Sending
   // -------------------------------------------------------------------------
 
@@ -875,9 +962,10 @@ export class RemindersService {
       };
     }>,
   ): Promise<Record<string, string>> {
-    const zone = reminder.user.timezone;
-    const localDate = localDateKey(reminder.scheduledAtUtc, zone);
-    const { start, end } = localDayBounds(localDate, zone);
+    const { start, end } = localDayBounds(
+      localDateKey(reminder.scheduledAtUtc, reminder.user.timezone),
+      reminder.user.timezone,
+    );
 
     const rungs = await this.prisma.reminder.findMany({
       where: {
@@ -892,15 +980,41 @@ export class RemindersService {
       orderBy: { scheduledAtUtc: 'asc' },
     });
 
-    const items = rungs
+    return this.digestPayloadFrom(reminder, rungs);
+  }
+
+  /**
+   * Turns a digest row plus the day's rungs into a notification payload.
+   *
+   * Takes the candidate rungs rather than fetching them, so the send path (one digest, one
+   * query) and the plan endpoint (sixty digests, one query for the lot) share exactly one
+   * implementation of what a digest SAYS. Candidates outside this digest's own local day are
+   * filtered here, which is what lets the caller hand over a whole window.
+   */
+  private digestPayloadFrom(
+    reminder: Prisma.ReminderGetPayload<{
+      include: {
+        eventOccurrence: { include: { event: { include: { person: true } } } };
+        user: { include: { devices: true } };
+      };
+    }>,
+    candidates: Prisma.ReminderGetPayload<{
+      include: { eventOccurrence: { include: { event: { include: { person: true } } } } };
+    }>[],
+  ): Record<string, string> {
+    const zone = reminder.user.timezone;
+    const day = localDateKey(reminder.scheduledAtUtc, zone);
+
+    const items = candidates
       .filter((r) => r.eventOccurrence !== null)
+      .filter((r) => localDateKey(r.scheduledAtUtc, zone) === day)
       // The third place the ladder has to be consulted, and the least obvious.
       //
-      // These rows are read by schedule, not by status, because digest mode suppresses them
-      // all — so a rung the ladder no longer wants is indistinguishable from one it does. A
-      // stale D7 row on an event that has since become SOLEMN (the person was marked
-      // deceased after it was created) would otherwise reappear as a "in 7 days" line in the
-      // digest: the T-7 gifting nudge FR-REM-11 forbids, smuggled in as a list item.
+      // These rows are selected by schedule, not by status, because digest mode suppresses
+      // them all — so a rung the ladder no longer wants is indistinguishable from one it
+      // does. A stale D7 row on an event that has since become SOLEMN (the person was marked
+      // deceased after it was created) would otherwise reappear as an "In 7 days" line: the
+      // T-7 gifting nudge FR-REM-11 forbids, smuggled in as a list item.
       .filter((r) =>
         (ladderFor(r.eventOccurrence!.event.sentiment, reminder.user) as ReminderOffset[]).includes(
           r.offset,
