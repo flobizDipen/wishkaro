@@ -6,7 +6,10 @@ import {
   marksPersonDeceased,
   sentimentFor,
 } from '../events/derived';
-import { PersonDerivationService } from '../people/person-derivation.service';
+import {
+  PersonDerivationService,
+  type RecomputeContext,
+} from '../people/person-derivation.service';
 import { advance, cursorWhere, decodeCursor, encodeCursor, type SyncCursor } from './sync-cursor';
 import type { EventUpsert, PersonUpsert, SyncPush, TraitUpsert } from './sync.schemas';
 
@@ -206,8 +209,12 @@ export class SyncService {
     let traitsApplied = 0;
     const touched = new Set<string>();
 
+    // Pre-write `is_deceased` per person, for the recompute at the end. A sync batch writes
+    // the flag and then derives, so by then the row no longer remembers what it was.
+    const contexts = new Map<string, RecomputeContext>();
+
     for (const person of batch.people) {
-      const outcome = await this.upsertPerson(userId, person);
+      const outcome = await this.upsertPerson(userId, person, contexts);
       if (outcome === 'APPLIED') {
         peopleApplied += 1;
         touched.add(person.id);
@@ -233,7 +240,7 @@ export class SyncService {
     // Once, at the end, rather than per record: a batch carrying a person, their death
     // anniversary and three traits would otherwise recompute the same person five times, and
     // the first four would each see a half-applied batch.
-    await this.derivation.recomputeMany(touched);
+    await this.derivation.recomputeMany(touched, this.prisma, contexts);
 
     if (skipped.length > 0) {
       this.logger.debug(`Sync push for ${userId}: ${skipped.length} record(s) skipped`);
@@ -246,13 +253,21 @@ export class SyncService {
     };
   }
 
-  private async upsertPerson(userId: string, input: PersonUpsert): Promise<'APPLIED' | SkipReason> {
+  private async upsertPerson(
+    userId: string,
+    input: PersonUpsert,
+    contexts: Map<string, RecomputeContext>,
+  ): Promise<'APPLIED' | SkipReason> {
     const updatedAt = new Date(input.updatedAt);
     const deletedAt = input.deletedAt ? new Date(input.deletedAt) : null;
     const existing = await this.prisma.person.findUnique({ where: { id: input.id } });
 
     if (existing && existing.userId !== userId) return 'NOT_OWNED';
     if (existing && existing.updatedAt.getTime() >= updatedAt.getTime()) return 'STALE';
+
+    // Recorded before the write below, not after: this is the only moment the previous
+    // value still exists. A person arriving for the first time was not deceased.
+    contexts.set(input.id, { wasDeceased: existing?.isDeceased ?? false });
 
     // `undefined` means the client did not mention the field, so the server's value stands.
     // Writing `null` for an absent key would let an older client wipe a profile field it has

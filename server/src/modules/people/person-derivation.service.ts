@@ -9,6 +9,23 @@ import { completenessScore, isMinorFor, sentimentFor } from '../events/derived';
 type Db = PrismaService | Prisma.TransactionClient;
 
 /**
+ * What the caller knew before it wrote.
+ *
+ * `recompute` re-reads the person, so by the time it runs, a caller that has already written
+ * `is_deceased` has destroyed the evidence of a transition. Every caller that writes that
+ * flag before calling therefore has to hand back the value it overwrote.
+ */
+export interface RecomputeContext {
+  /**
+   * The person's `is_deceased` as it stood BEFORE this write path touched them.
+   *
+   * Omit it only when the caller has not written the flag itself — then the value still in
+   * the database IS the previous value, and that is what the default uses.
+   */
+  wasDeceased?: boolean;
+}
+
+/**
  * Recomputes every server-derived value that hangs off a person.
  *
  * This exists because the derived values are not independent of each other. Marking someone
@@ -31,7 +48,12 @@ export class PersonDerivationService {
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
-  async recompute(personId: string, db: Db = this.prisma, now: Date = new Date()): Promise<void> {
+  async recompute(
+    personId: string,
+    db: Db = this.prisma,
+    now: Date = new Date(),
+    context: RecomputeContext = {},
+  ): Promise<void> {
     const person = await db.person.findUnique({
       where: { id: personId },
       include: {
@@ -52,7 +74,14 @@ export class PersonDerivationService {
     // refuses that edit while a death anniversary is still live.
     const hasDeathAnniversary = person.events.some((e) => e.type === 'DEATH_ANNIVERSARY');
     const isDeceased = person.isDeceased || hasDeathAnniversary;
-    const becameDeceased = !person.isDeceased && isDeceased;
+
+    // NOT `person.isDeceased` — that is what the row says NOW, and a caller that set the flag
+    // itself has already written it, so the comparison would be `!true && true` and the
+    // transition would never be seen. Ticking the deceased box on a profile went down exactly
+    // that path and left the birthday unmuted. Callers that write the flag pass back what
+    // they overwrote; callers that do not write it leave the database as the authority.
+    const wasDeceased = context.wasDeceased ?? person.isDeceased;
+    const becameDeceased = !wasDeceased && isDeceased;
 
     // --- the remembrance birthday opt-in (FR-EVT-05) -----------------------------------
     //
@@ -132,11 +161,21 @@ export class PersonDerivationService {
     }
   }
 
-  /** Convenience for write paths that have just touched several people. */
-  async recomputeMany(personIds: Iterable<string>, db: Db = this.prisma): Promise<void> {
+  /**
+   * Convenience for write paths that have just touched several people.
+   *
+   * `contexts` carries the pre-write `is_deceased` per person, for the same reason the single
+   * form takes one: a sync batch writes the flag and then recomputes, so without it every
+   * transition in the batch is invisible.
+   */
+  async recomputeMany(
+    personIds: Iterable<string>,
+    db: Db = this.prisma,
+    contexts?: ReadonlyMap<string, RecomputeContext>,
+  ): Promise<void> {
     const now = new Date();
     for (const id of new Set(personIds)) {
-      await this.recompute(id, db, now);
+      await this.recompute(id, db, now, contexts?.get(id) ?? {});
     }
   }
 }

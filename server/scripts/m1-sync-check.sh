@@ -91,6 +91,26 @@ curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$
 eq "re-pushing it without isMuted leaves it muted" \
    "$(curl -sS "${A[@]}" "$U/v1/sync" | jq -r --arg b "$BID" '.events[]|select(.id==$b).isMuted')" "true"
 
+echo "== 6b. isDeceased pushed on the PERSON mutes a birthday they already had =="
+# Section 6 proves the creation-time default: a birthday pushed for someone ALREADY deceased
+# arrives muted. This is the transition, which is a different branch and was broken on both
+# write paths — sync writes is_deceased and then derives, so the derivation re-read the row,
+# found the flag already true, and concluded nothing had changed.
+QID=$(uuid); QBID=$(uuid)
+curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$QID" --arg b "$QBID" --arg now "$NOW" '{
+  people:[{id:$p, displayName:"Asha Living", relationToOwner:"Aunt", updatedAt:$now}],
+  events:[{id:$b, personId:$p, type:"BIRTHDAY", day:2, month:2, year:1955, updatedAt:$now}]}')"
+Q=$(curl -sS "${A[@]}" "$U/v1/sync")
+eq "she starts alive"       "$(jq -r --arg p "$QID" '.people[]|select(.id==$p).isDeceased' <<<"$Q")" "false"
+eq "and her birthday is on" "$(jq -r --arg b "$QBID" '.events[]|select(.id==$b).isMuted' <<<"$Q")" "false"
+
+curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$QID" --arg now "$LATER" '{
+  people:[{id:$p, displayName:"Asha Living", relationToOwner:"Aunt", isDeceased:true, updatedAt:$now}]}')"
+Q=$(curl -sS "${A[@]}" "$U/v1/sync")
+eq "the flag synced"                      "$(jq -r --arg p "$QID" '.people[]|select(.id==$p).isDeceased' <<<"$Q")" "true"
+eq "and it muted the birthday she had"    "$(jq -r --arg b "$QBID" '.events[]|select(.id==$b).isMuted' <<<"$Q")" "true"
+eq "which is SOLEMN now"                  "$(jq -r --arg b "$QBID" '.events[]|select(.id==$b).sentiment' <<<"$Q")" "SOLEMN"
+
 echo "== 7. trait tombstones sync =="
 GONE=$(date -u -v+3M +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '+3 minutes' +%Y-%m-%dT%H:%M:%S.000Z)
 curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$PID" --arg t "$TID" --arg now "$GONE" '{

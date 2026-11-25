@@ -122,6 +122,34 @@ eq "un-muting opts in to a remembrance birthday" \
 eq "and it is still SOLEMN" \
    "$(jq -r '.events[]|select(.type=="BIRTHDAY").sentiment' <<<"$P")" "SOLEMN"
 
+echo "== 9a. the OTHER way someone becomes deceased: the profile flag (FR-PPL-04) =="
+# Section 9 proves the death-anniversary path. This one proves the profile path, which is a
+# different code route and was silently broken: PeopleService writes is_deceased and THEN
+# derives, so the derivation re-read the row, saw the flag already true, concluded nothing
+# had changed, and never muted the birthday. The copy was still solemn, so nothing said
+# "Happy Birthday" — but a remembrance reminder nobody opted into would have fired.
+GONE=$(curl -sS "${A[@]}" -X POST "$U/v1/people" \
+       --data '{"displayName":"Vikram Deceased","relationToOwner":"Uncle","event":{"type":"BIRTHDAY","day":14,"month":3,"year":1960}}')
+GID=$(jq -r .id <<<"$GONE")
+eq "starts alive"            "$(jq -r .isDeceased <<<"$GONE")" "false"
+eq "and the birthday is on"  "$(jq -r '.events[0].isMuted' <<<"$GONE")" "false"
+
+curl -sS -o /dev/null "${A[@]}" -X PATCH "$U/v1/people/$GID" --data '{"isDeceased":true}'
+G=$(curl -sS "${A[@]}" "$U/v1/people/$GID")
+eq "the flag took"                         "$(jq -r .isDeceased <<<"$G")" "true"
+eq "ticking the box mutes the birthday"    "$(jq -r '.events[0].isMuted' <<<"$G")" "true"
+eq "and turns it SOLEMN"                   "$(jq -r '.events[0].sentiment' <<<"$G")" "SOLEMN"
+eq "nobody is 'turning' an age"            "$(jq -r '.events[0].turningAge' <<<"$G")" "null"
+
+# Opting in must stick. The mute fires on the transition only, so a later unrelated edit
+# must not quietly take the remembrance birthday away again.
+GBID=$(jq -r '.events[0].id' <<<"$G")
+curl -sS -o /dev/null "${A[@]}" -X PATCH "$U/v1/events/$GBID" --data '{"isMuted":false}'
+curl -sS -o /dev/null "${A[@]}" -X PATCH "$U/v1/people/$GID" --data '{"notes":"Remembered every March."}'
+G=$(curl -sS "${A[@]}" "$U/v1/people/$GID")
+eq "a later edit does not undo the opt-in" "$(jq -r '.events[0].isMuted' <<<"$G")" "false"
+eq "and it is still SOLEMN"                "$(jq -r '.events[0].sentiment' <<<"$G")" "SOLEMN"
+
 echo "== 10. minors are excluded from profiling (FR-PPL-09) =="
 KID=$(curl -sS "${A[@]}" -X POST "$U/v1/people" \
       --data '{"displayName":"Ananya Child","relationToOwner":"Cousin","event":{"type":"BIRTHDAY","day":5,"month":5,"year":2015}}')

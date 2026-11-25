@@ -328,7 +328,13 @@ export class PeopleService {
 
     // Marking someone deceased here re-derives the sentiment of every event they own and
     // mutes their birthday — the same path a DEATH_ANNIVERSARY takes.
-    await this.derivation.recompute(personId);
+    //
+    // `existing.isDeceased` is read BEFORE the update above and handed back, because the
+    // update has already overwritten it: without this the derivation sees `is_deceased`
+    // already true, concludes nothing changed, and never mutes the birthday (FR-EVT-05).
+    await this.derivation.recompute(personId, this.prisma, new Date(), {
+      wasDeceased: existing.isDeceased,
+    });
     await this.reminders.suppressOrphanedPending(userId);
 
     return this.get(userId, personId);
