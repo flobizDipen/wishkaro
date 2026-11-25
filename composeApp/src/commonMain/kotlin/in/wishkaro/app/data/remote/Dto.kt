@@ -70,11 +70,14 @@ data class DeliveryReportDto(
 data class DeliveryReportRequest(val reports: List<DeliveryReportDto>)
 
 /**
- * The user's reminder settings (FR-REM-03, FR-REM-08, FR-REM-09).
+ * The user's reminder settings as the server sends them DOWN (FR-REM-03, FR-REM-08,
+ * FR-REM-09).
  *
- * One type for both directions, unlike people and events. There are no server-derived fields
- * here — every one of these is the user's own choice — so there is nothing for a push shape
- * to leave out.
+ * Not the push shape — see [SettingsPush]. `timezone` is on this one and not on that one,
+ * because the device reports its timezone through POST /v1/devices and the server's write
+ * schema is `.strict()`: sending it back up is a 400, not a no-op. Two types rather than one,
+ * for the same reason SyncPersonDto and SyncPersonPush are two types — so the next person to
+ * add a field gets a compile error instead of a field report.
  */
 @Serializable
 data class SettingsDto(
@@ -120,6 +123,20 @@ data class PlanResponse(
 
 @Serializable
 data class DeliveryReportResponse(val recorded: Int = 0, val unknown: Int = 0)
+
+/** What the client is allowed to write. Every field here is the user's own choice. */
+@Serializable
+data class SettingsPush(
+    val reminderHour: Int,
+    val ladderD7: Boolean,
+    val ladderD1: Boolean,
+    val ladderD0: Boolean,
+    val quietHoursStart: Int? = null,
+    val quietHoursEnd: Int? = null,
+    val digestEnabled: Boolean,
+    val digestHour: Int,
+    val updatedAt: String,
+)
 
 // ---- sync ----
 
@@ -233,7 +250,7 @@ data class SyncPushRequest(
     val people: List<SyncPersonPush> = emptyList(),
     val events: List<SyncEventPush> = emptyList(),
     val traits: List<SyncTraitPush> = emptyList(),
-    val settings: SettingsDto? = null,
+    val settings: SettingsPush? = null,
 )
 
 @Serializable

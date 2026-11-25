@@ -6,6 +6,7 @@ import `in`.wishkaro.app.data.local.RemoteTrait
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.SettingsDto
+import `in`.wishkaro.app.data.remote.SettingsPush
 import `in`.wishkaro.app.data.remote.SyncEventPush
 import `in`.wishkaro.app.data.remote.SyncPersonPush
 import `in`.wishkaro.app.data.remote.SyncPushRequest
@@ -70,6 +71,26 @@ class SyncEngine(
     }
 
     /**
+     * Sends the settings blob, alone, and settles it by what came back.
+     *
+     * The server answers with the winning copy whether ours won or lost, so applying it does
+     * both jobs at once: a win is a no-op, and a loss replaces the local row with the newer
+     * one. Either way the pending flag clears — which is what stops a device that lost from
+     * re-pushing the same stale blob on every sync for ever.
+     *
+     * Swallows its own failure. A rejected settings blob is a bug to fix, not a reason to
+     * stop the user's people and events from reaching the server.
+     */
+    private suspend fun pushSettings() {
+        val settings = local.reminderSettings().takeIf { it.pendingSync } ?: return
+        runCatching {
+            val response = api.syncPush(SyncPushRequest(settings = settings.toPush()))
+            response.settings?.let { local.applyRemoteSettings(it.toDomain()) }
+            local.clearSettingsPending()
+        }
+    }
+
+    /**
      * Hands the server everything this device has observed about reminder delivery.
      *
      * Rows are cleared only on a confirmed 200. A report the server never acknowledged stays
@@ -127,11 +148,22 @@ class SyncEngine(
      * housekeeping sweep is the worse of the two failures.
      */
     private suspend fun push(): Pair<Counts, List<SyncSkipped>> {
+        // Settings go in a request of their OWN, ahead of the records.
+        //
+        // Not an optimisation — isolation. Validation runs before anything is applied, so a
+        // settings blob the server refuses takes the people and events in the same batch down
+        // with it, and the outbox stops draining entirely. That happened twice during M2's
+        // device verification, from two different field mismatches, and both times the
+        // visible symptom was "my edits stopped syncing" rather than anything about settings.
+        //
+        // The same reasoning as the delivery-report drain above: a failure in the small,
+        // rarely-changing thing must never block the user's actual data.
+        pushSettings()
+
         val people = local.pendingPeople()
         val events = local.pendingEvents()
         val traits = local.pendingTraits()
-        val settings = local.reminderSettings().takeIf { it.pendingSync }
-        if (people.isEmpty() && events.isEmpty() && traits.isEmpty() && settings == null) {
+        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) {
             return Counts() to emptyList()
         }
 
@@ -180,20 +212,8 @@ class SyncEngine(
                         deletedAt = it.deleted_at,
                     )
                 },
-                settings = settings?.toDto(),
             ),
         )
-
-        /*
-         * Settings are settled by what came back, not by the fact that we sent them.
-         *
-         * The server answers with the winning copy whether ours won or lost, so applying it
-         * does both jobs at once: a win is a no-op, and a loss replaces the local row with
-         * the newer one. Either way the pending flag clears, which is what stops a device
-         * that lost from re-pushing the same stale blob on every sync for ever.
-         */
-        response.settings?.let { local.applyRemoteSettings(it.toDomain()) }
-        if (settings != null) local.clearSettingsPending()
 
         // One timestamp for every re-stamp in this batch, a millisecond past the server's own
         // clock. STALE means the stored row's `updated_at` is at or before `serverTime`, so
@@ -339,7 +359,16 @@ class SyncEngine(
     }
 }
 
-private fun ReminderSettings.toDto() = SettingsDto(
+/**
+ * The push shape, which deliberately has no `timezone`.
+ *
+ * The device reports its timezone through POST /v1/devices, and the server's settings write
+ * schema is `.strict()` — so sending it back up is a 400, and validation runs before anything
+ * is applied, which means one bad settings blob takes the people and events in the same batch
+ * down with it. Observed on the phone: a settings change left pending_sync = 1 and every
+ * later push 400'd behind it, so the outbox stopped draining entirely.
+ */
+private fun ReminderSettings.toPush() = SettingsPush(
     reminderHour = reminderHour,
     ladderD7 = ladderD7,
     ladderD1 = ladderD1,
@@ -348,7 +377,6 @@ private fun ReminderSettings.toDto() = SettingsDto(
     quietHoursEnd = quietHoursEnd,
     digestEnabled = digestEnabled,
     digestHour = digestHour,
-    timezone = timezone,
     updatedAt = updatedAt,
 )
 

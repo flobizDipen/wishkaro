@@ -58,6 +58,43 @@ describe('SettingsPatchSchema', () => {
   });
 });
 
+/**
+ * The push schema and the pull shape are NOT the same, and this is where that is pinned.
+ *
+ * `timezone` goes down and must not come back up: the device reports it through
+ * POST /v1/devices, so accepting it here would give one column two writers. The write schema
+ * is `.strict()`, so a client that sends it gets a 400 — which is the correct behaviour and
+ * also what broke the phone once, because validation runs before anything is applied and one
+ * bad settings blob therefore takes the people and events in the same batch down with it.
+ *
+ * The client's answer is a separate `SettingsPush` type without the field. This test is the
+ * other half of that agreement, on the side that enforces it.
+ */
+describe('the push shape is narrower than the pull shape', () => {
+  const PUSHABLE = {
+    reminderHour: 9,
+    ladderD7: true,
+    ladderD1: true,
+    ladderD0: true,
+    quietHoursStart: 22,
+    quietHoursEnd: 7,
+    digestEnabled: false,
+    digestHour: 9,
+  };
+
+  it('accepts exactly the fields a client may write', () => {
+    expect(SettingsPatchSchema.safeParse(PUSHABLE).success).toBe(true);
+  });
+
+  it('rejects timezone, which belongs to POST /v1/devices', () => {
+    expect(issuePaths({ ...PUSHABLE, timezone: 'Asia/Kolkata' })).toEqual(['']);
+  });
+
+  it('rejects settingsUpdatedAt — the server owns that clock on this endpoint', () => {
+    expect(issuePaths({ ...PUSHABLE, settingsUpdatedAt: '2026-11-25T00:00:00.000Z' })).toEqual(['']);
+  });
+});
+
 describe('toSettingsDto', () => {
   it('puts the settings clock on the wire as an instant', () => {
     const dto = toSettingsDto({

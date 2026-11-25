@@ -169,8 +169,20 @@ const SettingsPushSchema = z
     ladderD7: z.boolean(),
     ladderD1: z.boolean(),
     ladderD0: z.boolean(),
-    quietHoursStart: z.number().int().min(0).max(23).nullable(),
-    quietHoursEnd: z.number().int().min(0).max(23).nullable(),
+    /**
+     * Nullish, not nullable.
+     *
+     * The client serialises with `explicitNulls = false`, so a null quiet-hours window is
+     * OMITTED from the JSON rather than sent as `null`. A required-but-nullable field
+     * therefore rejects every push made with quiet hours switched off — which is the default
+     * state, so it rejected almost everything. Observed on the phone: a settings change sat
+     * in the outbox forever and the sync kept returning 400.
+     *
+     * An absent key means null here, not "leave it alone", because this is a whole-blob push:
+     * every other field is required, so the batch is always the complete settings state.
+     */
+    quietHoursStart: z.number().int().min(0).max(23).nullish().transform((v) => v ?? null),
+    quietHoursEnd: z.number().int().min(0).max(23).nullish().transform((v) => v ?? null),
     digestEnabled: z.boolean(),
     digestHour: z.number().int().min(0).max(23),
     updatedAt: IsoInstant,
