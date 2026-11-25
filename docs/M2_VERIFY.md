@@ -11,14 +11,86 @@
 
 ## 0. Setup
 
-```bash
-# the phone
-adb devices -l
+### 0.0 Before any on-device sequence — do this, do not skip it
 
+This is a procedure, not advice. It exists because it was skipped once and the cost is
+written up in §0.0.1.
+
+```bash
+# 1. install, and read the result
+adb install -r composeApp/build/outputs/apk/debug/composeApp-debug.apk
+
+# 2. launch with `am start`, NOT `monkey`, and do not discard the output
+adb shell am force-stop in.wishkaro.app
+adb shell am start -n in.wishkaro.app/.MainActivity
+
+# 3. confirm the app is actually what is on screen
+sleep 6
+adb shell dumpsys window | grep -m1 mCurrentFocus
+#   -> must name in.wishkaro.app/in.wishkaro.app.MainActivity
+
+# 4. confirm it did not crash
+adb logcat -d -t 400 | grep -c "FATAL EXCEPTION"    # must be 0
+
+# 5. look at the screen before sending the first tap
+adb exec-out screencap -p > /tmp/wk.png
+```
+
+Why each step is there:
+
+- **`am start`, not `monkey`.** `monkey -p … >/dev/null` reports nothing useful and makes a
+  failed launch indistinguishable from a successful one.
+- **Check the focused window.** A crashed or un-launched app leaves whatever was already on
+  screen, and `adb shell input tap` has no idea which app it is typing into.
+- **Check for FATAL EXCEPTION.** A compiling build with a green test suite tells you nothing
+  about whether the app starts; see §0.0.1.
+
+#### 0.0.1 What happens when it is skipped
+
+2026-11-25, ~20:50 IST. A Koin wiring change (`PlanApi` / `PlanStore` asked for with a bare
+`get()`, nothing bound to those interfaces) made the app throw `NoDefinitionFoundException`
+before drawing a frame. It compiled, 308 unit tests passed, and CI — which compiles and runs
+unit tests — would have passed it too.
+
+The build was installed and `monkey` was run with its output discarded, so the crash was
+invisible. The blind tap-and-type sequence that followed went into **`com.valorem.flobooks`**
+(FloBooks / myBillBook), which was simply what was already on screen. Roughly five taps plus
+the strings "Overnight Proof", "27", "11", "1994".
+
+From `dumpsys usagestats`, the window reads:
+
+```
+20:50:24  ACTIVITY_PAUSED   in.wishkaro.app/.MainActivity        <- the crash
+20:50:24  ACTIVITY_RESUMED  com.valorem.flobooks/.home.HomeActivity
+20:50:33  ACTIVITY_RESUMED  com.android.intentresolver/.ChooserActivity
+                            taskRootPackage=com.valorem.flobooks  <- a tap hit a share affordance
+20:50:36  ACTIVITY_RESUMED  com.valorem.flobooks/.home.HomeActivity  <- chooser dismissed, no target chosen
+20:51:09  ACTIVITY_STOPPED  com.valorem.flobooks/.home.HomeActivity  <- HOME pressed
+```
+
+No payment activity started in that window. One tap landed at y≈2189, below a **Make Payment**
+button at y≈2010, so probably dead space — but a payment made inside an already-open screen
+would not necessarily appear as an activity start, and the logcat buffer does not reach back
+past 20:47. **This cannot be proved clean and is not claimed to be.**
+
+Two corrections to earlier accounts of this, kept because getting an incident note wrong is
+worse than not writing one:
+
+- The first explanation — a back-press popping the task stack — was **wrong**. The app had
+  crashed; there was no WishKaro task to pop.
+- The app was first named as `com.flobiz.staff_app` (Staff Attendance & Payroll). That was
+  **wrong too**, and was a guess from an on-screen title matched against the package list
+  rather than from evidence. "Staff Attendance & Payroll" is a screen *inside* FloBooks.
+  `dumpsys usagestats` shows `com.flobiz.staff_app` with `appLaunchCount=0` and no events
+  anywhere in the window. It was not involved.
+
+### 0.1 Reading the device
+
+```bash
 # debug builds print the FCM token at launch; several checks below need it
 adb shell setprop log.tag.Notifications VERBOSE
 adb shell am force-stop in.wishkaro.app
-adb shell monkey -p in.wishkaro.app -c android.intent.category.LAUNCHER 1
+adb shell am start -n in.wishkaro.app/.MainActivity
 adb logcat -d -s Notifications:V | tail -1 | sed 's/.*FCM token: //' > /tmp/fcm-token
 ```
 
@@ -429,6 +501,11 @@ component names are the part most likely to be wrong.
 | 8 | Unit tests: midnight quiet hours, solemn ladder, dedupe key, digest grouping | **Pass** — 205 server, 55 client |
 | 9 | The M0 offline check, run and recorded | **Pass** (§1) |
 | 10 | CI green, this document | CI green locally; see below |
+
+A note on what CI does and does not cover, since M2 found this the hard way: it compiles both
+targets and runs the unit tests. It does not install the app. A build that cannot start passes
+it. `ModulesTest` closes the specific hole that caused that (an unresolvable Koin graph), and
+§0.0 closes the general one.
 
 ### Also still open
 
