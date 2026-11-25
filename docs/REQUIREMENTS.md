@@ -1,6 +1,6 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.5 — M0 and M1 built and merged; M2 built
+> **Status:** v0.6 — M0, M1 and M2 built and merged
 > **Date:** 2026-11-25
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
@@ -643,7 +643,7 @@ wishkaro/                        (public GitHub repo)
 |---|---|---|
 | **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
 | **M1** | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first. ✅ merged `722830d` 2026-11-25 |
-| M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest, delivery reporting, and the first Settings screen. The M0 offline check was **finally run and passed** (`M2_PLAN.md` §0.1). The mobile-data leg of the Railway deploy is still unproven — the SIM would not register (`M2_PLAN.md` §0.2) |
+| **M2** | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest, delivery reporting, and the first Settings screen. The M0 offline check was **finally run and passed** (`M2_PLAN.md` §0.1). Two things remain unproven rather than done: the **OEM battery helper** was never exercised on a non-Pixel device (definition-of-done item 7, `M2_VERIFY.md` §9), and the **mobile-data leg** of the Railway deploy — the SIM would not register (`M2_PLAN.md` §0.2). ✅ merged `0ed742c` 2026-11-25 |
 | M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |
 | M5 | Wish sending | AI drafts, tone/language, WhatsApp handoff, wish history |
