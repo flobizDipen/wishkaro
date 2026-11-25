@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import `in`.wishkaro.app.data.repository.PlanStore
 import `in`.wishkaro.app.domain.ReminderSettings
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
@@ -65,7 +66,7 @@ private fun sameTombstone(a: String?, b: String?): Boolean {
  * and the next pull corrects them, which is why a person's tone can lag a local edit by one
  * sync but can never be invented by the client.
  */
-class LocalStore(private val db: WishKaroDb) : SyncStore {
+class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore {
 
     private val people = db.personQueries
     private val events = db.eventQueries
@@ -141,7 +142,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
         }
     }
 
-    suspend fun findPerson(id: String): Person? = withContext(Dispatchers.Default) {
+    override suspend fun findPerson(id: String): Person? = withContext(Dispatchers.Default) {
         val row = people.selectById(id).executeAsOneOrNull() ?: return@withContext null
         row.toPerson(
             events.selectForPerson(id).executeAsList().map { it.toEvent() },
@@ -593,7 +594,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
      * LOCAL_FALLBACK rows are left alone: they belong to events the server has never seen,
      * so its silence about them says nothing.
      */
-    suspend fun replacePlan(entries: List<ScheduledReminderRow>): PlanDiff =
+    override suspend fun replacePlan(entries: List<ScheduledReminderRow>): PlanDiff =
         withContext(Dispatchers.Default) {
             db.transactionWithResult {
                 val keys = entries.map { it.dedupeKey }
@@ -633,31 +634,32 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
     suspend fun markReminderFired(dedupeKey: String, nowIso: String) =
         withContext(Dispatchers.Default) { scheduled.markFired(nowIso, dedupeKey) }
 
-    suspend fun upsertLocalFallback(e: ScheduledReminderRow) = withContext(Dispatchers.Default) {
-        scheduled.upsert(
-            dedupe_key = e.dedupeKey,
-            scheduled_at = e.scheduledAt,
-            offset_rung = e.offset,
-            title = e.title,
-            body = e.body,
-            person_id = e.personId,
-            person_name = e.personName,
-            event_type = e.eventType,
-            sentiment = e.sentiment,
-            deep_link = e.deepLink,
-            source = "LOCAL_FALLBACK",
-            dedupe_key_ = e.dedupeKey,
-        )
-    }
+    override suspend fun upsertLocalFallback(entry: ScheduledReminderRow): Unit =
+        withContext(Dispatchers.Default) {
+            scheduled.upsert(
+                dedupe_key = entry.dedupeKey,
+                scheduled_at = entry.scheduledAt,
+                offset_rung = entry.offset,
+                title = entry.title,
+                body = entry.body,
+                person_id = entry.personId,
+                person_name = entry.personName,
+                event_type = entry.eventType,
+                sentiment = entry.sentiment,
+                deep_link = entry.deepLink,
+                source = "LOCAL_FALLBACK",
+                dedupe_key_ = entry.dedupeKey,
+            )
+        }
 
     /** Events the server has never acknowledged — the only ones a local fallback arms for. */
-    suspend fun unsyncedEvents(): List<wishkaro.db.Event> =
+    override suspend fun unsyncedEvents(): List<wishkaro.db.Event> =
         withContext(Dispatchers.Default) { events.selectUnsynced().executeAsList() }
 
-    suspend fun localFallbacks(): List<wishkaro.db.Scheduled_reminder> =
+    override suspend fun localFallbacks(): List<wishkaro.db.Scheduled_reminder> =
         withContext(Dispatchers.Default) { scheduled.localFallbacks().executeAsList() }
 
-    suspend fun deleteScheduled(dedupeKey: String) =
+    override suspend fun deleteScheduled(dedupeKey: String): Unit =
         withContext(Dispatchers.Default) { scheduled.delete(dedupeKey) }
 
     /**

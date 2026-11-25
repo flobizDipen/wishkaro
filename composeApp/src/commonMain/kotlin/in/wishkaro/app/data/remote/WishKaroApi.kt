@@ -1,6 +1,7 @@
 package `in`.wishkaro.app.data.remote
 
 import `in`.wishkaro.app.data.TokenStore
+import `in`.wishkaro.app.data.repository.PlanApi
 import `in`.wishkaro.app.data.repository.SyncApi
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -41,7 +42,7 @@ class WishKaroApi(
     private val tokens: TokenStore,
     engine: HttpClientEngine? = null,
     private val onSessionExpired: suspend () -> Unit = {},
-) : SyncApi {
+) : SyncApi, PlanApi {
     /** Serialises token rotation. See [renewAccessToken] for why this is load-bearing. */
     private val refreshMutex = Mutex()
 
@@ -93,7 +94,7 @@ class WishKaroApi(
             client.post("$baseUrl/v1/reminders/test") { header("Authorization", "Bearer $token") }
         }.decode()
 
-    suspend fun fetchPlan(days: Int = 60): PlanResponse =
+    override suspend fun fetchPlan(days: Int): PlanResponse =
         authed { token ->
             client.get("$baseUrl/v1/reminders/plan") {
                 header("Authorization", "Bearer $token")

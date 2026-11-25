@@ -1,8 +1,8 @@
 package `in`.wishkaro.app.data.repository
 
-import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.data.local.PlanDiff
 import `in`.wishkaro.app.data.local.ScheduledReminderRow
-import `in`.wishkaro.app.data.remote.WishKaroApi
+import `in`.wishkaro.app.data.remote.PlanResponse
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.QuietHours
 import `in`.wishkaro.app.domain.ReminderSettings
@@ -34,9 +34,41 @@ import kotlin.time.Instant
  * So: the server renders, the client replays, and both paths carry identical keys by
  * construction rather than by two implementations agreeing.
  */
+/**
+ * The slice of [LocalStore] this repository needs.
+ *
+ * A narrow interface for the same reason [SyncStore] is one: `LocalStore` owns a SQLDelight
+ * driver and cannot be stood up in `commonTest`, which is the only test source set this
+ * module has. The part that carries risk here is what the repository DECIDES — which events
+ * get a fallback alarm, what it is allowed to say, and when it is withdrawn — and that is
+ * testable against a hand-written fake with no database at all.
+ *
+ * Not a general abstraction over storage. Nothing but this repository should take it.
+ */
+/**
+ * The one call this repository makes over the network.
+ *
+ * Narrow for the same reason as [SyncApi]: `WishKaroApi` owns Ktor and token refresh, and the
+ * fallback path never touches it at all — so a test of what the client decides should not have
+ * to build an HTTP client to prove it.
+ */
+interface PlanApi {
+    suspend fun fetchPlan(days: Int): PlanResponse
+}
+
+interface PlanStore {
+    suspend fun reminderSettings(): ReminderSettings
+    suspend fun replacePlan(entries: List<ScheduledReminderRow>): PlanDiff
+    suspend fun unsyncedEvents(): List<wishkaro.db.Event>
+    suspend fun findPerson(id: String): `in`.wishkaro.app.domain.Person?
+    suspend fun localFallbacks(): List<wishkaro.db.Scheduled_reminder>
+    suspend fun upsertLocalFallback(entry: ScheduledReminderRow)
+    suspend fun deleteScheduled(dedupeKey: String)
+}
+
 class ReminderPlanRepository(
-    private val api: WishKaroApi,
-    private val local: LocalStore,
+    private val api: PlanApi,
+    private val local: PlanStore,
     private val scheduler: ReminderScheduler,
     private val now: () -> Instant = Clock.System::now,
 ) {
@@ -123,7 +155,11 @@ class ReminderPlanRepository(
                     // Deliberately flat. See the note above: the client must never author
                     // celebratory copy, because it cannot know what the server knows.
                     title = person?.displayName?.let { "$it — today" } ?: "A date today",
-                    body = "Open WishKaro to see what is happening today.",
+                    // No product name: "WishKaro" contains this app's own word for the
+                    // celebratory action, and the tone-neutrality test should not have to be
+                    // taught to ignore it on the one notification the CLIENT writes. Android
+                    // prints the app name above every notification anyway.
+                    body = "A date you saved is today. Open the app for the details.",
                     personId = event.person_id,
                     personName = person?.displayName,
                     eventType = event.type,
