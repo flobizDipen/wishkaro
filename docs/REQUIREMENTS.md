@@ -1,6 +1,6 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.3 — M0 built and merged; milestone rows corrected to match what was built
+> **Status:** v0.4 — M0 and M1 built and merged; M2 prompt written
 > **Date:** 2026-11-25
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
@@ -625,8 +625,8 @@ wishkaro/                        (public GitHub repo)
 | M | Name | Definition of done |
 |---|---|---|
 | **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
-| M1 | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first |
-| M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest |
+| **M1** | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first. ✅ merged `722830d` 2026-11-25 |
+| M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest. Also carries the M0 offline check, still never run on a device (`M1_PLAN.md` §2.5), and the unproven mobile-data leg of the Railway deploy (§2.6) |
 | M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |
 | M5 | Wish sending | AI drafts, tone/language, WhatsApp handoff, wish history |
