@@ -227,12 +227,54 @@ drained and the server acknowledged the writes:
 | `01a211dc-…` | dipen jansari | Self | |
 | `744b8df1-…` | Jaydatt Jansari | Brother | 22/9/1988 |
 
-**Not yet proved: the mobile-data leg.** Wi-Fi was still on for the run above
-(`settings get global wifi_on` → `1`, SSID `Dipen_5G`), and the client IP in the Railway log
-is the same public address as the development machine's `curl` calls. The traffic certainly
-reached Railway — the APK's compiled base URL is the Railway domain and the server logged the
-requests — but the prompt's clause is specifically *on mobile data*, and that clause exists to
-remove exactly this ambiguity. Outstanding; to be completed before the PR.
+### What task zero proves, and what it does not
+
+Split precisely, because the two halves are not the same claim.
+
+**Proved, over Wi-Fi, with `adb reverse --list` AND `adb forward --list` both empty:**
+
+- the APK's compiled base URL is the deployed https host, not a local one;
+- TLS end to end, with the cleartext exemption confined to `src/debug/`;
+- real Google sign-in against the deployed server;
+- writes reaching Postgres on Railway, and FCM registration from it;
+- the whole feature set of §5b, driven through the app on the handset.
+
+**Not proved: independence from the home network.** The traffic went out over broadband, so
+the client IP in the Railway log is the same public address as this machine's `curl` calls.
+Nothing *reached* a local server — there was no tunnel and the base URL is the Railway domain —
+but the prompt asks for mobile data specifically, and that clause exists to remove exactly this
+ambiguity rather than to be argued around.
+
+**Why it could not be run.** The handset's Airtel SIM is refused by the network:
+
+```
+domain=CS transportType=WWAN  registrationState=DENIED              availableServices=[EMERGENCY]
+domain=PS transportType=WWAN  registrationState=NOT_REG_OR_SEARCHING
+domain=PS transportType=WLAN  registrationState=HOME                availableServices=[DATA]
+```
+
+With Wi-Fi off the device has no default network at all and `ping 8.8.8.8` returns
+`Network is unreachable`. This is a carrier-side matter, not an app one.
+
+> **The trap, for whoever checks this next.** With Wi-Fi ON the same dump reports
+> `mDataRegState=0(IN_SERVICE)` and `mIsIwlanPreferred=true`, which reads exactly like working
+> mobile data. It is not — it is Wi-Fi calling. The only `availableServices=[DATA]` is on
+> `transportType=WLAN`; the WWAN packet domain is `NOT_REG_OR_SEARCHING`. Trust the
+> per-transport registration lines, never the summary `mDataRegState`.
+
+To finish it once the SIM is in service:
+
+```bash
+adb reverse --remove-all && adb reverse --list && adb forward --list   # both must be empty
+adb shell svc wifi disable
+adb shell settings get global wifi_on                                   # 0
+adb shell dumpsys telephony.registry | grep -oE 'domain=PS transportType=WWAN registrationState=[A-Z_]+'
+#   must read HOME or ROAMING — not NOT_REG_OR_SEARCHING
+adb shell ping -c 2 8.8.8.8                                             # must succeed
+```
+
+Then sign in, add a person, and tap **"Send me a test reminder in 2 minutes"**. Restore Wi-Fi
+afterwards with `adb shell svc wifi enable`.
 
 To finish it:
 
@@ -407,3 +449,5 @@ then wait for a pass (or write anything for that user) and read the row back: 25
 | `PRAGMA user_version` still reads the old number after installing | The driver migrates lazily. Open the app, let it draw the list, then pull the file |
 | `verifySqlDelightMigration` fails on ordinal positions | A new column was declared in the middle of a `.sq` table. `ALTER TABLE` can only append — move it to the end |
 | A profile shows 0% with fields plainly filled in | A row written before M1. The next materialiser pass repairs it; §6a |
+| The phone says `mDataRegState=0(IN_SERVICE)` but has no mobile data | Wi-Fi calling. Check the per-transport `domain=PS transportType=WWAN` line, not the summary; §5 |
+| A person restored from Recently removed comes back with no dates | Fixed in M1. If it returns, suspect timestamp comparison again; §5b |
