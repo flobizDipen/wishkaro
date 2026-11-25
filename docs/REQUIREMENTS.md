@@ -1,7 +1,7 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.2 — all open decisions resolved, build-ready
-> **Date:** 2026-11-24
+> **Status:** v0.3 — M0 built and merged; milestone rows corrected to match what was built
+> **Date:** 2026-11-25
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
 > **Repo:** single **public** GitHub monorepo — `github.com/flobizDipen/wishkaro`.
@@ -624,8 +624,8 @@ wishkaro/                        (public GitHub repo)
 
 | M | Name | Definition of done |
 |---|---|---|
-| **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**. Deployed to Railway, CI green. Nothing else. |
-| M1 | People & events | Full CRUD, relations, multiple events, year-unknown handling, list view, offline sync |
+| **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
+| M1 | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync |
 | M2 | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest |
 | M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |
