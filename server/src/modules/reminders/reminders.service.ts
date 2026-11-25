@@ -1,6 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
-import { APP_ENV, type AppEnv } from '../../config/env';
+import { Injectable, Logger } from '@nestjs/common';
+import type { Prisma, ReminderOffset } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FirebaseService } from '../../firebase/firebase.service';
 import {
@@ -9,10 +8,12 @@ import {
   effectiveDate,
   nextOccurrence,
   reminderInstantUtc,
+  shiftCivil,
   yearsAt,
 } from '../../common/date/occurrence';
 import { buildReminderCopy, buildTestCopy } from './reminder-copy';
 import { dedupeKeyFor, testDedupeKey } from './dedupe-key';
+import { LADDER_ORDER, OFFSET_DAYS, ladderFor, reminderHourFor } from './ladder';
 import { milestoneLabelFor } from '../events/derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 
@@ -45,8 +46,13 @@ export interface SendSummary {
 export class RemindersService {
   private readonly logger = new Logger(RemindersService.name);
 
+  /**
+   * No `AppEnv` any more. It was here for DEFAULT_REMINDER_HOUR, which M2 replaced with a
+   * per-user `reminder_hour` and a per-person override (FR-REM-03). The env var still seeds
+   * a brand-new user in AuthService; nothing in the send path reads it, so changing it on the
+   * server cannot move the reminders of someone who has already chosen their own hour.
+   */
   constructor(
-    @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly firebase: FirebaseService,
     private readonly derivation: PersonDerivationService,
@@ -87,8 +93,17 @@ export class RemindersService {
         user: { deletedAt: null },
       },
       include: {
-        user: { select: { id: true, timezone: true } },
-        person: { select: { displayName: true, isDeceased: true } },
+        user: {
+          select: {
+            id: true,
+            timezone: true,
+            reminderHour: true,
+            ladderD7: true,
+            ladderD1: true,
+            ladderD0: true,
+          },
+        },
+        person: { select: { displayName: true, isDeceased: true, reminderHourOverride: true } },
       },
     });
 
@@ -151,8 +166,19 @@ export class RemindersService {
   private async materialiseOne(
     event: Prisma.EventGetPayload<{
       include: {
-        user: { select: { id: true; timezone: true } };
-        person: { select: { displayName: true; isDeceased: true } };
+        user: {
+          select: {
+            id: true;
+            timezone: true;
+            reminderHour: true;
+            ladderD7: true;
+            ladderD1: true;
+            ladderD0: true;
+          };
+        };
+        person: {
+          select: { displayName: true; isDeceased: true; reminderHourOverride: true };
+        };
       };
     }>,
     now: Date,
@@ -185,30 +211,89 @@ export class RemindersService {
       civilFromDbDate(occurrence.occursOn),
       occurrence.overrideDate ? civilFromDbDate(occurrence.overrideDate) : null,
     );
-    const scheduledAtUtc = reminderInstantUtc(effective, this.env.DEFAULT_REMINDER_HOUR, zone);
+    const hour = reminderHourFor(event.person.reminderHourOverride, event.user.reminderHour);
+
+    // The rungs this occurrence is ENTITLED to. A SOLEMN event never gets D7 whatever the
+    // user's toggles say — see ladderFor(). The rung is not created rather than created and
+    // suppressed, because a suppressed row is still a row that a revive or a settings change
+    // could turn back on, and FR-REM-11 means there is nothing to turn on.
+    const wanted = ladderFor(event.sentiment, event.user);
+
+    for (const offset of wanted) {
+      await this.upsertRung(event, occurrence.id, occ.occurrenceYear, effective, offset, hour, zone, now, summary);
+    }
+
+    // Reconcile the other way: a rung the user has just switched off — or D7 on an event that
+    // has just become SOLEMN because the person was marked deceased — has a PENDING row that
+    // must stop. Expressed as "whatever is not wanted", so a rung added to the ladder later
+    // cannot be forgotten here.
+    const unwanted = LADDER_ORDER.filter((o) => !wanted.includes(o));
+    if (unwanted.length > 0) {
+      const stopped = await this.prisma.reminder.updateMany({
+        where: {
+          status: 'PENDING',
+          dedupeKey: { in: unwanted.map((o) => dedupeKeyFor(event.id, occ.occurrenceYear, o)) },
+        },
+        data: { status: 'SUPPRESSED' },
+      });
+      summary.remindersSuppressed += stopped.count;
+    }
+  }
+
+  /** Creates or moves one rung of the ladder. */
+  private async upsertRung(
+    event: { id: string; userId: string },
+    occurrenceId: string,
+    occurrenceYear: number,
+    effective: ReturnType<typeof civilFromDbDate>,
+    offset: Exclude<ReminderOffset, 'DIGEST'>,
+    hour: number,
+    zone: string,
+    now: Date,
+    summary: MaterialiseSummary,
+  ): Promise<void> {
+    // Calendar arithmetic on the DATE, then the hour in the owner's zone — not "the D0
+    // instant minus seven days", which drifts by an hour across a DST boundary and would
+    // deliver a 09:00 reminder at 08:00 twice a year.
+    const fireOn = shiftCivil(effective, -OFFSET_DAYS[offset]);
+    const scheduledAtUtc = reminderInstantUtc(fireOn, hour, zone);
     const tooLate = scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS;
-    // Keyed on the EVENT and the occurrence YEAR, not the occurrence id and not the date, so
-    // the phone can compute the same string for its own alarm. dedupe-key.ts has the full
-    // argument; the short version is that an occurrence id is invisible to the client and a
-    // date moves under three separate edits.
-    const dedupeKey = dedupeKeyFor(event.id, occ.occurrenceYear, 'D0');
+    const dedupeKey = dedupeKeyFor(event.id, occurrenceYear, offset);
 
     const existing = await this.prisma.reminder.findUnique({ where: { dedupeKey } });
 
     if (!existing) {
       await this.prisma.reminder.create({
         data: {
-          eventOccurrenceId: occurrence.id,
+          eventOccurrenceId: occurrenceId,
           userId: event.userId,
-          offset: 'D0',
+          offset,
           scheduledAtUtc,
           channel: 'FCM',
+          // A D7 rung for a birthday three days away is already in the past. Recorded as
+          // SUPPRESSED rather than fired late: "buy a present, you have a week" is worse
+          // than useless when the day is tomorrow.
           status: tooLate ? 'SUPPRESSED' : 'PENDING',
           dedupeKey,
         },
       });
       if (tooLate) summary.remindersSuppressed += 1;
       else summary.remindersCreated += 1;
+      return;
+    }
+
+    // A rung the user switched off and has now switched back on. Suppression has to be
+    // reversible or the toggle is a one-way door: without this, turning D7 off in the
+    // morning and on again in the afternoon leaves the row SUPPRESSED until next year.
+    //
+    // `sentAt: null` is the guard that keeps it honest — a reminder that actually went out
+    // and was later suppressed must never be resurrected and sent a second time.
+    if (existing.status === 'SUPPRESSED' && !tooLate && existing.sentAt === null) {
+      await this.prisma.reminder.update({
+        where: { id: existing.id },
+        data: { scheduledAtUtc, status: 'PENDING' },
+      });
+      summary.remindersCreated += 1;
       return;
     }
 
@@ -270,8 +355,23 @@ export class RemindersService {
    * Returns reminders to PENDING after a restore or an un-mute, so long as their moment has
    * not already passed. A restored person whose birthday is next March gets their reminder
    * back; one whose birthday was last week does not suddenly receive a late notification.
+   *
+   * M2 adds a second filter that is not optional. This query's job is "bring back what was
+   * only suppressed because the event was away", and after the ladder exists a row can also
+   * be suppressed because the ladder does not want it — a rung the user switched off, or D7
+   * on an occurrence that became SOLEMN when the person was marked deceased. Reviving those
+   * would restore a T-7 gifting reminder for a death anniversary through the back door, which
+   * REQUIREMENTS.md §11 lists as a correctness failure rather than a content one.
+   *
+   * So the ladder is consulted here too, from the same function the materialiser uses.
    */
   async revivePending(userId: string, now: Date = new Date()): Promise<number> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { ladderD7: true, ladderD1: true, ladderD0: true },
+    });
+    if (!user) return 0;
+
     const candidates = await this.prisma.reminder.findMany({
       where: {
         userId,
@@ -281,11 +381,21 @@ export class RemindersService {
           event: { deletedAt: null, isMuted: false, person: { deletedAt: null } },
         },
       },
-      select: { id: true, scheduledAtUtc: true },
+      select: {
+        id: true,
+        scheduledAtUtc: true,
+        offset: true,
+        eventOccurrence: { select: { event: { select: { sentiment: true } } } },
+      },
     });
 
     const revivable = candidates
       .filter((r) => r.scheduledAtUtc.getTime() >= now.getTime() - LATE_GRACE_MS)
+      .filter((r) => {
+        const sentiment = r.eventOccurrence?.event.sentiment;
+        if (!sentiment) return true; // self-test and digest rows have no ladder to consult
+        return (ladderFor(sentiment, user) as ReminderOffset[]).includes(r.offset);
+      })
       .map((r) => r.id);
     if (revivable.length === 0) return 0;
 
@@ -309,23 +419,37 @@ export class RemindersService {
 
     const pending = await this.prisma.reminder.findMany({
       where: { userId, status: 'PENDING', eventOccurrenceId: { not: null } },
-      include: { eventOccurrence: true },
+      include: {
+        eventOccurrence: {
+          include: { event: { include: { person: { select: { reminderHourOverride: true } } } } },
+        },
+      },
     });
 
     let moved = 0;
     for (const reminder of pending) {
       if (!reminder.eventOccurrence) continue;
+      // A digest belongs to a day rather than to an occurrence, so it is rescheduled by the
+      // materialiser's own digest pass, not here. Skipped explicitly: falling through would
+      // compute it as if it were a rung of some event's ladder.
+      if (reminder.offset === 'DIGEST') continue;
+
       const effective = effectiveDate(
         civilFromDbDate(reminder.eventOccurrence.occursOn),
         reminder.eventOccurrence.overrideDate
           ? civilFromDbDate(reminder.eventOccurrence.overrideDate)
           : null,
       );
-      const scheduledAtUtc = reminderInstantUtc(
-        effective,
-        this.env.DEFAULT_REMINDER_HOUR,
-        user.timezone,
+      // Each rung keeps its own distance from the occurrence. Rescheduling every pending
+      // reminder to the D0 instant — which is what a single hour and no offset would do —
+      // would quietly collapse the whole ladder onto the morning of the birthday the first
+      // time anyone flew abroad.
+      const fireOn = shiftCivil(effective, -OFFSET_DAYS[reminder.offset]);
+      const hour = reminderHourFor(
+        reminder.eventOccurrence.event.person.reminderHourOverride,
+        user.reminderHour,
       );
+      const scheduledAtUtc = reminderInstantUtc(fireOn, hour, user.timezone);
       if (scheduledAtUtc.getTime() === reminder.scheduledAtUtc.getTime()) continue;
 
       const tooLate = scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS;

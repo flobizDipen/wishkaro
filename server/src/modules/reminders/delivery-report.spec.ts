@@ -2,7 +2,6 @@ import { RemindersService } from './reminders.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { FirebaseService } from '../../firebase/firebase.service';
 import type { PersonDerivationService } from '../people/person-derivation.service';
-import type { AppEnv } from '../../config/env';
 
 /**
  * FR-REM-10: "Delivery outcome is reported back to the server for the G1 metric."
@@ -40,9 +39,7 @@ function buildService(rows: FakeRow[]): RemindersService {
     },
   } as unknown as PrismaService;
 
-  const env = { DEFAULT_REMINDER_HOUR: 9, DEFAULT_TIMEZONE: 'Asia/Kolkata' } as AppEnv;
   return new RemindersService(
-    env,
     prisma,
     {} as FirebaseService,
     { recompute: async () => undefined } as unknown as PersonDerivationService,

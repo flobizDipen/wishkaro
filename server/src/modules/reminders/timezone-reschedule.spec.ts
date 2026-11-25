@@ -2,7 +2,6 @@ import { RemindersService } from './reminders.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { FirebaseService } from '../../firebase/firebase.service';
 import type { PersonDerivationService } from '../people/person-derivation.service';
-import type { AppEnv } from '../../config/env';
 
 /**
  * FR-EVT-08: "reminders fire in the owner's *current* timezone, and a timezone change
@@ -26,7 +25,12 @@ interface FakeReminder {
   scheduledAtUtc: Date;
   dedupeKey: string;
   eventOccurrenceId: string | null;
-  eventOccurrence: { occursOn: Date; overrideDate: Date | null } | null;
+  offset: 'D7' | 'D1' | 'D0' | 'DIGEST';
+  eventOccurrence: {
+    occursOn: Date;
+    overrideDate: Date | null;
+    event: { person: { reminderHourOverride: number | null } };
+  } | null;
 }
 
 function buildService(options: { timezone: string; reminders: FakeReminder[] }): {
@@ -37,7 +41,14 @@ function buildService(options: { timezone: string; reminders: FakeReminder[] }):
 
   const prisma = {
     user: {
-      findUnique: async () => ({ id: 'u1', timezone: options.timezone }),
+      findUnique: async () => ({
+        id: 'u1',
+        timezone: options.timezone,
+        reminderHour: 9,
+        ladderD7: true,
+        ladderD1: true,
+        ladderD0: true,
+      }),
     },
     reminder: {
       findMany: async () => options.reminders.filter((r) => r.status === 'PENDING'),
@@ -53,22 +64,28 @@ function buildService(options: { timezone: string; reminders: FakeReminder[] }):
     },
   } as unknown as PrismaService;
 
-  const env = { DEFAULT_REMINDER_HOUR: 9, DEFAULT_TIMEZONE: 'Asia/Kolkata' } as AppEnv;
   const firebase = {} as FirebaseService;
   const derivation = { recompute: async () => undefined } as unknown as PersonDerivationService;
 
-  return { service: new RemindersService(env, prisma, firebase, derivation), updates };
+  return { service: new RemindersService(prisma, firebase, derivation), updates };
 }
 
-function reminder(id: string, occursOn: Date, scheduledAtUtc: Date): FakeReminder {
+function reminder(
+  id: string,
+  occursOn: Date,
+  scheduledAtUtc: Date,
+  offset: 'D7' | 'D1' | 'D0' = 'D0',
+  reminderHourOverride: number | null = null,
+): FakeReminder {
   return {
     id,
     userId: 'u1',
     status: 'PENDING',
     scheduledAtUtc,
-    dedupeKey: `${id}:D0`,
+    offset,
+    dedupeKey: `${id}:2027:${offset}`,
     eventOccurrenceId: `occ-${id}`,
-    eventOccurrence: { occursOn, overrideDate: null },
+    eventOccurrence: { occursOn, overrideDate: null, event: { person: { reminderHourOverride } } },
   };
 }
 
@@ -200,6 +217,7 @@ describe('rescheduleForTimezoneChange (FR-EVT-08)', () => {
     r.eventOccurrence = {
       occursOn: UTC_MIDNIGHT(2027, 3, 14),
       overrideDate: UTC_MIDNIGHT(2027, 3, 20),
+      event: { person: { reminderHourOverride: null } },
     };
     const { service, updates } = buildService({ timezone: 'Asia/Kolkata', reminders: [r] });
 
@@ -207,5 +225,49 @@ describe('rescheduleForTimezoneChange (FR-EVT-08)', () => {
 
     // Same zone, but the override moves the day: 09:00 IST on the 20th, not the 14th.
     expect(updates[0]?.data.scheduledAtUtc).toEqual(new Date('2027-03-20T03:30:00.000Z'));
+  });
+
+  /**
+   * M2. Each rung keeps its own distance from the occurrence across a timezone change.
+   * Rescheduling every pending reminder to the D0 instant would collapse the whole ladder
+   * onto the morning of the birthday the first time anyone flew abroad.
+   */
+  it('keeps each rung its own distance from the occurrence', async () => {
+    const occursOn = UTC_MIDNIGHT(2027, 3, 14);
+    const { service, updates } = buildService({
+      timezone: 'America/New_York',
+      reminders: [
+        reminder('r7', occursOn, new Date('2027-03-07T03:30:00.000Z'), 'D7'),
+        reminder('r1', occursOn, new Date('2027-03-13T03:30:00.000Z'), 'D1'),
+        reminder('r0', occursOn, new Date('2027-03-14T03:30:00.000Z'), 'D0'),
+      ],
+    });
+
+    await service.rescheduleForTimezoneChange('u1', now);
+
+    const byId = new Map(updates.map((u) => [u.id, u.data.scheduledAtUtc]));
+    // All three are 09:00 in New York, and the ladder straddles a DST boundary: the US
+    // springs forward on 14 March 2027, so D7 and D1 are EST (UTC-5, 14:00Z) while D0 on the
+    // day itself is EDT (UTC-4, 13:00Z). "The D0 instant minus seven days" would have put D7
+    // an hour out, which is exactly why the shift is done on the DATE and the hour applied
+    // afterwards in the owner's zone.
+    expect(byId.get('r7')).toEqual(new Date('2027-03-07T14:00:00.000Z'));
+    expect(byId.get('r1')).toEqual(new Date('2027-03-13T14:00:00.000Z'));
+    expect(byId.get('r0')).toEqual(new Date('2027-03-14T13:00:00.000Z'));
+  });
+
+  /** FR-REM-03: a per-person hour wins over the global one, and 0 is a real hour. */
+  it('honours a per-person hour override, including midnight', async () => {
+    const occursOn = UTC_MIDNIGHT(2027, 3, 14);
+    const { service, updates } = buildService({
+      timezone: 'Asia/Kolkata',
+      reminders: [reminder('r0', occursOn, new Date('2027-03-14T03:30:00.000Z'), 'D0', 0)],
+    });
+
+    await service.rescheduleForTimezoneChange('u1', now);
+
+    // 00:00 IST on the 14th is 18:30 UTC on the 13th. `?? ` not `||`, or 0 would silently
+    // become the global 09:00.
+    expect(updates[0]?.data.scheduledAtUtc).toEqual(new Date('2027-03-13T18:30:00.000Z'));
   });
 });
