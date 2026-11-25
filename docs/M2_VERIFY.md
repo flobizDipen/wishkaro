@@ -84,6 +84,23 @@ worse than not writing one:
   `dumpsys usagestats` shows `com.flobiz.staff_app` with `appLaunchCount=0` and no events
   anywhere in the window. It was not involved.
 
+### 0.0.2 Run the test suites in a zone that is not yours
+
+CI runs on a UTC runner. This machine is `Asia/Kolkata`. Any test that reads the ambient
+timezone therefore passes here and fails there — and timezone handling is the product's
+highest-bug-density area, so its tests are the last place that should quietly depend on where
+they run.
+
+```bash
+TZ=UTC            ./gradlew :composeApp:testDebugUnitTest --rerun-tasks
+TZ=Pacific/Chatham ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # +12:45/+13:45
+cd server && TZ=UTC npx jest
+```
+
+This caught `ReminderPlanRepositoryTest` reading `TimeZone.currentSystemDefault()` through the
+production code. The fix was to inject the zone the way the clock already was — not to loosen
+the assertion.
+
 ### 0.1 Reading the device
 
 ```bash

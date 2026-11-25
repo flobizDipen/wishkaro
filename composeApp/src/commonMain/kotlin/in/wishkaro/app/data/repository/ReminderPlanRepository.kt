@@ -13,7 +13,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
-import kotlinx.datetime.todayIn
+import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -71,6 +71,16 @@ class ReminderPlanRepository(
     private val local: PlanStore,
     private val scheduler: ReminderScheduler,
     private val now: () -> Instant = Clock.System::now,
+    /**
+     * The device's timezone, as a provider rather than a value.
+     *
+     * A provider because the zone genuinely changes under the app — the user flies somewhere
+     * — so it has to be read per call, exactly as `TimeZone.currentSystemDefault()` was.
+     * Injected because reading it from the environment made the fallback's own tests pass in
+     * Asia/Kolkata and fail on a UTC CI runner: the behaviour was correct, but nothing could
+     * assert it without the machine agreeing.
+     */
+    private val zone: () -> TimeZone = TimeZone::currentSystemDefault,
 ) {
 
     /**
@@ -128,8 +138,8 @@ class ReminderPlanRepository(
      */
     suspend fun rebuildLocalFallbacks() {
         val settings = local.reminderSettings()
-        val zone = TimeZone.currentSystemDefault()
-        val today = Clock.System.todayIn(zone)
+        val zone = zone()
+        val today = now().toLocalDateTime(zone).date
 
         val existing = local.localFallbacks().associateBy { it.dedupe_key }
         val wanted = mutableSetOf<String>()

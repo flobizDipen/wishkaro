@@ -29,6 +29,17 @@ class ReminderPlanRepositoryTest {
 
     private val NOW = Instant.parse("2026-11-25T06:00:00Z")
 
+    /**
+     * Pinned, not read from the machine.
+     *
+     * Every instant asserted below is an absolute UTC moment derived from a LOCAL hour, so a
+     * test that took the runner's zone would pass in Asia/Kolkata and fail on a UTC CI box —
+     * which is exactly what happened. The product's single highest-bug-density area is
+     * timezone handling; its tests should not be the one place that quietly depends on where
+     * they run.
+     */
+    private val IST = kotlinx.datetime.TimeZone.of("Asia/Kolkata")
+
     @Test
     fun armsAFallbackForAnEventTheServerHasNeverSeen() = runTest {
         val store = FakePlanStore(unsynced = listOf(event("e1", day = 20, month = 12)))
@@ -156,6 +167,7 @@ class ReminderPlanRepositoryTest {
             local = store,
             scheduler = store.scheduler,
             now = { NOW },
+            zone = { IST },
         )
 }
 
