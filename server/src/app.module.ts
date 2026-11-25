@@ -13,6 +13,7 @@ import { DevicesModule } from './modules/devices/devices.module';
 import { EventsModule } from './modules/events/events.module';
 import { PeopleModule } from './modules/people/people.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
@@ -36,6 +37,7 @@ import { SyncModule } from './modules/sync/sync.module';
     EventsModule,
     DevicesModule,
     RemindersModule,
+    SettingsModule,
     SyncModule,
   ],
   controllers: [HealthController],

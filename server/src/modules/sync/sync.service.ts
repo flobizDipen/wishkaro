@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { toSettingsDto, type SettingsDto } from '../settings/settings.schemas';
 import {
   completenessSuggestions,
   defaultMutedFor,
@@ -68,6 +69,12 @@ export interface SyncPullResult {
   people: SyncPersonDto[];
   events: SyncEventDto[];
   traits: SyncTraitDto[];
+  /**
+   * The user's reminder settings (FR-REM-03, FR-REM-09). Always sent, not paged and not
+   * behind the cursor: there is one row, it is tiny, and a client that has just reinstalled
+   * must get its quiet hours back on the first pull rather than after the cursor catches up.
+   */
+  settings: SettingsDto;
   cursor: string;
   hasMore: boolean;
   serverTime: string;
@@ -79,6 +86,14 @@ export type SyncEntity = 'person' | 'event' | 'trait';
 export interface SyncPushResult {
   applied: { people: number; events: number; traits: number };
   skipped: { id: string; entity: SyncEntity; reason: SkipReason }[];
+  /**
+   * The settings as they stand AFTER the push, whether or not the client's copy won.
+   *
+   * Always returned when the client sent any, so a device whose offline change lost to a
+   * newer one from somewhere else learns that in the same round trip instead of pushing the
+   * same stale blob on every sync for ever.
+   */
+  settings?: SettingsDto;
   serverTime: string;
 }
 
@@ -102,7 +117,8 @@ export class SyncService {
   ): Promise<SyncPullResult> {
     const cursor = decodeCursor(encodedCursor);
 
-    const [people, events, traits] = await Promise.all([
+    const [owner, people, events, traits] = await Promise.all([
+      this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } }),
       this.prisma.person.findMany({
         where: { userId, ...cursorWhere(cursor.person) },
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
@@ -127,6 +143,10 @@ export class SyncService {
         take: limit,
       }),
     ]);
+
+    if (!owner) {
+      throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'No such user' });
+    }
 
     const next: SyncCursor = {
       person: advance(cursor.person, people),
@@ -185,6 +205,7 @@ export class SyncService {
         updatedAt: t.updatedAt.toISOString(),
         deletedAt: t.deletedAt?.toISOString() ?? null,
       })),
+      settings: toSettingsDto(owner),
       cursor: encodeCursor(next),
       hasMore: people.length === limit || events.length === limit || traits.length === limit,
       serverTime: new Date().toISOString(),
@@ -242,6 +263,13 @@ export class SyncService {
     // the first four would each see a half-applied batch.
     await this.derivation.recomputeMany(touched, this.prisma, contexts);
 
+    // Settings last. They are one row and they do not interact with the records above, so
+    // ordering them after the recompute keeps a settings-only push from paying for anything
+    // and a records-only push from touching them at all.
+    const settings = batch.settings
+      ? await this.applySettings(userId, batch.settings)
+      : undefined;
+
     if (skipped.length > 0) {
       this.logger.debug(`Sync push for ${userId}: ${skipped.length} record(s) skipped`);
     }
@@ -249,8 +277,40 @@ export class SyncService {
     return {
       applied: { people: peopleApplied, events: eventsApplied, traits: traitsApplied },
       skipped,
+      ...(settings ? { settings } : {}),
       serverTime: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Last-write-wins on `settings_updated_at`, the same rule the records use.
+   *
+   * Strictly newer, not newer-or-equal: the client pushes whenever its row is flagged
+   * pending and clears the flag from the response, so re-pushing the blob it was just handed
+   * has to be a no-op rather than a write that bumps the timestamp and starts the cycle
+   * again.
+   */
+  private async applySettings(
+    userId: string,
+    incoming: NonNullable<SyncPush['settings']>,
+  ): Promise<SettingsDto> {
+    const current = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    if (!current) {
+      throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'No such user' });
+    }
+
+    const incomingAt = new Date(incoming.updatedAt);
+    if (incomingAt.getTime() <= current.settingsUpdatedAt.getTime()) {
+      return toSettingsDto(current);
+    }
+
+    const { updatedAt: _clientClock, ...fields } = incoming;
+    const after = await this.prisma.user.update({
+      where: { id: userId },
+      data: { ...fields, settingsUpdatedAt: incomingAt },
+    });
+    this.logger.log(`Settings updated from a client push for user ${userId}`);
+    return toSettingsDto(after);
   }
 
   private async upsertPerson(

@@ -155,11 +155,38 @@ export const TraitUpsertSchema = z
   })
   .strict();
 
+/**
+ * The user's reminder settings, riding on the sync batch rather than being a fourth cursor
+ * entity (FR-REM-03 / FR-REM-09). One row per user: paging it would be absurd, and a cursor
+ * for a single row is a third ordering key for every client to get right.
+ *
+ * Optional, because most pushes are people and events. Carries its own `updatedAt` so the
+ * same per-record last-write-wins applies here as everywhere else.
+ */
+const SettingsPushSchema = z
+  .object({
+    reminderHour: z.number().int().min(0).max(23),
+    ladderD7: z.boolean(),
+    ladderD1: z.boolean(),
+    ladderD0: z.boolean(),
+    quietHoursStart: z.number().int().min(0).max(23).nullable(),
+    quietHoursEnd: z.number().int().min(0).max(23).nullable(),
+    digestEnabled: z.boolean(),
+    digestHour: z.number().int().min(0).max(23),
+    updatedAt: IsoInstant,
+  })
+  .strict()
+  .refine((v) => (v.quietHoursStart === null) === (v.quietHoursEnd === null), {
+    message: 'quiet hours must be set or cleared together — a half-set window silences the app',
+    path: ['quietHoursEnd'],
+  });
+
 export const SyncPushSchema = z
   .object({
     people: z.array(PersonUpsertSchema).max(500).default([]),
     events: z.array(EventUpsertSchema).max(500).default([]),
     traits: z.array(TraitUpsertSchema).max(500).default([]),
+    settings: SettingsPushSchema.optional(),
   })
   .strict();
 
