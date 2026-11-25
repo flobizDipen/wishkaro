@@ -14,7 +14,43 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlin.time.Instant
 import wishkaro.db.WishKaroDb
+
+/**
+ * Timestamps are compared as INSTANTS, never as strings.
+ *
+ * The two ends format ISO-8601 differently and the difference is not cosmetic. kotlinx
+ * `Instant.toString()` emits up to nanosecond precision with trailing zeros trimmed
+ * ("…:21.410233Z", or "…:21Z" on a whole second); JavaScript's `toISOString()` always emits
+ * exactly three decimals ("…:21.410Z", "…:21.000Z"); and Prisma stores `timestamp(3)`, so a
+ * value that goes up as microseconds comes back as milliseconds.
+ *
+ * A string comparison of those is wrong in both directions — "…410233Z" sorts BEFORE
+ * "…410Z" because '2' < 'Z' — which would make the client treat its own fresh write as
+ * older than the server's echo of it. That is last-write-wins losing to formatting.
+ *
+ * Parsing both sides costs a few microseconds per row and removes the whole class.
+ */
+private fun instantOrNull(value: String?): Instant? =
+    value?.let { runCatching { Instant.parse(it) }.getOrNull() }
+
+/** True when the local row is at least as new as the remote one, precision drift ignored. */
+private fun localIsNotOlder(local: String, remote: String): Boolean {
+    val l = instantOrNull(local)
+    val r = instantOrNull(remote)
+    // Unparseable either side: fall back to the string order rather than silently winning.
+    if (l == null || r == null) return local >= remote
+    return l >= r
+}
+
+/** True when two tombstones were written by the same delete, give or take precision. */
+private fun sameTombstone(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return false
+    val x = instantOrNull(a) ?: return a == b
+    val y = instantOrNull(b) ?: return a == b
+    return x.toEpochMilliseconds() == y.toEpochMilliseconds()
+}
 
 /**
  * SQLDelight is the read source of truth (D23).
@@ -179,9 +215,35 @@ class LocalStore(private val db: WishKaroDb) {
             }
         }
 
+    /**
+     * Restores a person and the rows THIS delete tombstoned, matched on the exact timestamp.
+     *
+     * Restoring only the person row brings them back as an empty husk — no dates, no
+     * countdown, no reminders — which is what the on-device walkthrough found. Matching on
+     * the timestamp rather than restoring everything also means an event the user had
+     * deleted a week earlier stays deleted: undoing one delete must not resurrect a whole
+     * history. The server applies the same rule in people.service.ts.
+     */
     suspend fun restorePersonLocally(personId: String, nowIso: String) =
         withContext(Dispatchers.Default) {
-            people.markRestored(updated_at = nowIso, id = personId)
+            db.transaction {
+                val person = people.selectById(personId).executeAsOneOrNull()
+                    ?: return@transaction
+                val deletedAt = person.deleted_at
+                people.markRestored(updated_at = nowIso, id = personId)
+                if (deletedAt == null) return@transaction
+
+                // sameTombstone, not string equality: the person row may still carry the
+                // client's microsecond timestamp while its events have come back from the
+                // server truncated to milliseconds. Exact matching finds nothing and the
+                // person returns as an empty husk — which is what the device showed.
+                events.selectAllForPerson(personId).executeAsList()
+                    .filter { sameTombstone(it.deleted_at, deletedAt) }
+                    .forEach { events.markRestored(updated_at = nowIso, id = it.id) }
+                traits.selectAllForPerson(personId).executeAsList()
+                    .filter { sameTombstone(it.deleted_at, deletedAt) }
+                    .forEach { traits.markRestored(updated_at = nowIso, id = it.id) }
+            }
         }
 
     suspend fun addEventLocally(
@@ -303,7 +365,9 @@ class LocalStore(private val db: WishKaroDb) {
         db.transaction {
             remotePeople.forEach { remote ->
                 val local = people.selectById(remote.id).executeAsOneOrNull()
-                if (local != null && (local.pending_sync != 0L || local.updated_at >= remote.updatedAt)) {
+                if (local != null &&
+                    (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
+                ) {
                     return@forEach
                 }
                 people.insertOrReplace(
@@ -327,7 +391,9 @@ class LocalStore(private val db: WishKaroDb) {
             }
             remoteEvents.forEach { remote ->
                 val local = events.selectById(remote.id).executeAsOneOrNull()
-                if (local != null && (local.pending_sync != 0L || local.updated_at >= remote.updatedAt)) {
+                if (local != null &&
+                    (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
+                ) {
                     return@forEach
                 }
                 events.insertOrReplace(
@@ -347,7 +413,9 @@ class LocalStore(private val db: WishKaroDb) {
             }
             remoteTraits.forEach { remote ->
                 val local = traits.selectById(remote.id).executeAsOneOrNull()
-                if (local != null && (local.pending_sync != 0L || local.updated_at >= remote.updatedAt)) {
+                if (local != null &&
+                    (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
+                ) {
                     return@forEach
                 }
                 traits.insertOrReplace(

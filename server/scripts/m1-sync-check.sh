@@ -98,6 +98,27 @@ curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$
 eq "the tombstone comes back on pull, not an absence" \
    "$(curl -sS "${A[@]}" "$U/v1/sync" | jq -r --arg t "$TID" '[.traits[]|select(.id==$t and .deletedAt!=null)]|length')" "1"
 
+echo "== 7b. an un-delete through SYNC restores the events too =="
+# Found by the on-device walkthrough: the REST restore path brought a person's dates back,
+# the sync path did not, so a person restored on the phone returned as an empty husk.
+DP=$(uuid); DE=$(uuid)
+T0=$NOW
+curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$DP" --arg e "$DE" --arg now "$T0" '{
+  people:[{id:$p, displayName:"Delete Me", relationToOwner:"Friend", updatedAt:$now}],
+  events:[{id:$e, personId:$p, type:"BIRTHDAY", day:4, month:4, year:1990, updatedAt:$now}]}')"
+T1=$(date -u -v+5M +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%S.000Z)
+curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$DP" --arg e "$DE" --arg now "$T1" '{
+  people:[{id:$p, displayName:"Delete Me", relationToOwner:"Friend", updatedAt:$now, deletedAt:$now}],
+  events:[{id:$e, personId:$p, type:"BIRTHDAY", day:4, month:4, year:1990, updatedAt:$now, deletedAt:$now}]}')"
+eq "the delete reached the server" \
+   "$(curl -sS "${A[@]}" "$U/v1/sync" | jq -r --arg p "$DP" '[.people[]|select(.id==$p and .deletedAt!=null)]|length')" "1"
+T2=$(date -u -v+10M +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%S.000Z)
+curl -sS -o /dev/null "${A[@]}" -X POST "$U/v1/sync" --data "$(jq -nc --arg p "$DP" --arg now "$T2" '{
+  people:[{id:$p, displayName:"Delete Me", relationToOwner:"Friend", updatedAt:$now}]}')"
+R=$(curl -sS "${A[@]}" "$U/v1/sync")
+eq "the person is live again"          "$(jq -r --arg p "$DP" '.people[]|select(.id==$p).deletedAt' <<<"$R")" "null"
+eq "and their date came back with them" "$(jq -r --arg e "$DE" '.events[]|select(.id==$e).deletedAt' <<<"$R")" "null"
+
 echo "== 8. an M0-shaped cursor still works =="
 M0CUR=$(printf '{"person":null,"event":null}' | base64 | tr -d '=\n' | tr '+/' '-_')
 eq "a cursor with no trait key is accepted and resyncs traits" \

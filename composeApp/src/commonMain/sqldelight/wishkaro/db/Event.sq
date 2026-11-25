@@ -34,6 +34,10 @@ SELECT * FROM event WHERE id = ?;
 selectForPerson:
 SELECT * FROM event WHERE person_id = ? AND deleted_at IS NULL;
 
+-- Including tombstones. Restoring a person has to find the rows its own delete hid.
+selectAllForPerson:
+SELECT * FROM event WHERE person_id = ?;
+
 selectPendingSync:
 SELECT * FROM event WHERE pending_sync = 1;
 

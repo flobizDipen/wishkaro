@@ -271,6 +271,29 @@ export class SyncService {
 
     if (existing) {
       await this.prisma.person.update({ where: { id: input.id }, data });
+
+      /**
+       * An un-delete arriving through sync has to bring back the rows that delete
+       * tombstoned, exactly as POST /v1/people/:id/restore does.
+       *
+       * Without this the person returns as an empty husk — no dates, no reminders — because
+       * the REST restore path and the sync path were applying different rules to the same
+       * user action. Matched on the exact timestamp, so an event deleted a week earlier
+       * stays deleted.
+       */
+      if (existing.deletedAt && !deletedAt) {
+        const tombstonedAt = existing.deletedAt;
+        await this.prisma.$transaction([
+          this.prisma.event.updateMany({
+            where: { personId: input.id, userId, deletedAt: tombstonedAt },
+            data: { deletedAt: null, updatedAt },
+          }),
+          this.prisma.personTrait.updateMany({
+            where: { personId: input.id, userId, deletedAt: tombstonedAt },
+            data: { deletedAt: null, updatedAt },
+          }),
+        ]);
+      }
     } else {
       await this.prisma.person.create({
         data: {

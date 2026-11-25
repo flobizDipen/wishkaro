@@ -23,6 +23,13 @@ SELECT * FROM person_trait WHERE deleted_at IS NULL;
 selectForPerson:
 SELECT * FROM person_trait WHERE person_id = ? AND deleted_at IS NULL;
 
+-- Including tombstones, for the same reason as Event.sq.
+selectAllForPerson:
+SELECT * FROM person_trait WHERE person_id = ?;
+
+markRestored:
+UPDATE person_trait SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
 selectById:
 SELECT * FROM person_trait WHERE id = ?;
 
