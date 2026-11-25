@@ -12,6 +12,7 @@ import {
   yearsAt,
 } from '../../common/date/occurrence';
 import { buildReminderCopy, buildTestCopy } from './reminder-copy';
+import { dedupeKeyFor, testDedupeKey } from './dedupe-key';
 import { milestoneLabelFor } from '../events/derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 
@@ -186,7 +187,11 @@ export class RemindersService {
     );
     const scheduledAtUtc = reminderInstantUtc(effective, this.env.DEFAULT_REMINDER_HOUR, zone);
     const tooLate = scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS;
-    const dedupeKey = `${occurrence.id}:D0`;
+    // Keyed on the EVENT and the occurrence YEAR, not the occurrence id and not the date, so
+    // the phone can compute the same string for its own alarm. dedupe-key.ts has the full
+    // argument; the short version is that an occurrence id is invisible to the client and a
+    // date moves under three separate edits.
+    const dedupeKey = dedupeKeyFor(event.id, occ.occurrenceYear, 'D0');
 
     const existing = await this.prisma.reminder.findUnique({ where: { dedupeKey } });
 
@@ -348,7 +353,7 @@ export class RemindersService {
     userId: string,
   ): Promise<{ reminderId: string; scheduledAtUtc: Date; dedupeKey: string }> {
     const scheduledAtUtc = new Date(Date.now() + TEST_REMINDER_DELAY_MS);
-    const dedupeKey = `test:${userId}:${scheduledAtUtc.getTime()}`;
+    const dedupeKey = testDedupeKey(userId, scheduledAtUtc);
 
     const reminder = await this.prisma.reminder.create({
       data: {

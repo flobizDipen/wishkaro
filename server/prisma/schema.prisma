@@ -42,11 +42,19 @@ enum CalendarSystem {
   GREGORIAN
 }
 
-/// Reminder ladder steps (FR-REM-03). M0 ships D0 only.
+/// Reminder ladder steps (FR-REM-03). M0 shipped D0 only; M2 adds D7 and D1 for real.
+///
+/// DIGEST is not a rung and REQUIREMENTS.md §8 does not list it. It is here because a digest
+/// (FR-REM-08) is still a reminder row — it needs a schedule, a status, a dedupe key and a
+/// delivery outcome exactly like any other — and the alternative was to write digests as D0
+/// rows distinguishable only by a key prefix, which is the kind of implicit encoding that
+/// survives until someone writes `where: { offset: 'D0' }` and silently sweeps up every
+/// digest in the table. Adding a value to a Postgres enum is a pure addition.
 enum ReminderOffset {
   D7
   D1
   D0
+  DIGEST
 }
 
 enum ReminderChannel {
@@ -100,6 +108,38 @@ model User {
   /// changing this reschedules every PENDING reminder (FR-EVT-08).
   timezone  String  @default("Asia/Kolkata")
 
+  // --- M2: reminder settings (FR-REM-03, FR-REM-08, FR-REM-09) -------------------------
+  //
+  // Per-user and synced, so a reinstall does not lose them. REQUIREMENTS.md §8's `user`
+  // sketch predates the reminder engine and lists none of these; §8 is corrected to match.
+
+  /// Local hour the morning-of reminder fires. Overridable per person (FR-REM-03).
+  reminderHour Int @default(9) @map("reminder_hour")
+
+  /// The three rungs, individually toggleable (FR-REM-03). A SOLEMN event never gets D7
+  /// whatever this says — see ladderFor() in modules/reminders/ladder.ts (FR-REM-11).
+  ladderD7 Boolean @default(true) @map("ladder_d7")
+  ladderD1 Boolean @default(true) @map("ladder_d1")
+  ladderD0 Boolean @default(true) @map("ladder_d0")
+
+  /// Quiet hours (FR-REM-09), as LOCAL HOURS rather than instants: the window is a property
+  /// of the user's day, not of any moment in time. Null together or set together — a
+  /// half-set window is rejected at the API, because "quiet from 22:00 until unspecified" has
+  /// no safe interpretation and the unsafe one silences the app forever.
+  quietHoursStart Int? @map("quiet_hours_start")
+  quietHoursEnd   Int? @map("quiet_hours_end")
+
+  /// Digest mode (FR-REM-08). When on it replaces the WHOLE ladder, not just morning-of —
+  /// see docs/M2_PLAN.md §2.1. Per-event reminders for that user are suppressed, and one
+  /// digest row is materialised per local day that has anything to say.
+  digestEnabled Boolean @default(false) @map("digest_enabled")
+  digestHour    Int     @default(9) @map("digest_hour")
+
+  /// Bumped on every settings write. Settings are not a sync cursor entity — there is one
+  /// row per user and paging it would be absurd — so the blob rides on the /v1/sync pull and
+  /// this column is what decides whose copy is newer.
+  settingsUpdatedAt DateTime @default(now()) @map("settings_updated_at")
+
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
@@ -144,6 +184,12 @@ model Person {
 
   /// DERIVED 0..100 (FR-PPL-05). Weights live in ONE place: COMPLETENESS_WEIGHTS.
   completenessScore Int @default(0) @map("completeness_score")
+
+  /// M2: this person's reminders fire at this local hour instead of the user's global one
+  /// (FR-REM-03). Null means "use the global hour" — not 0, which is a real hour someone
+  /// might choose. Ignored entirely while digest mode is on, since a digest has one hour for
+  /// the whole day by definition.
+  reminderHourOverride Int? @map("reminder_hour_override")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @default(now()) @map("updated_at")
@@ -267,20 +313,39 @@ model Reminder {
 
   /// NULLABLE by design. POST /v1/reminders/test must work before any person, event or
   /// occurrence exists — that is the whole point of building it first. A null FK means a
-  /// self-test reminder and the send worker uses generic copy. See docs/M0_PLAN.md §1.2.
+  /// self-test reminder (M0) or, from M2, a digest row, which belongs to a user and a day
+  /// rather than to any single occurrence. See docs/M0_PLAN.md §1.2.
   eventOccurrenceId String? @map("event_occurrence_id")
   userId            String  @map("user_id")
 
   offset         ReminderOffset
   /// Always UTC. User-facing times are derived in the owner's timezone, never stored.
+  /// Quiet hours (FR-REM-09) are applied HERE, when the row is written, so that both
+  /// delivery paths inherit the deferral from one implementation.
   scheduledAtUtc DateTime        @map("scheduled_at_utc")
-  channel        ReminderChannel @default(FCM)
-  status         ReminderStatus  @default(PENDING)
 
-  /// Unique across the table. Carried in the FCM payload so the client can drop a repeat
-  /// even when the server retries or the local-alarm fallback (M2) fires too.
+  /// M2: the channel that actually DELIVERED this reminder, not the one it was scheduled on.
+  ///
+  /// It cannot mean "scheduled on" while `dedupe_key` is UNIQUE across the table, because
+  /// then one rung would need an FCM row and a LOCAL row sharing a key. The two paths are
+  /// one row racing to deliver it: created FCM, flipped to LOCAL when the client reports
+  /// that its own alarm got there first. That also makes the G1 reliability metric one
+  /// query — count(channel = LOCAL) / count(*) IS the FCM failure rate (docs/M2_PLAN.md
+  /// §2.2).
+  channel ReminderChannel @default(FCM)
+  status  ReminderStatus  @default(PENDING)
+
+  /// Unique across the table, and from M2 derivable on BOTH sides — see dedupeKeyFor() in
+  /// modules/reminders/dedupe-key.ts. The client claims it before drawing a notification, so
+  /// a server retry, a late push and the local-alarm fallback all collapse into one.
   dedupeKey String    @unique @map("dedupe_key")
   sentAt    DateTime? @map("sent_at")
+
+  /// M2, FR-REM-10. When the client told us what happened, and what it said. Null means no
+  /// device has reported on this reminder — which is itself the signal the G1 metric is
+  /// made of, so it is distinct from "reported as not shown".
+  deliveredAt     DateTime? @map("delivered_at")
+  deliveryOutcome String?   @map("delivery_outcome")
 
   createdAt DateTime @default(now()) @map("created_at")
 
