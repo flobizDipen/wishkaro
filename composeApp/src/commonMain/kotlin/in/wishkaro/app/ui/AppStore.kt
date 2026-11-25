@@ -299,10 +299,25 @@ class AppStore(
         scheduler.requestExactAlarmPermission()
     }
 
+    /**
+     * Pull to refresh, and everything that word has to mean now.
+     *
+     * Records are only half of it. The reminder plan is what the device's own alarms are
+     * armed from, so a sync that updates the people list and leaves a stale plan behind
+     * produces an app that LOOKS up to date and will fire yesterday's reminders. Settings
+     * are re-read for the same reason: the server may have handed down a copy that moved
+     * every pending instant.
+     */
     fun refresh() {
         scope.launch {
             _busy.value = true
             people.syncNow().onFailure { _message.value = "Sync failed: ${it.message}" }
+            _settings.value = local.reminderSettings()
+            // Silent on failure, like every other call site: the alarms already armed keep
+            // working, which is the whole reason the plan is stored rather than held in
+            // memory.
+            plan.refresh()
+            refreshReliability()
             _busy.value = false
         }
     }
