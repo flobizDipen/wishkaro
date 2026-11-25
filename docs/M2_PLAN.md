@@ -204,7 +204,7 @@ rewritten.
 
 ## 2. Two contradictions I am not resolving silently
 
-### 2.1 Does digest replace the whole ladder, or only morning-of? — **needs your call**
+### 2.1 Does digest replace the whole ladder, or only morning-of? — **answered: the whole ladder**
 
 | Source | Says |
 |---|---|
@@ -220,12 +220,14 @@ happening today — it is about something happening in a week.
 - **Reading (ii): digest replaces all three rungs.** One notification a day, whose body is
   grouped — *Today · Tomorrow · In 7 days*. Nothing else fires.
 
-**My recommendation is (ii).** Someone who chooses a digest is choosing "one notification a day",
-and (i) does not deliver that. It also keeps the implementation honest: digest mode becomes "take
-every reminder due today at any rung, group them, send one", rather than a special case that
-knows about D0.
+**Answered 2026-11-25: reading (ii).** Digest replaces the whole ladder. One notification a
+day, body grouped *Today Â· Tomorrow Â· In 7 days*; nothing else fires while it is on.
 
-It changes what the feature *is*, so I am not picking it alone. Tell me (i) or (ii).
+That also keeps the implementation honest. Digest mode becomes "take every reminder due today
+at any rung, group them, send one" â a fold over the day's reminders â rather than a special
+case that has to know what D0 is. `REQUIREMENTS.md` FR-REM-08's "everything happening today"
+is widened to "everything the ladder has to say today" in the §9 tidy-up, so the requirement
+and the code agree.
 
 ### 2.2 `channel = LOCAL` cannot be a second row — **recommended, not blocking**
 
@@ -397,7 +399,7 @@ Each step is provable before the next depends on it.
 | **3** | **Delivery reporting**, server + client outbox | `curl` a report, see `DELIVERED`; a report queued in aeroplane mode drains on reconnect |
 | **4** | The ladder and the **solemn ladder**, server-side | `curl`: one event → three reminder rows with distinct keys. A SOLEMN event → two. The test that fails if a D7 row is ever materialised for a SOLEMN occurrence |
 | **5** | Settings: schema, `/v1/me/settings`, sync, and the screen the app does not have yet | Change the hour on the phone, see pending reminders move on Railway |
-| **6** | Quiet hours (§6) and digest (§2.1, once you have answered) | The table in §6 as unit tests, on both sides |
+| **6** | Quiet hours (§6) and digest (§2.1, reading (ii)) | The table in §6 as unit tests, on both sides; a digest day produces exactly one notification and no per-event ones at any rung |
 | **7** | The local alarm fallback, the plan endpoint, boot/update re-arm, and **the one-notification proof** | The aeroplane-mode run in §8 |
 | **8** | OEM helper and the self-test UI | §9.1 — needs a device I do not have |
 | **9** | `docs/M2_VERIFY.md`, REQUIREMENTS tidy-up, CI green, PR | You reproduce the chain from the doc alone |
@@ -445,10 +447,10 @@ Either is a minute's work for you and neither is mine to decide — opening a da
 public-repo project is your call, not something to do for a row count. The §1.4 migration does
 not depend on it.
 
-### 9.3 Two answers
+### 9.3 Answers
 
-1. **§2.1 — digest: reading (i) or reading (ii)?** This one changes what the feature is.
-2. **§2.2 — `channel` as delivered-channel?** I will proceed with (a) unless you object.
+1. ~~§2.1 — digest~~ **Answered 2026-11-25: reading (ii), the whole ladder.**
+2. **§2.2 — `channel` as delivered-channel?** Proceeding with (a) unless you object.
 
 ### 9.4 Two things to be willing to do
 
