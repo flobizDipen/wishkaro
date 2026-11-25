@@ -6,8 +6,12 @@ import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.remote.WishKaroApi
 import `in`.wishkaro.app.data.repository.AuthRepository
 import `in`.wishkaro.app.data.repository.PeopleRepository
+import `in`.wishkaro.app.data.repository.PlanApi
+import `in`.wishkaro.app.data.repository.PlanStore
 import `in`.wishkaro.app.data.repository.ReminderPlanRepository
+import `in`.wishkaro.app.data.repository.SyncApi
 import `in`.wishkaro.app.data.repository.SyncEngine
+import `in`.wishkaro.app.data.repository.SyncStore
 import `in`.wishkaro.app.platform.DatabaseDriverFactory
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.NotificationGateway
@@ -19,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import org.koin.core.module.Module
+import org.koin.dsl.binds
 import org.koin.dsl.module
 import wishkaro.db.WishKaroDb
 
@@ -32,7 +37,18 @@ val appModule = module {
     single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
 
     single { WishKaroDb(get<DatabaseDriverFactory>().create()) }
-    single { LocalStore(get()) }
+
+    /*
+     * Bound under its interfaces as well as its own type.
+     *
+     * `LocalStore` implements `SyncStore` and `PlanStore`, and `WishKaroApi` implements
+     * `SyncApi` and `PlanApi` — but Koin only resolves what is registered, so until M2 those
+     * four interfaces were not resolvable at all. Every call site had to remember to write
+     * `get<LocalStore>()`; one that wrote a bare `get()` compiled, passed every test, and
+     * threw NoDefinitionFoundException on launch. `binds` removes the trap rather than
+     * documenting it, and ModulesTest now checks the graph.
+     */
+    single { LocalStore(get()) } binds arrayOf(SyncStore::class, PlanStore::class)
     single { TokenStore(createSecureStorage()) }
 
     single {
@@ -43,14 +59,21 @@ val appModule = module {
             tokens = get(),
             onSessionExpired = { get<AuthRepository>().onSessionExpired() },
         )
-    }
+    } binds arrayOf(SyncApi::class, PlanApi::class)
 
     single { SyncEngine(api = get<WishKaroApi>(), local = get<LocalStore>()) }
     single { PeopleRepository(local = get(), sync = get(), scope = get()) }
     single {
+        // Explicit types, not bare get().
+        //
+        // `WishKaroApi` and `LocalStore` are registered under their own concrete types, so a
+        // bare get() here asks Koin for `PlanApi` and `PlanStore` — interfaces nothing is
+        // bound to. That compiles, passes every unit test, and then throws
+        // NoDefinitionFoundException on the first launch. It did exactly that once; see the
+        // module-verification test in ModulesTest.
         ReminderPlanRepository(
-            api = get(),
-            local = get(),
+            api = get<WishKaroApi>(),
+            local = get<LocalStore>(),
             scheduler = get<ReminderScheduler>(),
         )
     }
