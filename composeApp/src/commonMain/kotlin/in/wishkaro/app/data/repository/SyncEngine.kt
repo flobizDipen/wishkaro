@@ -5,11 +5,13 @@ import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
+import `in`.wishkaro.app.data.remote.SettingsDto
 import `in`.wishkaro.app.data.remote.SyncEventPush
 import `in`.wishkaro.app.data.remote.SyncPersonPush
 import `in`.wishkaro.app.data.remote.SyncPushRequest
 import `in`.wishkaro.app.data.remote.SyncSkipped
 import `in`.wishkaro.app.data.remote.SyncTraitPush
+import `in`.wishkaro.app.domain.ReminderSettings
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -128,7 +130,8 @@ class SyncEngine(
         val people = local.pendingPeople()
         val events = local.pendingEvents()
         val traits = local.pendingTraits()
-        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) {
+        val settings = local.reminderSettings().takeIf { it.pendingSync }
+        if (people.isEmpty() && events.isEmpty() && traits.isEmpty() && settings == null) {
             return Counts() to emptyList()
         }
 
@@ -177,8 +180,20 @@ class SyncEngine(
                         deletedAt = it.deleted_at,
                     )
                 },
+                settings = settings?.toDto(),
             ),
         )
+
+        /*
+         * Settings are settled by what came back, not by the fact that we sent them.
+         *
+         * The server answers with the winning copy whether ours won or lost, so applying it
+         * does both jobs at once: a win is a no-op, and a loss replaces the local row with
+         * the newer one. Either way the pending flag clears, which is what stops a device
+         * that lost from re-pushing the same stale blob on every sync for ever.
+         */
+        response.settings?.let { local.applyRemoteSettings(it.toDomain()) }
+        if (settings != null) local.clearSettingsPending()
 
         // One timestamp for every re-stamp in this batch, a millisecond past the server's own
         // clock. STALE means the stored row's `updated_at` is at or before `serverTime`, so
@@ -249,6 +264,9 @@ class SyncEngine(
         // server that always reports hasMore cannot spin here forever.
         repeat(MAX_PAGES) {
             val page = api.syncPull(cursor)
+            // Taken only when it is newer than an unpushed local edit — the same last-write-
+            // wins the records use, decided inside the store so the comparison is one place.
+            page.settings?.let { local.applyRemoteSettings(it.toDomain()) }
             local.applyRemote(
                 remotePeople = page.people.map {
                     RemotePerson(
@@ -320,3 +338,29 @@ class SyncEngine(
         const val UNKNOWN_PERSON = "UNKNOWN_PERSON"
     }
 }
+
+private fun ReminderSettings.toDto() = SettingsDto(
+    reminderHour = reminderHour,
+    ladderD7 = ladderD7,
+    ladderD1 = ladderD1,
+    ladderD0 = ladderD0,
+    quietHoursStart = quietHoursStart,
+    quietHoursEnd = quietHoursEnd,
+    digestEnabled = digestEnabled,
+    digestHour = digestHour,
+    timezone = timezone,
+    updatedAt = updatedAt,
+)
+
+private fun SettingsDto.toDomain() = ReminderSettings(
+    reminderHour = reminderHour,
+    ladderD7 = ladderD7,
+    ladderD1 = ladderD1,
+    ladderD0 = ladderD0,
+    quietHoursStart = quietHoursStart,
+    quietHoursEnd = quietHoursEnd,
+    digestEnabled = digestEnabled,
+    digestHour = digestHour,
+    timezone = timezone,
+    updatedAt = updatedAt,
+)

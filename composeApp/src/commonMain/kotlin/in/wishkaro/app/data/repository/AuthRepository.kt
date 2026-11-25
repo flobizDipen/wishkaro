@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.TokenStore
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.remote.RegisterDeviceRequest
+import `in`.wishkaro.app.data.remote.TestReminderResponse
 import `in`.wishkaro.app.data.remote.WishKaroApi
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.GoogleSignInResult
@@ -78,8 +79,15 @@ class AuthRepository(
         check(response.remindersRescheduled >= 0)
     }
 
-    suspend fun requestTestReminder(): Result<String> = runCatching {
-        api.requestTestReminder().scheduledAtUtc
+    /**
+     * Returns the whole response, not just the time.
+     *
+     * M2's self-test UI (FR-REM-07) holds the dedupe key and watches this device's own
+     * de-duplication table for it, because "queued" is not evidence of delivery and the
+     * point of the feature is for the user to end up convinced.
+     */
+    suspend fun requestTestReminder(): Result<TestReminderResponse> = runCatching {
+        api.requestTestReminder()
     }
 
     /** Sign-out clears tokens AND the local database (FR-AUTH-07). */

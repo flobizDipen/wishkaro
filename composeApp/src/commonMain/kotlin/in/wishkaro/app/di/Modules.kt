@@ -6,11 +6,14 @@ import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.remote.WishKaroApi
 import `in`.wishkaro.app.data.repository.AuthRepository
 import `in`.wishkaro.app.data.repository.PeopleRepository
+import `in`.wishkaro.app.data.repository.ReminderPlanRepository
 import `in`.wishkaro.app.data.repository.SyncEngine
 import `in`.wishkaro.app.platform.DatabaseDriverFactory
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.NotificationGateway
+import `in`.wishkaro.app.platform.OemBatteryHelper
 import `in`.wishkaro.app.platform.PlatformConfig
+import `in`.wishkaro.app.platform.ReminderScheduler
 import `in`.wishkaro.app.ui.AppStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +47,13 @@ val appModule = module {
 
     single { SyncEngine(api = get<WishKaroApi>(), local = get<LocalStore>()) }
     single { PeopleRepository(local = get(), sync = get(), scope = get()) }
+    single {
+        ReminderPlanRepository(
+            api = get(),
+            local = get(),
+            scheduler = get<ReminderScheduler>(),
+        )
+    }
 
     single {
         AuthRepository(
@@ -60,6 +70,10 @@ val appModule = module {
             auth = get(),
             people = get(),
             notifications = get<NotificationGateway>(),
+            local = get(),
+            plan = get(),
+            scheduler = get<ReminderScheduler>(),
+            oem = get<OemBatteryHelper>(),
             scope = get(),
         )
     }

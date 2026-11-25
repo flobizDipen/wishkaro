@@ -119,6 +119,7 @@ kotlin {
             implementation(libs.sqldelight.android.driver)
 
             implementation(libs.androidx.security.crypto)
+            implementation(libs.androidx.work.runtime)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.googleid)

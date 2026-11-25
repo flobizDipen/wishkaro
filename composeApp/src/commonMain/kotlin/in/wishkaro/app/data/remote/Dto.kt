@@ -69,6 +69,55 @@ data class DeliveryReportDto(
 @Serializable
 data class DeliveryReportRequest(val reports: List<DeliveryReportDto>)
 
+/**
+ * The user's reminder settings (FR-REM-03, FR-REM-08, FR-REM-09).
+ *
+ * One type for both directions, unlike people and events. There are no server-derived fields
+ * here — every one of these is the user's own choice — so there is nothing for a push shape
+ * to leave out.
+ */
+@Serializable
+data class SettingsDto(
+    val reminderHour: Int = 9,
+    val ladderD7: Boolean = true,
+    val ladderD1: Boolean = true,
+    val ladderD0: Boolean = true,
+    val quietHoursStart: Int? = null,
+    val quietHoursEnd: Int? = null,
+    val digestEnabled: Boolean = false,
+    val digestHour: Int = 9,
+    val timezone: String = "Asia/Kolkata",
+    val updatedAt: String = "1970-01-01T00:00:00Z",
+)
+
+/**
+ * One already-rendered reminder from GET /v1/reminders/plan (FR-REM-02).
+ *
+ * The client does not build any of this. The title and body were written by the server's copy
+ * layer, which is the only place the SOLEMN string set exists — see docs/M2_PLAN.md §1.3.
+ */
+@Serializable
+data class PlanReminderDto(
+    val dedupeKey: String,
+    val scheduledAtUtc: String,
+    val offset: String = "D0",
+    val type: String = "REMINDER",
+    val title: String,
+    val body: String = "",
+    val personId: String? = null,
+    val personName: String? = null,
+    val eventType: String? = null,
+    val sentiment: String? = null,
+    val deepLink: String? = null,
+)
+
+@Serializable
+data class PlanResponse(
+    val horizonDays: Int = 60,
+    val reminders: List<PlanReminderDto> = emptyList(),
+    val serverTime: String? = null,
+)
+
 @Serializable
 data class DeliveryReportResponse(val recorded: Int = 0, val unknown: Int = 0)
 
@@ -172,6 +221,8 @@ data class SyncPullResponse(
     val people: List<SyncPersonDto> = emptyList(),
     val events: List<SyncEventDto> = emptyList(),
     val traits: List<SyncTraitDto> = emptyList(),
+    /** Always present from M2; nullable so an older server does not break the client. */
+    val settings: SettingsDto? = null,
     val cursor: String,
     val hasMore: Boolean = false,
     val serverTime: String? = null,
@@ -182,6 +233,7 @@ data class SyncPushRequest(
     val people: List<SyncPersonPush> = emptyList(),
     val events: List<SyncEventPush> = emptyList(),
     val traits: List<SyncTraitPush> = emptyList(),
+    val settings: SettingsDto? = null,
 )
 
 @Serializable
@@ -194,6 +246,8 @@ data class SyncSkipped(val id: String, val entity: String, val reason: String)
 data class SyncPushResponse(
     val applied: SyncApplied = SyncApplied(),
     val skipped: List<SyncSkipped> = emptyList(),
+    /** The settings as they stand after the push — present only when the client sent some. */
+    val settings: SettingsDto? = null,
     val serverTime: String? = null,
 )
 

@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.DeliveryReportResponse
 import `in`.wishkaro.app.data.remote.SyncPullResponse
@@ -70,4 +71,13 @@ interface SyncStore {
     suspend fun pendingDeliveryReports(limit: Long = 200): List<wishkaro.db.Delivery_report>
 
     suspend fun clearDeliveryPending(keys: List<String>)
+
+    // ---- reminder settings (FR-REM-03) ----
+
+    suspend fun reminderSettings(): ReminderSettings
+
+    /** True when the server's copy was taken. False means the local edit is still newer. */
+    suspend fun applyRemoteSettings(remote: ReminderSettings): Boolean
+
+    suspend fun clearSettingsPending()
 }

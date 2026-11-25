@@ -6,6 +6,7 @@ import `in`.wishkaro.app.data.local.RemoteTrait
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.DeliveryReportResponse
+import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.data.remote.SyncApplied
 import `in`.wishkaro.app.data.remote.SyncPullResponse
 import `in`.wishkaro.app.data.remote.SyncPushRequest
@@ -395,6 +396,25 @@ private class FakeStore(
         pendingDelivery.replaceAll {
             if (it.dedupe_key in keys) it.copy(pending_sync = 0L) else it
         }
+    }
+
+    // ---- reminder settings ----
+
+    var settings = ReminderSettings()
+    val remoteSettingsApplied = mutableListOf<ReminderSettings>()
+    var settingsPendingCleared = false
+
+    override suspend fun reminderSettings(): ReminderSettings = settings
+
+    override suspend fun applyRemoteSettings(remote: ReminderSettings): Boolean {
+        remoteSettingsApplied += remote
+        settings = remote
+        return true
+    }
+
+    override suspend fun clearSettingsPending() {
+        settingsPendingCleared = true
+        settings = settings.copy(pendingSync = false)
     }
 }
 

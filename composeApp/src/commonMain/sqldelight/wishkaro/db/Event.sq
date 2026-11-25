@@ -79,3 +79,11 @@ UPDATE event SET updated_at = ?, pending_sync = 1 WHERE id = ?;
 
 deleteAll:
 DELETE FROM event;
+
+-- Events this device has created or edited and the server has never acknowledged.
+--
+-- The local-alarm fallback (FR-REM-10) arms only for these: the moment an event reaches the
+-- server the plan governs it, and a fallback firing at the global hour would otherwise claim
+-- the dedupe key and suppress the server's correctly-scheduled reminder.
+selectUnsynced:
+SELECT * FROM event WHERE pending_sync = 1 AND deleted_at IS NULL AND is_muted = 0;

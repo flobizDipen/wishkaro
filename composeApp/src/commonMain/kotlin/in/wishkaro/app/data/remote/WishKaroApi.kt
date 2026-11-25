@@ -88,6 +88,14 @@ class WishKaroApi(
             client.post("$baseUrl/v1/reminders/test") { header("Authorization", "Bearer $token") }
         }.decode()
 
+    suspend fun fetchPlan(days: Int = 60): PlanResponse =
+        authed { token ->
+            client.get("$baseUrl/v1/reminders/plan") {
+                header("Authorization", "Bearer $token")
+                parameter("days", days)
+            }
+        }.decode()
+
     override suspend fun reportDelivery(body: DeliveryReportRequest): DeliveryReportResponse =
         authed { token ->
             client.post("$baseUrl/v1/reminders/delivery") {

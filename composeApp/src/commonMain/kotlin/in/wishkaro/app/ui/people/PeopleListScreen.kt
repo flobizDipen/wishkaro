@@ -57,7 +57,7 @@ fun PeopleListScreen(
     onClearFilter: () -> Unit,
     onOpenDeleted: () -> Unit,
     onRefresh: () -> Unit,
-    onTestReminder: () -> Unit,
+    onOpenSettings: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -125,9 +125,12 @@ fun PeopleListScreen(
                 if (filter.isActive) {
                     TextButton(onClick = onClearFilter) { Text("Clear filters") }
                 } else {
-                    // FR-REM-07. Still on the list screen because there is no Settings yet.
-                    TextButton(onClick = onTestReminder, enabled = !busy) {
-                        Text("Send me a test reminder in 2 minutes")
+                    // The self-test moved to Settings in M2, where it belongs — it now
+                    // reports whether the reminder actually arrived rather than firing and
+                    // forgetting, and it sits next to the battery helper that fixes the case
+                    // where it does not (FR-REM-06, FR-REM-07).
+                    TextButton(onClick = onOpenSettings, enabled = !busy) {
+                        Text("Settings")
                     }
                 }
                 TextButton(onClick = onOpenDeleted) { Text("Recently removed") }

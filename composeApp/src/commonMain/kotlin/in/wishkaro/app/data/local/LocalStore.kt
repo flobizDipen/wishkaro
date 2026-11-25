@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import `in`.wishkaro.app.domain.ReminderSettings
 import kotlinx.coroutines.withContext
 import kotlin.time.Instant
 import wishkaro.db.WishKaroDb
@@ -72,6 +73,8 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
     private val sync = db.syncStateQueries
     private val seen = db.seenReminderQueries
     private val delivery = db.deliveryReportQueries
+    private val settings = db.userSettingsQueries
+    private val scheduled = db.scheduledReminderQueries
 
     // -----------------------------------------------------------------------------------
     // Reads
@@ -513,6 +516,156 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
         if (keys.isNotEmpty()) delivery.clearPending(keys)
     }
 
+    // -----------------------------------------------------------------------------------
+    // Reminder settings (FR-REM-03, FR-REM-08, FR-REM-09)
+    // -----------------------------------------------------------------------------------
+
+    override suspend fun reminderSettings(): ReminderSettings = withContext(Dispatchers.Default) {
+        settings.select().executeAsOne().toDomain()
+    }
+
+    /** A local edit. Enters the outbox; the server takes it only if it is strictly newer. */
+    suspend fun saveSettingsLocally(value: ReminderSettings, nowIso: String) =
+        withContext(Dispatchers.Default) {
+            settings.saveLocal(
+                reminder_hour = value.reminderHour.toLong(),
+                ladder_d7 = if (value.ladderD7) 1L else 0L,
+                ladder_d1 = if (value.ladderD1) 1L else 0L,
+                ladder_d0 = if (value.ladderD0) 1L else 0L,
+                quiet_hours_start = value.quietHoursStart?.toLong(),
+                quiet_hours_end = value.quietHoursEnd?.toLong(),
+                digest_enabled = if (value.digestEnabled) 1L else 0L,
+                digest_hour = value.digestHour.toLong(),
+                updated_at = nowIso,
+            )
+        }
+
+    /**
+     * The server's copy, applied only when it is newer than ours.
+     *
+     * String comparison on an ISO-8601 instant: both sides emit UTC with a `Z` suffix and
+     * millisecond precision, so lexical order is chronological order. The same comparison
+     * the sync engine already makes for people and events.
+     */
+    override suspend fun applyRemoteSettings(remote: ReminderSettings): Boolean =
+        withContext(Dispatchers.Default) {
+            db.transactionWithResult {
+                val local = settings.select().executeAsOne().toDomain()
+                if (local.pendingSync && local.updatedAt > remote.updatedAt) {
+                    false
+                } else {
+                    settings.applyRemote(
+                        reminder_hour = remote.reminderHour.toLong(),
+                        ladder_d7 = if (remote.ladderD7) 1L else 0L,
+                        ladder_d1 = if (remote.ladderD1) 1L else 0L,
+                        ladder_d0 = if (remote.ladderD0) 1L else 0L,
+                        quiet_hours_start = remote.quietHoursStart?.toLong(),
+                        quiet_hours_end = remote.quietHoursEnd?.toLong(),
+                        digest_enabled = if (remote.digestEnabled) 1L else 0L,
+                        digest_hour = remote.digestHour.toLong(),
+                        timezone = remote.timezone,
+                        updated_at = remote.updatedAt,
+                    )
+                    true
+                }
+            }
+        }
+
+    override suspend fun clearSettingsPending(): Unit = withContext(Dispatchers.Default) {
+        settings.clearPending()
+    }
+
+    // -----------------------------------------------------------------------------------
+    // The reminder plan (FR-REM-02)
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Replaces the server-authored part of the plan.
+     *
+     * Rows the new plan does not mention are deleted, because the server has decided they
+     * should not fire — an event muted, a person deleted, a date moved to a different key.
+     * LOCAL_FALLBACK rows are left alone: they belong to events the server has never seen,
+     * so its silence about them says nothing.
+     */
+    suspend fun replacePlan(entries: List<ScheduledReminderRow>): PlanDiff =
+        withContext(Dispatchers.Default) {
+            db.transactionWithResult {
+                val keys = entries.map { it.dedupeKey }
+                val removed = scheduled.staleFromPlan(keys.ifEmpty { listOf("") })
+                    .executeAsList()
+                    .map { it.dedupe_key }
+                removed.forEach { scheduled.delete(it) }
+                entries.forEach { e ->
+                    scheduled.upsert(
+                        dedupe_key = e.dedupeKey,
+                        scheduled_at = e.scheduledAt,
+                        offset_rung = e.offset,
+                        title = e.title,
+                        body = e.body,
+                        person_id = e.personId,
+                        person_name = e.personName,
+                        event_type = e.eventType,
+                        sentiment = e.sentiment,
+                        deep_link = e.deepLink,
+                        source = "PLAN",
+                        dedupe_key_ = e.dedupeKey,
+                    )
+                }
+                PlanDiff(added = keys, removed = removed)
+            }
+        }
+
+    suspend fun scheduledReminder(dedupeKey: String): wishkaro.db.Scheduled_reminder? =
+        withContext(Dispatchers.Default) { scheduled.byKey(dedupeKey).executeAsOneOrNull() }
+
+    suspend fun upcomingReminders(fromIso: String, limit: Long = 200): List<wishkaro.db.Scheduled_reminder> =
+        withContext(Dispatchers.Default) { scheduled.upcoming(fromIso, limit).executeAsList() }
+
+    suspend fun overdueReminders(nowIso: String): List<wishkaro.db.Scheduled_reminder> =
+        withContext(Dispatchers.Default) { scheduled.overdue(nowIso).executeAsList() }
+
+    suspend fun markReminderFired(dedupeKey: String, nowIso: String) =
+        withContext(Dispatchers.Default) { scheduled.markFired(nowIso, dedupeKey) }
+
+    suspend fun upsertLocalFallback(e: ScheduledReminderRow) = withContext(Dispatchers.Default) {
+        scheduled.upsert(
+            dedupe_key = e.dedupeKey,
+            scheduled_at = e.scheduledAt,
+            offset_rung = e.offset,
+            title = e.title,
+            body = e.body,
+            person_id = e.personId,
+            person_name = e.personName,
+            event_type = e.eventType,
+            sentiment = e.sentiment,
+            deep_link = e.deepLink,
+            source = "LOCAL_FALLBACK",
+            dedupe_key_ = e.dedupeKey,
+        )
+    }
+
+    /** Events the server has never acknowledged — the only ones a local fallback arms for. */
+    suspend fun unsyncedEvents(): List<wishkaro.db.Event> =
+        withContext(Dispatchers.Default) { events.selectUnsynced().executeAsList() }
+
+    suspend fun localFallbacks(): List<wishkaro.db.Scheduled_reminder> =
+        withContext(Dispatchers.Default) { scheduled.localFallbacks().executeAsList() }
+
+    suspend fun deleteScheduled(dedupeKey: String) =
+        withContext(Dispatchers.Default) { scheduled.delete(dedupeKey) }
+
+    /**
+     * Whether this device has already drawn a notification for this key.
+     *
+     * The self-test's evidence (FR-REM-07). `seen_reminder` is the one place that knows for
+     * certain whether a notification reached this handset — the server knows only that it
+     * handed a push to FCM, which is exactly the step that fails on the phones this feature
+     * exists for.
+     */
+    suspend fun wasReminderSeen(dedupeKey: String): Boolean = withContext(Dispatchers.Default) {
+        seen.wasSeen(dedupeKey).executeAsOne()
+    }
+
     /** Sign-out wipes local data (FR-AUTH-07). */
     suspend fun wipe() = withContext(Dispatchers.Default) {
         db.transaction {
@@ -521,6 +674,8 @@ class LocalStore(private val db: WishKaroDb) : SyncStore {
             people.deleteAll()
             seen.deleteAll()
             delivery.deleteAll()
+            scheduled.deleteAll()
+            settings.reset()
             sync.reset()
         }
     }
@@ -663,4 +818,35 @@ data class RemoteTrait(
     val source: String,
     val updatedAt: String,
     val deletedAt: String?,
+)
+
+/** One row of the plan, as the server handed it down. */
+data class ScheduledReminderRow(
+    val dedupeKey: String,
+    val scheduledAt: String,
+    val offset: String,
+    val title: String,
+    val body: String,
+    val personId: String? = null,
+    val personName: String? = null,
+    val eventType: String? = null,
+    val sentiment: String? = null,
+    val deepLink: String? = null,
+)
+
+/** What a plan refresh changed, so the caller knows which alarms to arm and cancel. */
+data class PlanDiff(val added: List<String>, val removed: List<String>)
+
+private fun wishkaro.db.User_settings.toDomain() = ReminderSettings(
+    reminderHour = reminder_hour.toInt(),
+    ladderD7 = ladder_d7 == 1L,
+    ladderD1 = ladder_d1 == 1L,
+    ladderD0 = ladder_d0 == 1L,
+    quietHoursStart = quiet_hours_start?.toInt(),
+    quietHoursEnd = quiet_hours_end?.toInt(),
+    digestEnabled = digest_enabled == 1L,
+    digestHour = digest_hour.toInt(),
+    timezone = timezone,
+    updatedAt = updated_at,
+    pendingSync = pending_sync == 1L,
 )
