@@ -8,7 +8,8 @@ import {
   yearsAt,
   type CivilDate,
 } from '../../common/date/occurrence';
-import { sentimentFor } from '../events/event-rules';
+import { marksPersonDeceased, sentimentFor } from '../events/derived';
+import { PersonDerivationService } from './person-derivation.service';
 import type { EventType } from '@prisma/client';
 
 export interface PersonEventView {
@@ -46,6 +47,8 @@ export interface CreatePersonInput {
         day: number;
         month: number;
         year?: number | null | undefined;
+        /** CUSTOM events only (FR-EVT-06). */
+        label?: string | null | undefined;
       }
     | undefined;
 }
@@ -55,6 +58,7 @@ export class PeopleService {
   constructor(
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
+    private readonly derivation: PersonDerivationService,
   ) {}
 
   async list(userId: string, now: Date = new Date()): Promise<PersonView[]> {
@@ -75,7 +79,8 @@ export class PeopleService {
       where: { id: personId, userId, deletedAt: null },
       include: { events: { where: { deletedAt: null } } },
     });
-    if (!person) throw new NotFoundException({ code: 'PERSON_NOT_FOUND', message: 'No such person' });
+    if (!person)
+      throw new NotFoundException({ code: 'PERSON_NOT_FOUND', message: 'No such person' });
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     return this.toView(person, user?.timezone ?? this.env.DEFAULT_TIMEZONE, now);
   }
@@ -93,19 +98,25 @@ export class PeopleService {
       });
 
       if (input.event) {
+        // A person created with a DEATH_ANNIVERSARY is deceased from their first row — the
+        // event must never exist for even one transaction with a celebratory sentiment.
+        const deceased = marksPersonDeceased(input.event.type);
         await tx.event.create({
           data: {
             ...(input.event.id ? { id: input.event.id } : {}),
             personId: created.id,
             userId,
             type: input.event.type,
-            sentiment: sentimentFor(input.event.type),
+            sentiment: sentimentFor(input.event.type, deceased),
             day: input.event.day,
             month: input.event.month,
             year: input.event.year ?? null,
+            label: input.event.label ?? null,
           },
         });
       }
+
+      await this.derivation.recompute(created.id, tx);
 
       return tx.person.findUniqueOrThrow({
         where: { id: created.id },

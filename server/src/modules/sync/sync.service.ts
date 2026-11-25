@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { sentimentFor } from '../events/event-rules';
+import { marksPersonDeceased, sentimentFor } from '../events/derived';
+import { PersonDerivationService } from '../people/person-derivation.service';
 import { advance, cursorWhere, decodeCursor, encodeCursor, type SyncCursor } from './sync-cursor';
 import type { EventUpsert, PersonUpsert, SyncPush } from './sync.schemas';
 
@@ -45,13 +46,20 @@ export interface SyncPushResult {
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly derivation: PersonDerivationService,
+  ) {}
 
   /**
    * Delta pull. Tombstones are returned like any other record — a client that was offline
    * when something was deleted learns about it here, not by noticing an absence.
    */
-  async pull(userId: string, encodedCursor: string | undefined, limit: number): Promise<SyncPullResult> {
+  async pull(
+    userId: string,
+    encodedCursor: string | undefined,
+    limit: number,
+  ): Promise<SyncPullResult> {
     const cursor = decodeCursor(encodedCursor);
 
     const [people, events] = await Promise.all([
@@ -181,13 +189,18 @@ export class SyncService {
     if (existing && existing.userId !== userId) return 'NOT_OWNED';
     if (existing && existing.updatedAt.getTime() >= updatedAt.getTime()) return 'STALE';
 
+    // Derived, never taken from the client (FR-EVT-01a). The write schema is .strict(), so
+    // a client that sends `sentiment` is rejected rather than having it quietly dropped.
+    const deceased = person.isDeceased || marksPersonDeceased(input.type);
+
     const data = {
       type: input.type,
-      // Derived, never taken from the client (FR-EVT-01a).
-      sentiment: sentimentFor(input.type),
+      sentiment: sentimentFor(input.type, deceased),
       day: input.day,
       month: input.month,
       year: input.year ?? null,
+      label: input.label ?? null,
+      isMuted: input.isMuted ?? false,
       updatedAt,
       deletedAt,
     };
@@ -199,6 +212,11 @@ export class SyncService {
         data: { id: input.id, personId: input.personId, userId, ...data },
       });
     }
+
+    // A batch that creates a death anniversary must also flip the person and re-derive the
+    // sentiment of their other events, in the same request — not on some later write.
+    await this.derivation.recompute(input.personId);
+
     return 'APPLIED';
   }
 }

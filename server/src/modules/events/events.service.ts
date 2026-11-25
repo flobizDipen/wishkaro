@@ -10,7 +10,8 @@ import {
   yearsAt,
   type CivilDate,
 } from '../../common/date/occurrence';
-import { sentimentFor } from './event-rules';
+import { marksPersonDeceased, sentimentFor } from './derived';
+import { PersonDerivationService } from '../people/person-derivation.service';
 
 export interface UpcomingEventView {
   eventId: string;
@@ -30,6 +31,8 @@ export interface CreateEventInput {
   day: number;
   month: number;
   year?: number | null | undefined;
+  /** CUSTOM events only (FR-EVT-06); the schema rejects it on any other type. */
+  label?: string | null | undefined;
 }
 
 @Injectable()
@@ -39,6 +42,7 @@ export class EventsService {
   constructor(
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
+    private readonly derivation: PersonDerivationService,
   ) {}
 
   /**
@@ -75,17 +79,19 @@ export class EventsService {
           );
           return [];
         }
-        return [{
-          eventId: e.id,
-          personId: e.person.id,
-          personName: e.person.displayName,
-          type: e.type,
-          sentiment: e.sentiment,
-          occursOn: formatCivil(occ.occursOn),
-          daysUntil: daysUntil(occ.occursOn, zone, now),
-          turningAge: yearsAt({ day: e.day, month: e.month, year: e.year }, occ.occurrenceYear),
-          _civil: occ.occursOn,
-        }];
+        return [
+          {
+            eventId: e.id,
+            personId: e.person.id,
+            personName: e.person.displayName,
+            type: e.type,
+            sentiment: e.sentiment,
+            occursOn: formatCivil(occ.occursOn),
+            daysUntil: daysUntil(occ.occursOn, zone, now),
+            turningAge: yearsAt({ day: e.day, month: e.month, year: e.year }, occ.occurrenceYear),
+            _civil: occ.occursOn,
+          },
+        ];
       })
       .filter((row) => {
         if (options.from && compareCivil(row._civil, options.from) < 0) return false;
@@ -100,7 +106,12 @@ export class EventsService {
     const person = await this.prisma.person.findFirst({
       where: { id: input.personId, userId, deletedAt: null },
     });
-    if (!person) throw new NotFoundException({ code: 'PERSON_NOT_FOUND', message: 'No such person' });
+    if (!person)
+      throw new NotFoundException({ code: 'PERSON_NOT_FOUND', message: 'No such person' });
+
+    // Creating a death anniversary makes the person deceased (FR-EVT-04), and that is true
+    // of the event being written right now — not only from the next write onwards.
+    const deceased = person.isDeceased || marksPersonDeceased(input.type);
 
     const event = await this.prisma.event.create({
       data: {
@@ -108,12 +119,19 @@ export class EventsService {
         personId: input.personId,
         userId,
         type: input.type,
-        sentiment: sentimentFor(input.type),
+        sentiment: sentimentFor(input.type, deceased),
         day: input.day,
         month: input.month,
         year: input.year ?? null,
+        label: input.label ?? null,
       },
     });
+
+    // Re-derives is_deceased, is_minor, the completeness score and the sentiment of every
+    // OTHER event this person owns — a death anniversary added today changes the tone of a
+    // birthday written months ago.
+    await this.derivation.recompute(input.personId);
+
     return { id: event.id };
   }
 
