@@ -74,6 +74,7 @@ data class SyncPersonDto(
     val isDeceased: Boolean = false,
     val isMinor: Boolean = false,
     val completenessScore: Int = 0,
+    val completenessSuggestions: List<String> = emptyList(),
     val updatedAt: String,
     val deletedAt: String? = null,
 )

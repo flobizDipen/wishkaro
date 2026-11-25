@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.BirthdayMath
+import `in`.wishkaro.app.domain.CompletenessField
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonEvent
 import `in`.wishkaro.app.domain.Sentiment
@@ -153,7 +153,7 @@ fun PersonDetailScreen(
 
             // ---- profile (FR-PPL-04/05) ----
             SectionHeader("Profile")
-            CompletenessBar(person)
+            CompletenessBar(person, onImprove = onEdit)
             ProfileLine("Gender", person.gender)
             ProfileLine("Phone", person.phone)
             ProfileLine("Email", person.email)
@@ -253,21 +253,59 @@ private fun EventRow(
     }
 }
 
+/**
+ * The score and the one-tap improve affordance (FR-PPL-05).
+ *
+ * The field it names comes from the SERVER's ordered list, mirrored into SQLite. The client
+ * supplies the wording and nothing else — duplicating the weight order here is exactly the
+ * "weights in one place" rule BUILD_PROMPT_M1 sets.
+ */
 @Composable
-private fun CompletenessBar(person: Person) {
+private fun CompletenessBar(person: Person, onImprove: () -> Unit) {
     Column(Modifier.padding(vertical = 8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Profile ${person.completenessScore}% complete", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Profile ${person.completenessScore}% complete",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
         LinearProgressIndicator(
             progress = { person.completenessScore / 100f },
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
+
+        val next = person.nextImprovement
+        when {
+            // FR-PPL-09: a minor is excluded from profiling, so nothing is ever asked.
+            person.isMinor -> Unit
+            next == null -> Text(
+                "Nothing left to add.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            // Hobbies, likes, dislikes and the budget band are chips further down this very
+            // screen, so pointing at the editor would be wrong — it does not hold them.
+            next in TRAIT_FIELDS -> Text(
+                "Add ${next.prompt} below to improve this profile.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            else -> TextButton(onClick = onImprove, modifier = Modifier.padding(top = 2.dp)) {
+                Text("Add ${next.prompt}")
+            }
+        }
     }
 }
+
+private val TRAIT_FIELDS = setOf(
+    CompletenessField.HOBBY,
+    CompletenessField.LIKE,
+    CompletenessField.DISLIKE,
+    CompletenessField.BUDGET_BAND,
+)
 
 @Composable
 private fun ProfileLine(label: String, value: String?) {
@@ -317,10 +355,4 @@ private fun TraitSection(
     }
 }
 
-/** The one-tap improve affordance (FR-PPL-05), used by the list screen. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ImproveChip(person: Person, onClick: () -> Unit) {
-    if (person.isMinor || person.completenessScore >= 100) return
-    AssistChip(onClick = onClick, label = { Text("Complete ${person.displayName}'s profile") })
-}
+

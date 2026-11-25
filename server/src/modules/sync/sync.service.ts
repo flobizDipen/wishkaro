@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { defaultMutedFor, marksPersonDeceased, sentimentFor } from '../events/derived';
+import {
+  completenessSuggestions,
+  defaultMutedFor,
+  marksPersonDeceased,
+  sentimentFor,
+} from '../events/derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 import { advance, cursorWhere, decodeCursor, encodeCursor, type SyncCursor } from './sync-cursor';
 import type { EventUpsert, PersonUpsert, SyncPush, TraitUpsert } from './sync.schemas';
@@ -18,6 +23,15 @@ export interface SyncPersonDto {
   /** Derived. Sent down so the client can render it; refused on the way up. */
   isMinor: boolean;
   completenessScore: number;
+  /**
+   * The ordered "what to add next" list behind FR-PPL-05's one-tap improve affordance,
+   * heaviest field first and empty for a minor.
+   *
+   * Sent down rather than recomputed on the client, so COMPLETENESS_WEIGHTS stays the single
+   * place the ordering is decided — the client would otherwise need its own copy of the
+   * weights, which is the duplication BUILD_PROMPT_M1 explicitly rules out.
+   */
+  completenessSuggestions: string[];
   updatedAt: string;
   deletedAt: string | null;
 }
@@ -90,6 +104,14 @@ export class SyncService {
         where: { userId, ...cursorWhere(cursor.person) },
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         take: limit,
+        // Needed to derive the suggestion list; the rows themselves go down separately.
+        include: {
+          events: {
+            where: { deletedAt: null },
+            select: { type: true, day: true, month: true, year: true },
+          },
+          traits: { where: { deletedAt: null }, select: { kind: true } },
+        },
       }),
       this.prisma.event.findMany({
         where: { userId, ...cursorWhere(cursor.event) },
@@ -122,6 +144,19 @@ export class SyncService {
         isDeceased: p.isDeceased,
         isMinor: p.isMinor,
         completenessScore: p.completenessScore,
+        completenessSuggestions: completenessSuggestions({
+          relationToOwner: p.relationToOwner,
+          gender: p.gender,
+          phone: p.phone,
+          email: p.email,
+          notes: p.notes,
+          birthday: (() => {
+            const b = p.events.find((e) => e.type === 'BIRTHDAY');
+            return b ? { day: b.day, month: b.month, year: b.year } : null;
+          })(),
+          traitKinds: p.traits.map((t) => t.kind),
+          isMinor: p.isMinor,
+        }),
         updatedAt: p.updatedAt.toISOString(),
         deletedAt: p.deletedAt?.toISOString() ?? null,
       })),

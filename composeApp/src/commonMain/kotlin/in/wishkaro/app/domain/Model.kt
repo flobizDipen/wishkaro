@@ -88,6 +88,12 @@ data class Person(
     val isDeceased: Boolean,
     val isMinor: Boolean,
     val completenessScore: Int,
+    /**
+     * The server's ordered "what to add next" list, heaviest field first and empty for a
+     * minor (FR-PPL-05). Wire names, deliberately — the client words them for display but
+     * does not decide the order.
+     */
+    val completenessSuggestions: List<String>,
     val deletedAt: String?,
     val events: List<PersonEvent>,
     val traits: List<PersonTrait>,
@@ -99,6 +105,34 @@ data class Person(
     val isSolemn: Boolean get() = isDeceased
 
     val traitsByKind: Map<TraitKind, List<PersonTrait>> get() = traits.groupBy { it.kind }
+
+    /** The single next thing worth adding, or null when there is nothing to ask for. */
+    val nextImprovement: CompletenessField?
+        get() = completenessSuggestions.firstNotNullOfOrNull { CompletenessField.from(it) }
+}
+
+/**
+ * The fields the completeness score weighs, named for display.
+ *
+ * The ORDER is the server's; this enum only supplies wording, and an unrecognised name from
+ * a newer server is dropped rather than shown raw.
+ */
+enum class CompletenessField(val wire: String, val prompt: String) {
+    RELATION("relation", "how you know them"),
+    BIRTH_YEAR("birthYear", "their birth year"),
+    GENDER("gender", "their gender"),
+    PHONE("phone", "their phone number"),
+    EMAIL("email", "their email"),
+    NOTES("notes", "a note about them"),
+    HOBBY("hobby", "their hobbies"),
+    LIKE("like", "something they like"),
+    DISLIKE("dislike", "something they dislike"),
+    BUDGET_BAND("budgetBand", "a budget band"),
+    ;
+
+    companion object {
+        fun from(wire: String): CompletenessField? = entries.firstOrNull { it.wire == wire }
+    }
 }
 
 /** A person with their next event already computed, ready to render. */

@@ -119,6 +119,7 @@ class ToneTest {
             isDeceased = true,
             isMinor = false,
             completenessScore = 0,
+            completenessSuggestions = emptyList(),
             deletedAt = null,
             events = emptyList(),
             traits = emptyList(),

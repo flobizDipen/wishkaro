@@ -123,6 +123,7 @@ class SyncEngine(
                         isDeceased = it.isDeceased,
                         isMinor = it.isMinor,
                         completenessScore = it.completenessScore,
+                        completenessSuggestions = it.completenessSuggestions,
                         updatedAt = it.updatedAt,
                         deletedAt = it.deletedAt,
                     )

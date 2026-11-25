@@ -38,6 +38,12 @@ eq "person returned"          "$(jq -r --arg p "$PID" '[.people[]|select(.id==$p
 eq "profile fields round-trip" "$(jq -r --arg p "$PID" '.people[]|select(.id==$p).notes' <<<"$P")" "allergic to peanuts"
 eq "completeness came down derived" \
    "$([ "$(jq -r --arg p "$PID" '.people[]|select(.id==$p).completenessScore' <<<"$P")" -gt 0 ] && echo yes || echo no)" "yes"
+# FR-PPL-05's one-tap improve affordance: the ORDER is the server's, so the client is handed
+# the list rather than recomputing it from a second copy of COMPLETENESS_WEIGHTS.
+eq "the improve list came down, heaviest field first" \
+   "$(jq -r --arg p "$PID" '.people[]|select(.id==$p).completenessSuggestions[0]' <<<"$P")" "like"
+eq "fields already filled are not suggested" \
+   "$(jq -r --arg p "$PID" '[.people[]|select(.id==$p).completenessSuggestions[]|select(.=="notes" or .=="hobby" or .=="budgetBand")]|length' <<<"$P")" "0"
 eq "both traits returned"     "$(jq -r --arg p "$PID" '[.traits[]|select(.personId==$p)]|length' <<<"$P")" "2"
 eq "trait source is USER"     "$(jq -r --arg p "$PID" '[.traits[]|select(.personId==$p)][0].source' <<<"$P")" "USER"
 eq "event sentiment derived"  "$(jq -r --arg e "$EID" '.events[]|select(.id==$e).sentiment' <<<"$P")" "CELEBRATORY"

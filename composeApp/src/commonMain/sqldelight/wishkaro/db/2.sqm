@@ -1,0 +1,11 @@
+-- Schema version 2 -> 3 (M1: the one-tap improve affordance).
+--
+-- The server already derives the ordered list of fields worth adding next — that is where
+-- COMPLETENESS_WEIGHTS lives, and duplicating the ordering on the client is exactly the
+-- "weights in one place" rule BUILD_PROMPT_M1 sets. So the list is mirrored, like the score
+-- beside it, and the client only decides how to word it.
+--
+-- Empty string rather than NULL as the default: "no suggestions" and "not synced yet" are
+-- the same thing to the UI, and a nullable column would make every read a null check for a
+-- distinction nothing acts on.
+ALTER TABLE person ADD COLUMN completeness_suggestions TEXT NOT NULL DEFAULT '';

@@ -27,7 +27,11 @@ CREATE TABLE person (
     -- these and never pushes them; they arrive on a sync pull like any other column.
     is_deceased       INTEGER NOT NULL DEFAULT 0,
     is_minor          INTEGER NOT NULL DEFAULT 0,
-    completeness_score INTEGER NOT NULL DEFAULT 0
+    completeness_score INTEGER NOT NULL DEFAULT 0,
+    -- ---- added in M1 (schema version 3) ----
+    -- The server's ordered "what to add next" list, comma-separated. Mirrored rather than
+    -- recomputed so COMPLETENESS_WEIGHTS stays the only place the ordering is decided.
+    completeness_suggestions TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX person_pending_sync ON person(pending_sync);
@@ -52,9 +56,9 @@ insertOrReplace:
 INSERT OR REPLACE INTO person(
     id, display_name, relation_to_owner, is_self,
     photo_key, gender, phone, email, notes,
-    is_deceased, is_minor, completeness_score,
+    is_deceased, is_minor, completeness_score, completeness_suggestions,
     updated_at, deleted_at, pending_sync
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Search and filter (FR-PPL-10). Done in SQL rather than in Kotlin so it still works with
 -- the radio off and stays O(index) at 1,000 people.

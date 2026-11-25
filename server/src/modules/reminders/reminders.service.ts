@@ -13,6 +13,7 @@ import {
 } from '../../common/date/occurrence';
 import { buildReminderCopy, buildTestCopy } from './reminder-copy';
 import { milestoneLabelFor } from '../events/derived';
+import { PersonDerivationService } from '../people/person-derivation.service';
 
 /**
  * A reminder whose moment has already passed by more than this is recorded as SUPPRESSED
@@ -47,6 +48,7 @@ export class RemindersService {
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly prisma: PrismaService,
     private readonly firebase: FirebaseService,
+    private readonly derivation: PersonDerivationService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -97,6 +99,33 @@ export class RemindersService {
         // One bad row must not stop the scheduler for every other user.
         this.logger.error(
           `Failed to materialise event ${event.id}: ${cause instanceof Error ? cause.message : cause}`,
+        );
+      }
+    }
+
+    /**
+     * Re-derive every person this pass touched.
+     *
+     * Not an optimisation — a correctness requirement, because two of the derived values
+     * change WITHOUT a write:
+     *
+     *   - `is_minor` flips on the person's eighteenth birthday (FR-PPL-09). Derived only at
+     *     write time, a child flagged at thirteen stays flagged until somebody happens to
+     *     edit them, and the profiling exclusions stay on for years after they should lift.
+     *   - `completeness_score` was introduced in M1, so every row written before it exists
+     *     reads 0 until it is next touched. That is visible in the app as a profile which
+     *     claims to be 0% complete while showing a relation and a birth year.
+     *
+     * The materialiser already walks every live event on a schedule, which makes it the one
+     * place that notices the passage of time at all.
+     */
+    const touched = new Set(events.map((e) => e.personId));
+    for (const personId of touched) {
+      try {
+        await this.derivation.recompute(personId, this.prisma, now);
+      } catch (cause) {
+        this.logger.error(
+          `Failed to re-derive person ${personId}: ${cause instanceof Error ? cause.message : cause}`,
         );
       }
     }
