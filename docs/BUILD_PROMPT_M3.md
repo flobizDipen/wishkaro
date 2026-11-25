@@ -19,6 +19,11 @@ digest, and delivery reporting. Read docs/REQUIREMENTS.md for product context, a
 docs/M0_PLAN.md, docs/M1_PLAN.md and docs/M2_PLAN.md for the decisions those milestones
 locked in. Build ONLY what this prompt specifies.
 
+Read docs/MILESTONE_CHECKLIST.md as well, and work to it. It is the standing process for this
+project, and every item in it was bought by a specific bug in M0, M1 or M2 — the milestone
+that paid for each one is named beside it. Section E in particular is a procedure, not advice:
+it exists because it was skipped once and a blind tap sequence went into the wrong app.
+
 ## What M3 is
 
 Getting a user's existing people INTO the app without them typing. When M3 is done, this must
@@ -248,6 +253,8 @@ Everything from docs/BUILD_PROMPT_M0.md, M1 and M2 still applies. In addition:
   write the reasoning down.
 - Conventional commits, small and reviewable. Branch off main, PR at the end. main is
   merge-only.
+- docs/MILESTONE_CHECKLIST.md sections C, D, E and F apply to this milestone as written. If
+  you decide an item does not apply here, say which and why rather than passing over it.
 
 ## How to work
 
