@@ -52,6 +52,33 @@ export class PersonDerivationService {
     // refuses that edit while a death anniversary is still live.
     const hasDeathAnniversary = person.events.some((e) => e.type === 'DEATH_ANNIVERSARY');
     const isDeceased = person.isDeceased || hasDeathAnniversary;
+    const becameDeceased = !person.isDeceased && isDeceased;
+
+    // --- the remembrance birthday opt-in (FR-EVT-05) -----------------------------------
+    //
+    // "A deceased person's birthday reminder is disabled by default, with an opt-in
+    // remembrance birthday that behaves as SOLEMN."
+    //
+    // Expressed as a mute rather than a new column. `is_muted` already means exactly
+    // "this event exists but does not generate reminders", the materialiser already honours
+    // it, and un-muting is then literally the opt-in — at which point the reminder fires
+    // with SOLEMN copy, because sentiment is derived from is_deceased rather than stored.
+    //
+    // Only on the TRANSITION, never on every recompute: otherwise opting in would be undone
+    // by the next write that touched this person.
+    if (becameDeceased) {
+      const birthdays = person.events.filter((e) => e.type === 'BIRTHDAY' && !e.isMuted);
+      for (const birthday of birthdays) {
+        await db.event.update({
+          where: { id: birthday.id },
+          data: { isMuted: true, updatedAt: now },
+        });
+        this.logger.log(
+          `Muted birthday ${birthday.id}: person ${personId} is now deceased. ` +
+            'Un-muting it opts in to a remembrance birthday (FR-EVT-05).',
+        );
+      }
+    }
 
     // --- is_minor (FR-PPL-09) ----------------------------------------------------------
     const birthdayEvent = person.events.find((e) => e.type === 'BIRTHDAY');

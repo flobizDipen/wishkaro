@@ -12,6 +12,7 @@ import {
   yearsAt,
 } from '../../common/date/occurrence';
 import { buildReminderCopy, buildTestCopy } from './reminder-copy';
+import { milestoneLabelFor } from '../events/derived';
 
 /**
  * A reminder whose moment has already passed by more than this is recorded as SUPPRESSED
@@ -68,14 +69,24 @@ export class RemindersService {
       remindersSuppressed: 0,
     };
 
+    // Suppress first, then schedule. A reminder whose event was muted or deleted since the
+    // last tick must stop even if nothing new needs materialising.
+    summary.remindersSuppressed += await this.suppressOrphanedPending(options.userId);
+
     const events = await this.prisma.event.findMany({
       where: {
         deletedAt: null,
+        // Muted events are not scheduled at all (FR-EVT-05's remembrance-birthday opt-out is
+        // expressed as a mute, so this one condition covers both cases).
+        isMuted: false,
         ...(options.userId ? { userId: options.userId } : {}),
         person: { deletedAt: null },
         user: { deletedAt: null },
       },
-      include: { user: { select: { id: true, timezone: true } }, person: { select: { displayName: true } } },
+      include: {
+        user: { select: { id: true, timezone: true } },
+        person: { select: { displayName: true, isDeceased: true } },
+      },
     });
 
     for (const event of events) {
@@ -95,7 +106,10 @@ export class RemindersService {
 
   private async materialiseOne(
     event: Prisma.EventGetPayload<{
-      include: { user: { select: { id: true; timezone: true } }; person: { select: { displayName: true } } };
+      include: {
+        user: { select: { id: true; timezone: true } };
+        person: { select: { displayName: true; isDeceased: true } };
+      };
     }>,
     now: Date,
     summary: MaterialiseSummary,
@@ -103,15 +117,23 @@ export class RemindersService {
     const zone = event.user.timezone;
     const occ = nextOccurrence({ day: event.day, month: event.month, year: event.year }, zone, now);
 
+    // Derived here and stored, so the send worker does not recompute it per push (FR-EVT-03).
+    const milestoneLabel = milestoneLabelFor(
+      event.type,
+      yearsAt({ day: event.day, month: event.month, year: event.year }, occ.occurrenceYear),
+      event.person.isDeceased,
+    );
+
     const occurrence = await this.prisma.eventOccurrence.upsert({
       where: { eventId_occurrenceYear: { eventId: event.id, occurrenceYear: occ.occurrenceYear } },
       create: {
         eventId: event.id,
         occurrenceYear: occ.occurrenceYear,
         occursOn: dbDateFromCivil(occ.occursOn),
+        milestoneLabel,
       },
       // An edited event date must move the existing row, not orphan it.
-      update: { occursOn: dbDateFromCivil(occ.occursOn), computedAt: new Date() },
+      update: { occursOn: dbDateFromCivil(occ.occursOn), milestoneLabel, computedAt: new Date() },
     });
     summary.occurrencesWritten += 1;
 
@@ -143,13 +165,88 @@ export class RemindersService {
     }
 
     // Only a reminder that has not gone out yet can move.
-    if (existing.status === 'PENDING' && existing.scheduledAtUtc.getTime() !== scheduledAtUtc.getTime()) {
+    if (
+      existing.status === 'PENDING' &&
+      existing.scheduledAtUtc.getTime() !== scheduledAtUtc.getTime()
+    ) {
       await this.prisma.reminder.update({
         where: { id: existing.id },
         data: { scheduledAtUtc, status: tooLate ? 'SUPPRESSED' : 'PENDING' },
       });
       summary.remindersRescheduled += 1;
     }
+  }
+
+  /**
+   * Suppresses every PENDING reminder that should no longer fire.
+   *
+   * FR-PPL-08 requires a delete to stop reminders **immediately**, not at the end of the
+   * 30-day restore window, and `is_muted` has to behave the same way or muting an event is a
+   * promise the app does not keep until the next materialiser tick. The materialiser runs
+   * every ten minutes; a birthday muted at 08:55 would otherwise still arrive at 09:00.
+   *
+   * Expressed as a reconciliation over current state rather than as a list of ids passed in
+   * from the caller. That way a write path added later cannot forget to call it with the
+   * right arguments — the worst it can do is not call it at all, and then the next tick
+   * catches up.
+   */
+  async suppressOrphanedPending(userId?: string): Promise<number> {
+    const result = await this.prisma.reminder.updateMany({
+      where: {
+        status: 'PENDING',
+        ...(userId ? { userId } : {}),
+        eventOccurrenceId: { not: null },
+        eventOccurrence: {
+          event: {
+            OR: [
+              { deletedAt: { not: null } },
+              { isMuted: true },
+              { person: { deletedAt: { not: null } } },
+            ],
+          },
+        },
+      },
+      data: { status: 'SUPPRESSED' },
+    });
+
+    if (result.count > 0) {
+      this.logger.log(
+        `Suppressed ${result.count} pending reminder(s) for deleted or muted events` +
+          (userId ? ` (user ${userId})` : ''),
+      );
+    }
+    return result.count;
+  }
+
+  /**
+   * Returns reminders to PENDING after a restore or an un-mute, so long as their moment has
+   * not already passed. A restored person whose birthday is next March gets their reminder
+   * back; one whose birthday was last week does not suddenly receive a late notification.
+   */
+  async revivePending(userId: string, now: Date = new Date()): Promise<number> {
+    const candidates = await this.prisma.reminder.findMany({
+      where: {
+        userId,
+        status: 'SUPPRESSED',
+        sentAt: null,
+        eventOccurrence: {
+          event: { deletedAt: null, isMuted: false, person: { deletedAt: null } },
+        },
+      },
+      select: { id: true, scheduledAtUtc: true },
+    });
+
+    const revivable = candidates
+      .filter((r) => r.scheduledAtUtc.getTime() >= now.getTime() - LATE_GRACE_MS)
+      .map((r) => r.id);
+    if (revivable.length === 0) return 0;
+
+    const result = await this.prisma.reminder.updateMany({
+      where: { id: { in: revivable } },
+      data: { status: 'PENDING' },
+    });
+    this.logger.log(`Revived ${result.count} reminder(s) for user ${userId}`);
+    return result.count;
   }
 
   /**
@@ -176,7 +273,11 @@ export class RemindersService {
           ? civilFromDbDate(reminder.eventOccurrence.overrideDate)
           : null,
       );
-      const scheduledAtUtc = reminderInstantUtc(effective, this.env.DEFAULT_REMINDER_HOUR, user.timezone);
+      const scheduledAtUtc = reminderInstantUtc(
+        effective,
+        this.env.DEFAULT_REMINDER_HOUR,
+        user.timezone,
+      );
       if (scheduledAtUtc.getTime() === reminder.scheduledAtUtc.getTime()) continue;
 
       const tooLate = scheduledAtUtc.getTime() < now.getTime() - LATE_GRACE_MS;
@@ -188,7 +289,9 @@ export class RemindersService {
     }
 
     if (moved > 0) {
-      this.logger.log(`Rescheduled ${moved} pending reminder(s) for user ${userId} → ${user.timezone}`);
+      this.logger.log(
+        `Rescheduled ${moved} pending reminder(s) for user ${userId} → ${user.timezone}`,
+      );
     }
     return moved;
   }
@@ -198,7 +301,9 @@ export class RemindersService {
   // -------------------------------------------------------------------------
 
   /** Queues a reminder two minutes out. The fastest honest proof that the chain works. */
-  async queueTestReminder(userId: string): Promise<{ reminderId: string; scheduledAtUtc: Date; dedupeKey: string }> {
+  async queueTestReminder(
+    userId: string,
+  ): Promise<{ reminderId: string; scheduledAtUtc: Date; dedupeKey: string }> {
     const scheduledAtUtc = new Date(Date.now() + TEST_REMINDER_DELAY_MS);
     const dedupeKey = `test:${userId}:${scheduledAtUtc.getTime()}`;
 
@@ -269,7 +374,9 @@ export class RemindersService {
     return summary;
   }
 
-  private async deliver(reminderId: string): Promise<{ delivered: boolean; tokensRemoved: number }> {
+  private async deliver(
+    reminderId: string,
+  ): Promise<{ delivered: boolean; tokensRemoved: number }> {
     const reminder = await this.prisma.reminder.findUnique({
       where: { id: reminderId },
       include: {
@@ -309,12 +416,22 @@ export class RemindersService {
       };
     }>,
   ): Record<string, string> {
-    const base = { dedupeKey: reminder.dedupeKey, reminderId: reminder.id, offset: reminder.offset };
+    const base = {
+      dedupeKey: reminder.dedupeKey,
+      reminderId: reminder.id,
+      offset: reminder.offset,
+    };
 
     const occurrence = reminder.eventOccurrence;
     if (!occurrence) {
       const copy = buildTestCopy();
-      return { ...base, type: 'TEST', title: copy.title, body: copy.body, deepLink: 'wishkaro://home' };
+      return {
+        ...base,
+        type: 'TEST',
+        title: copy.title,
+        body: copy.body,
+        deepLink: 'wishkaro://home',
+      };
     }
 
     const event = occurrence.event;
@@ -322,7 +439,10 @@ export class RemindersService {
       personName: event.person.displayName,
       eventType: event.type,
       sentiment: event.sentiment,
-      years: yearsAt({ day: event.day, month: event.month, year: event.year }, occurrence.occurrenceYear),
+      years: yearsAt(
+        { day: event.day, month: event.month, year: event.year },
+        occurrence.occurrenceYear,
+      ),
     });
 
     return {
