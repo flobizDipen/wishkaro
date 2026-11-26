@@ -7,10 +7,22 @@ on:
     paths:
       - 'server/**'
       - '.github/workflows/server.yml'
+      # The shared tables of cases live outside server/, and two suites in here read them —
+      # name-tokens.spec.ts and tone-rules.spec.ts. Without this path a change to a fixture
+      # would not run the suite that is supposed to catch the two implementations drifting,
+      # which is the whole point of having one table. A gap since M3; M5 added the second
+      # fixture and noticed it.
+      - 'docs/fixtures/**'
   pull_request:
     paths:
       - 'server/**'
       - '.github/workflows/server.yml'
+      # The shared tables of cases live outside server/, and two suites in here read them —
+      # name-tokens.spec.ts and tone-rules.spec.ts. Without this path a change to a fixture
+      # would not run the suite that is supposed to catch the two implementations drifting,
+      # which is the whole point of having one table. A gap since M3; M5 added the second
+      # fixture and noticed it.
+      - 'docs/fixtures/**'
 
 concurrency:
   group: server-${{ github.ref }}
@@ -29,6 +41,13 @@ jobs:
 
     # The date and sync logic is pure and needs no database, but `prisma migrate deploy`
     # against a real Postgres is the only thing that proves a migration actually applies.
+    #
+    # M5 added a second reason, and a Redis alongside it. Two suites now drive the real
+    # services rather than fakes — `wish-sync.db.spec.ts` and `drafting.db.spec.ts` — because
+    # a fake store agrees with whatever the code does to it, and everything those two are
+    # looking for is a disagreement between the code and the real thing (M3 §6.3). Without
+    # Redis here the drafting suite fails in CI and passes on a developer's machine, which is
+    # the worst of the two outcomes.
     services:
       postgres:
         image: postgres:17-alpine
@@ -43,8 +62,18 @@ jobs:
           --health-timeout 5s
           --health-retries 20
 
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     env:
       DATABASE_URL: postgresql://wishkaro:wishkaro@localhost:5432/wishkaro_test
+      REDIS_URL: redis://localhost:6379
 
     steps:
       - uses: actions/checkout@v5

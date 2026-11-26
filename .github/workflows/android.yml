@@ -10,6 +10,8 @@ on:
       - 'gradle.properties'
       - 'gradlew'
       - '.github/workflows/android.yml'
+      # NameTokensTest and WishToneRulesTest read these. Same gap as server.yml, same reason.
+      - 'docs/fixtures/**'
   pull_request:
     paths:
       - 'composeApp/**'
@@ -18,6 +20,8 @@ on:
       - 'gradle.properties'
       - 'gradlew'
       - '.github/workflows/android.yml'
+      # NameTokensTest and WishToneRulesTest read these. Same gap as server.yml, same reason.
+      - 'docs/fixtures/**'
 
 concurrency:
   group: android-${{ github.ref }}
