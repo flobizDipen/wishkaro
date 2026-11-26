@@ -109,6 +109,16 @@ kotlin {
             implementation(libs.koin.test)
         }
 
+        // JVM-only unit tests, where a real SQLite driver is available. `commonTest` cannot
+        // build a LocalStore — that is why SyncEngine is tested through fakes — but the
+        // Android unit-test source set runs on the JVM and can, which is how applyRemote's
+        // last-write-wins is held to a real database rather than to a hand-written double.
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(libs.sqldelight.sqlite.driver)
+            }
+        }
+
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)

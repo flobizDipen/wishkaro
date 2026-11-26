@@ -3,8 +3,9 @@
 > Branch `feat/m3-import`, off `5704e0b`. Written as the work was done, not reconstructed.
 >
 > **All ten definition-of-done items pass, verified on the device against the real Railway
-> deployment.** Two defects found while verifying are recorded in §6, not fixed here. Nothing
-> below is rounded up.
+> deployment.** Verifying turned up four things reading the code had not — §6. Three are
+> fixed here, including one that could have made a deceased person's birthday read
+> celebratory. Nothing below is rounded up.
 
 ---
 
@@ -65,10 +66,10 @@ and read before the next tap; `FATAL EXCEPTION` stayed at **0** across the whole
 `MILESTONE_CHECKLIST.md` §D. This machine is `Asia/Kolkata`; CI is UTC.
 
 ```bash
-                   ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 211 pass
-TZ=UTC             ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 211 pass
-TZ=Pacific/Chatham ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 211 pass
-cd server && npx jest                                                      # 275 pass
+                   ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
+TZ=UTC             ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
+TZ=Pacific/Chatham ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
+cd server && npx jest                                                      # 279 pass
 ```
 
 Nothing in M3's date handling reads an ambient clock — `today` is a parameter on every entry
@@ -382,7 +383,9 @@ through zip, UTF-8, XML entities, the parser and SQLite.
 
 ## 6. Four things the device showed that reading the code did not
 
-### 6.1 Two fixed here
+Three are fixed on this branch; §6.2 is a product decision and is recorded, not changed.
+
+### 6.1 Two small ones, fixed here
 
 1. **Import had no entry point from a non-empty list.** FR-VIEW-05 puts it on the empty state
    and FR-AUTH-05 offers it at first run, and both were built — but between them they only
@@ -412,12 +415,13 @@ Not changed in M3, because the rule is the requirement and changing it is a prod
 not a bug fix. Worth deciding before M4: either require **two** shared tokens when a row has
 no other corroboration, or give the result screen an "import anyway" action per skipped row.
 
-### 6.3 Freshly pushed records never receive their server-derived values — M1-era, recorded not fixed
+### 6.3 Freshly pushed records never receive their server-derived values — found, then FIXED
 
 **What was observed.** After the 600-row import, 551 people carried a server-computed
 `completeness_score` and the server's "what to add next" list. The 18 people imported *earlier
 in the same session*, and the one person added by hand afterwards, carried **score 0 and an
-empty list**, and three further syncs did not change that.
+empty list**, and three further syncs did not change that. On the person screen it reads
+`Profile 0% complete` for somebody with a name, a relation and a date.
 
 **The tell is the timestamp precision.**
 
@@ -428,7 +432,8 @@ hand-added 06:04      n=1    2026-11-26T06:04:02.406092Z   scored: 0     ← mic
 ```
 
 A row that has round-tripped through the server carries the server's millisecond stamp. These
-never did.
+never did. (That precision difference is a cheap diagnostic worth remembering: it says
+instantly whether a local row has ever been server-side.)
 
 **The mechanism, confirmed rather than guessed.**
 
@@ -437,40 +442,75 @@ device: 2026-11-26T06:04:52Z      ← adb shell date -u
 server: 2026-11-26T06:04:50Z      ← Date header from the deployment
 ```
 
-**The device clock is about two seconds ahead of the server's.** So for an ordinary single
-write: the client stamps the row `T_client`; the server stores that value, re-derives, and
-stamps its own copy `T_server ≈ T_client − 2s`; the pull returns the corrected row; and
-`LocalStore.applyRemote` discards it —
+The device clock is about two seconds ahead of the server's. So for a single write: the
+client stamps the row `T_client`; the server stores that value, re-derives, and stamps its
+own copy `T_server ≈ T_client − 2s`; the pull returns the corrected row; and
+`LocalStore.applyRemote` discards it, because the local copy's timestamp is *newer*.
 
-```kotlin
-if (local != null && (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt)))
-    return@forEach
-```
+The 551 escaped by accident of scale — their push took about 17 seconds across three pages,
+so each page's recompute landed well past the single client timestamp the whole import
+shared, and the server's copies won. Whether the bug bites is a race between the clock skew
+and the round-trip time.
 
-— because the local copy's timestamp is *newer*. The server's derivation is thrown away by
-last-write-wins.
+**Why it is worse than a missing score.** `sentiment` on an event is derived the same way,
+and the client writes a *placeholder* `CELEBRATORY` at insert time precisely because it does
+not derive tone (FR-EVT-01a). The same skew drops the server's correction — leaving a
+deceased person's birthday reading celebratory, which FR-EVT-05 calls the worst thing this
+app can get wrong. Nobody had hit it yet because it needs a death anniversary created inside
+the skew window, but the path was open.
 
-The 551 escaped it by accident of scale: their push took about 17 seconds across three pages,
-so each page's server-side recompute landed well past the single client timestamp the whole
-import shared, and the server's copies won.
+#### The fix: a client cannot hold a newer version of a field it never writes
 
-**What it costs.** `completeness_score` and the completeness suggestions (FR-PPL-05) stay at 0
-and empty for every record created on this device, until something re-derives that person with
-a large enough time gap. `is_minor` is in the same write and so has the same exposure. It is
-not data loss — the person, date and relation are all correct and on the server — but a
-feature of M1's is silently inert.
+Arbitrating a server-derived column with a client clock is a category error, not a close
+call. No amount of clock discipline makes it right, so the fix does not try to fix the clock.
 
-**Not fixed here**, per `MILESTONE_CHECKLIST.md` §F: it is M0/M1-era code
-(`LocalStore.applyRemote`'s LWW plus `PersonDerivationService`), M3's definition of done does
-not rest on it, and the fix is a sync-semantics change that deserves its own slice rather than
-a corner of an import PR. The name-token rule was fixed inside M3 only because FR-IMP-08
-depends on it.
+**Client** — `LocalStore.applyRemote`. When last-write-wins says the local copy is newer, it
+still takes `is_minor`, `completeness_score`, `completeness_suggestions` and an event's
+`sentiment`, through two new `applyServerDerived` statements. Everything the *user* writes is
+still arbitrated exactly as before; without that split this would silently become "the server
+always wins", which is a different and much worse change. `is_deceased` is deliberately left
+out: FR-PPL-04 makes it a profile field the user can set, so it is not purely derived.
 
-The shape of the fix, for whoever takes it: the client should not arbitrate a *server-derived*
-field with a client clock at all. Either the server's re-derivation must carry a timestamp
-that is by construction newer than the client's (it already knows what the client sent), or
-the derived columns should be applied from a pull unconditionally, since the client never
-writes them and so can never have a newer version worth keeping.
+The one exception is a row with an unpushed local edit, which is left entirely alone — the
+server derived its values from the copy it has, which predates that edit, so they are stale
+by definition and the next push-and-pull produces the right ones.
+
+**Server** — `PersonDerivationService`. A re-derivation now stamps
+`max(now, row.updatedAt + 1ms)` instead of `now`, so it can never move a row's version
+*backwards*. That matters for a second reason beyond this bug: `updatedAt` is the sync
+cursor's ordering key, and a row that moves backwards can fall behind a cursor that has
+already passed it and never be delivered again.
+
+Either half alone would have hidden the bug rather than fixed it.
+
+#### How the fix is proved
+
+`ApplyRemoteDerivedTest` — **8 tests against a real in-memory SQLite**, driving the real
+`applyRemote` against the real schema, using the exact timestamps observed on the handset.
+**Four go red when the fix is reverted**, including the tone one.
+
+This is the first test in the project that drives `LocalStore` against a database rather than
+a hand-written fake. `commonTest` cannot build one, which is why `SyncEngineTest` works
+through fakes — and a fake could never have caught this, because a fake agrees with whatever
+the code does to it. The Android unit-test source set runs on the JVM, so it can; the JDBC
+driver is a test-only dependency.
+
+`derivation-monotonic.spec.ts` covers the server half, including every skew from a minute
+behind to a minute ahead. Three of its four go red when reverted.
+
+#### What the device showed, stated precisely
+
+A person added **after** the fix came back with `score 25` and the server's full suggestion
+list, where every person added before it sat at 0. But that row's `updated_at` came back at
+millisecond precision, which means the round-trip exceeded the two-second skew on that run
+and it went down the *ordinary* path. **So the device run is consistent with the fix and is
+not independent proof of it** — the deterministic proof is the test above, which reproduces
+the skew exactly rather than hoping to land inside it.
+
+The 19 rows already damaged are **not** repaired by this. Their corrected copies sit behind a
+sync cursor that has moved past them, so nothing will deliver them again; editing any of
+those people re-pushes and re-derives them, and they come good. Left as they are rather than
+hand-patched, so the PR's state matches what the fix actually does.
 
 ## 7. Carried forward from M2, still open
 
@@ -515,10 +555,10 @@ deliberately rather than as a tidy-up.
 | 6 | A file with a duplicate inside it produces one person | **Pass**, test and device (§5.4) |
 | 7 | Bad rows produce a report naming each row and reason, and a corrected CSV that re-imports cleanly | **Pass**, the whole round trip on the device including the saved file's bytes (§5.4) |
 | 8 | An import larger than the sync cap reaches the server completely, outbox empty, then a hand-added person syncs too | **Pass**, against the real Railway deployment. The outbox drained **551 → 351 → 151 → 0** — pages of exactly 200 — and a person added by hand afterwards synced on its own (§5.7) |
-| 9 | Unit tests for every date format, the toggle, the pivot, dedup within a file, dedup against existing, the chunking boundary | **Pass** — 211 client, 275 server, three timezones |
+| 9 | Unit tests for every date format, the toggle, the pivot, dedup within a file, dedup against existing, the chunking boundary | **Pass** — 219 client, 279 server, three timezones |
 | 10 | CI green, this document, fixtures committed | Fixtures committed with a README; this document exists; CI on the PR |
 
-**All ten pass.** Two defects found along the way are recorded in §6 rather than fixed here.
+**All ten pass.** Three defects found along the way are fixed on this branch; a fourth (§6.2) is a product decision and is recorded rather than changed.
 
 ---
 
@@ -528,5 +568,7 @@ Nothing in M3. Two things carried forward, neither blocking:
 
 - **A non-Pixel phone** for M2's definition-of-done item 7, now unchecked across three
   milestones.
-- **The two defects in §6**, which are M0/M1-era code and are recorded rather than fixed here,
-  per `MILESTONE_CHECKLIST.md` §F.
+- **§6.2, the dedup rule's precision at scale** — a product decision, recorded not changed.
+- **19 rows already damaged by §6.3** carry a completeness score of 0. The fix stops it
+  happening again; it does not repair them, because their corrected copies sit behind a sync
+  cursor that has moved past them. Editing any of those people repairs that one.

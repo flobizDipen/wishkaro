@@ -481,6 +481,13 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
      * SQLite 3.24 and minSdk is 26. A row still flagged `pending_sync` is never overwritten:
      * the local edit has not reached the server yet, so the server's copy is by definition
      * the older one.
+     *
+     * Last-write-wins governs the fields the USER writes. It does NOT govern the columns the
+     * server derives — `is_minor`, `completeness_score`, `completeness_suggestions` and an
+     * event's `sentiment` — because the client never writes those and so can never hold a
+     * newer version of them. Those are taken from any pull that is not racing an unpushed
+     * local edit, whatever the timestamps say. See the comments inside, and §6.3 of
+     * docs/M3_VERIFY.md for the two-second clock skew that made this cost real data.
      */
     override suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
@@ -494,6 +501,28 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
                 if (local != null &&
                     (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
                 ) {
+                    // The local copy wins — for the fields the USER writes. The derived
+                    // columns are a different matter: the client never writes them, so it
+                    // cannot be holding a newer version worth keeping, and deciding them on
+                    // a timestamp comparison is a category error rather than a close call.
+                    //
+                    // It cost real data. The handset M3 was verified on ran two seconds
+                    // ahead of the server, so every freshly pushed person came back with a
+                    // server timestamp OLDER than its own and had its completeness score
+                    // thrown away — FR-PPL-05 inert on every record that device created,
+                    // with nothing in any log. docs/M3_VERIFY.md §6.3.
+                    //
+                    // Not while an edit is still unpushed, though: the server derived these
+                    // from the copy it has, which is the one before that edit, so they are
+                    // stale by definition and the next push-and-pull produces the right ones.
+                    if (local.pending_sync == 0L) {
+                        people.applyServerDerived(
+                            is_minor = if (remote.isMinor) 1L else 0L,
+                            completeness_score = remote.completenessScore.toLong(),
+                            completeness_suggestions = remote.completenessSuggestions.joinToString(","),
+                            id = remote.id,
+                        )
+                    }
                     return@forEach
                 }
                 people.insertOrReplace(
@@ -520,6 +549,14 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
                 if (local != null &&
                     (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
                 ) {
+                    // `sentiment` the same way, and it matters more here than anywhere: the
+                    // client writes a PLACEHOLDER at insert time and depends on the server
+                    // to correct it (FR-EVT-01a). Dropping that correction leaves a deceased
+                    // person's birthday reading CELEBRATORY, which FR-EVT-05 names as the
+                    // worst thing this app can get wrong.
+                    if (local.pending_sync == 0L) {
+                        events.applyServerDerived(sentiment = remote.sentiment, id = remote.id)
+                    }
                     return@forEach
                 }
                 events.insertOrReplace(

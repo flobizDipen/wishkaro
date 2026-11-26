@@ -128,6 +128,20 @@ markRestored:
 UPDATE person SET deleted_at = NULL, updated_at = ?, pending_sync = 1,
     sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
+-- Take ONLY the columns the server owns, leaving everything else as it is.
+--
+-- Used when last-write-wins says the local copy of a row is the newer one. That ruling is
+-- right for the fields the USER writes and meaningless for these three, which the client
+-- never writes and therefore can never hold a newer version of. Arbitrating them with a
+-- client clock is a category error, and it cost M3 every completeness score on a handset
+-- whose clock ran two seconds fast — see docs/M3_VERIFY.md §6.3.
+--
+-- `is_deceased` is deliberately NOT here. FR-PPL-04 makes it a profile field the user can
+-- set, so it is not purely derived and the ordinary last-write-wins is correct for it.
+applyServerDerived:
+UPDATE person SET is_minor = ?, completeness_score = ?, completeness_suggestions = ?
+WHERE id = ?;
+
 clearPendingSync:
 UPDATE person SET pending_sync = 0 WHERE id = ?;
 

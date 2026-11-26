@@ -96,6 +96,14 @@ UPDATE event SET deleted_at = NULL, updated_at = ?, pending_sync = 1,
 selectByMonth:
 SELECT * FROM event WHERE month = ? AND deleted_at IS NULL;
 
+-- The one column on an event that the server owns (FR-EVT-01a). Same reasoning as
+-- person.applyServerDerived, and a sharper edge: the client writes a PLACEHOLDER sentiment
+-- at insert time and relies on the server's answer to correct it. Dropping that answer for
+-- a clock skew leaves a deceased person's birthday reading CELEBRATORY, which FR-EVT-05
+-- calls the worst failure this app can have.
+applyServerDerived:
+UPDATE event SET sentiment = ? WHERE id = ?;
+
 clearPendingSync:
 UPDATE event SET pending_sync = 0 WHERE id = ?;
 
