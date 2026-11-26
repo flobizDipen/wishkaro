@@ -156,6 +156,8 @@ kotlin {
 
             implementation(libs.androidx.security.crypto)
             implementation(libs.androidx.work.runtime)
+            implementation(libs.androidx.glance.appwidget)
+            implementation(libs.androidx.glance.material3)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.googleid)

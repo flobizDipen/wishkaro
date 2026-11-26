@@ -126,6 +126,28 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            FR-WID-01..03 and FR-VIEW-10. Exported because the launcher is the caller —
+            that is what an app widget is — and it carries no data of its own: everything it
+            draws comes from UpcomingRepository inside this process.
+
+            APPWIDGET_UPDATE only: the provider is driven by Glance's updateAll on a data
+            change and by a daily WorkManager job at local midnight (WidgetUpdates), not by
+            updatePeriodMillis, which cannot be more frequent than 30 minutes and would wake
+            the device for nothing on the 29 days a month when nothing changes.
+        -->
+        <receiver
+            android:name=".widget.UpcomingWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/upcoming_widget_info" />
+        </receiver>
+
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="reminders_morning_of" />

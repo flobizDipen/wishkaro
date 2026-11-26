@@ -48,6 +48,12 @@ nav3Core = "1.2.2"
 # So the two-pane Scene is written here instead. docs/M4_PLAN.md §2.4.
 adaptive = "1.2.0"
 
+# Glance, for the home-screen widget (FR-WID-01..03). Android-only and androidx-only by
+# nature, so it lives in androidMain — but it reads UpcomingRepository in commonMain and
+# renders UpcomingEntry, so there is still ONE implementation of "what is coming up".
+# docs/M4_PLAN.md §3.
+glance = "1.2.0"
+
 # Test
 turbine = "1.2.1"
 
@@ -116,6 +122,8 @@ sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", versi
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidx-security-crypto" }
+androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+androidx-glance-material3 = { module = "androidx.glance:glance-material3", version.ref = "glance" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "androidx-credentials" }
 androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "androidx-credentials" }
