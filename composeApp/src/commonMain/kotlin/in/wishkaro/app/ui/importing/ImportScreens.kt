@@ -133,6 +133,7 @@ fun ImportContactsScreen(
             canAskAgain = true,
             onAsk = store::askForContactsPermission,
             onSettings = store::openAppSettings,
+            onRecheck = store::startContacts,
             onBack = onBack,
             modifier = modifier,
         )
@@ -141,6 +142,7 @@ fun ImportContactsScreen(
             canAskAgain = false,
             onAsk = store::askForContactsPermission,
             onSettings = store::openAppSettings,
+            onRecheck = store::startContacts,
             onBack = onBack,
             modifier = modifier,
         )
@@ -212,6 +214,7 @@ private fun PermissionRefused(
     canAskAgain: Boolean,
     onAsk: () -> Unit,
     onSettings: () -> Unit,
+    onRecheck: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -229,6 +232,12 @@ private fun PermissionRefused(
                     "the switch is in Settings → Permissions → Contacts.",
             )
             Button(onClick = onSettings) { Text("Open Settings") }
+            // Found on the device: tapping Open Settings, granting the permission there and
+            // coming back left this screen exactly as it was, still saying no. The screen
+            // only reads the permission when it first opens, and returning from Settings is
+            // not opening it — so the one route the copy sends you down appears to do
+            // nothing. This is the way back in.
+            OutlinedButton(onClick = onRecheck) { Text("I've turned it on") }
         }
         OutlinedButton(onClick = onBack) { Text("Add people another way") }
     }

@@ -135,6 +135,14 @@ fun PeopleListScreen(
                         Text("Settings")
                     }
                 }
+                // Import has to be reachable from a list that is NOT empty.
+                //
+                // FR-VIEW-05 puts it on the empty state and FR-AUTH-05 offers it at first
+                // run, and both are built — but between them they only ever reach somebody
+                // with nobody. A user who added three people by hand last week and now
+                // wants the other three hundred off their phone had no route at all, which
+                // makes import a feature you can use once, by accident, on your first day.
+                TextButton(onClick = onOpenImport) { Text("Import") }
                 TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
             }
 
