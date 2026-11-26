@@ -18,6 +18,7 @@
 | ☐ | Every item the previous milestone left **unproven** is named in the new prompt, with "close it or leave it honest" | M2 (OEM helper, mobile data) |
 | ☐ | The hardware the definition of done needs actually exists — a non-Pixel phone, a real contacts list, a messy spreadsheet | M2 item 7, still open |
 | ☐ | Any decision that would be expensive to reverse is flagged in the prompt as **"decide this before you write code"** | M2 (dedupe key), M3 (outbox, parse location) |
+| ☐ | The build prompt is checked against the **decisions table and the prose sections**, not only against the code. A prompt written against `main` can still contradict a locked decision that has never been exercised — nothing has run, so nothing disagrees yet | M5: the prompt said "default to `claude-opus-5-5`, do not quietly pick a cheaper model" while **D20** said "Haiku for high-volume wish drafting". Opposite instructions about the same feature, both written before a line of drafting code existed, neither spotted |
 
 ## B. Before any code is written — the session
 
@@ -155,3 +156,21 @@ Each of these was bought the same way the rest were — by something going wrong
 | ☐ | **Grep the `mCurrentFocus` LINE, not the whole `dumpsys window` output.** `dumpsys window \| grep -oE "pkgA\|pkgB"` returns whichever appears first anywhere in the dump, which is usually not the focused window. It reported the launcher while the app was in front | M4 |
 | ☐ | **Never swipe to scroll while a text field has focus.** The gesture goes to the keyboard, which gesture-types into the field: a scroll turned a person's name into "Anika Pillai 25-WIDGETTEST hu by by". Dismiss the keyboard first — `ui.sh tap` now does | M4 |
 | ☐ | A **redundant filter is worse than none**: it implies the job belongs to a layer it does not. When a revert-check does not go red, find out why before moving on | M4 (a deleted-row filter in the repository that the SQL already did) |
+
+## What M5 added to this list
+
+Each of these was bought the same way the rest were. M5 is the first milestone that did not
+finish, so two of them are about reviewing and documenting rather than about code.
+
+| ✅ | Item | Bought by |
+|---|---|---|
+| ☐ | A **server-derived field is WRONG on the client, not stale, for one sync window** — and no fixture has that shape, because every fixture builds a record the way the SERVER returns it. Where such a field gates something that must not fail (tone, minors, credits, quotas), OR it with a local signal that is correct on BOTH sides of the round trip, in the direction where being wrong is harmless | M5 §0.1 — a death anniversary created on the handset opened the CELEBRATORY composer, offering Funny and Poetic with "Happy birthday" in the box. Reachable since M1, invisible to 370 tests, found by adding a person on a real phone |
+| ☐ | **A plan that quotes requirements by `FR-` id will silently skip every rule that does not have one.** §§7.x have ids; §10's seven hard rules do not. A milestone whose subject has a PROSE section in REQUIREMENTS must be walked against that section as a list, rule by rule, in the plan | M5 §0.6 — three of seven hard rules missed, two plan "questions" raised that §10 and FR-PPL-09 had already answered |
+| ☐ | **A fake that stands in for a remote service tests response handling for free and request construction not at all.** Assert on the outgoing body too, or a field can be deleted from the request with every test still green | M5 §5.3 — removing the JSON schema from the OpenAI request broke nothing |
+| ☐ | **A comment that makes a performance claim either carries the measurement or does not make the claim.** The dangerous ones are plausible and unfalsifiable at a glance | M5 §5.2 — "an index scan over one day" was a guess; `EXPLAIN` showed 1,465 buffers to return 227 rows, because the column was trailing in every index |
+| ☐ | **Asserting on what a service THROWS is not asserting on what a client RECEIVES.** The gap between them is exactly where an error envelope lives. Drive a real request for each error shape | M5 §0.2 — `retryAfterSeconds` computed and dropped by the shared filter; the **fourth** time this project has made that shape |
+| ☐ | **A test that races an async write can pass by luck**, which is worse than failing: a green suite that is not checking what it claims. Wait for the write with a named timeout rather than assuming it landed | M5 §5.4 — two composer tests asserted on a `Dispatchers.Default` write and one passed anyway |
+| ☐ | **A banned-lexicon test cannot be pointed at a PROMPT.** A prompt has to name what it forbids, so "never congratulate" fails the check. The lexicon belongs on the model's OUTPUT, or on template strings — the words a recipient actually reads | M5 §0.3 |
+| ☐ | A **mis-escaped string template in a `testTag` renders literally**, so every row carries one unaddressable id. A tag is only real once it has been read back out of the view tree | M5 §0.4 — `upcoming_send_${entry.event.id}` as a literal |
+| ☐ | **The public-repo rule covers SCREENSHOTS, not just fixtures.** A screenshot of a hand-off into somebody's own messaging app carries their real conversations and phone numbers behind the thing you meant to capture | M5 §0.5 — the one screenshot proving definition-of-done item 1 had to be deleted |
+| ☐ | When a milestone cannot finish, mark the blocked items **BLOCKED rather than PARTIAL**. A partial is something half-proved; a blocked item is not proved at all, and rounding the two together makes a half-done milestone read like a weak pass | M5 §1 — four items blocked on a model that was never configured |
