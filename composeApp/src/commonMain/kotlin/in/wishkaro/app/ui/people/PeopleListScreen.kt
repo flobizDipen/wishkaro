@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +59,7 @@ fun PeopleListScreen(
     onOpenDeleted: () -> Unit,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenImport: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -133,11 +135,24 @@ fun PeopleListScreen(
                         Text("Settings")
                     }
                 }
+                // Import has to be reachable from a list that is NOT empty.
+                //
+                // FR-VIEW-05 puts it on the empty state and FR-AUTH-05 offers it at first
+                // run, and both are built — but between them they only ever reach somebody
+                // with nobody. A user who added three people by hand last week and now
+                // wants the other three hundred off their phone had no route at all, which
+                // makes import a feature you can use once, by accident, on your first day.
+                TextButton(onClick = onOpenImport) { Text("Import") }
                 TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
             }
 
             if (cards.isEmpty()) {
-                EmptyState(filtered = filter.isActive, modifier = Modifier.fillMaxSize())
+                EmptyState(
+                    filtered = filter.isActive,
+                    onOpenImport = onOpenImport,
+                    onAddPerson = onAddPerson,
+                    modifier = Modifier.fillMaxSize(),
+                )
             } else {
                 LazyColumn(
                     contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 96.dp),
@@ -239,20 +254,46 @@ private fun PersonRow(card: PersonCard, highlighted: Boolean, onClick: () -> Uni
 }
 
 @Composable
-private fun EmptyState(filtered: Boolean, modifier: Modifier = Modifier) {
+private fun EmptyState(
+    filtered: Boolean,
+    onOpenImport: () -> Unit,
+    onAddPerson: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier.background(MaterialTheme.colorScheme.surface),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            if (filtered) {
-                "Nobody matches that."
-            } else {
-                "Nobody here yet.\nAdd the first person whose birthday you keep forgetting."
-            },
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(32.dp),
-        )
+        if (filtered) {
+            Text(
+                "Nobody matches that.",
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        } else {
+            // FR-VIEW-05: an empty state leads somewhere. Until M3 this said "Add the first
+            // person whose birthday you keep forgetting" and led nowhere at all — which, for
+            // a user who has three hundred of them in their contacts, is the longest possible
+            // way into the app.
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(32.dp),
+            ) {
+                Text(
+                    "Nobody here yet.",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "Bring in the birthdays already on your phone, or from a spreadsheet — " +
+                        "you choose who comes in.",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(onClick = onOpenImport) { Text("Import people") }
+                TextButton(onClick = onAddPerson) { Text("Add one by hand") }
+            }
+        }
     }
 }

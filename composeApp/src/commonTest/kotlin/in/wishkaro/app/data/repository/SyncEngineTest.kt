@@ -296,8 +296,25 @@ private class FakeStore(
         get() = (pendingPeopleIds + pendingEventIds + pendingTraitIds).toSet() -
             (clearedPeople + clearedEvents + clearedTraits)
 
-    override suspend fun pendingPeople(): List<wishkaro.db.Person> =
-        pendingPeopleIds.map { id ->
+    /** Blocked rows, by id, with the server's reason. */
+    val blocked = mutableMapOf<String, String>()
+
+    override suspend fun pendingPersonIds(): Set<String> = pendingPeopleIds.toSet()
+
+    override suspend fun blockPerson(id: String, reason: String) {
+        blocked[id] = reason
+    }
+
+    override suspend fun blockEvent(id: String, reason: String) {
+        blocked[id] = reason
+    }
+
+    override suspend fun blockTrait(id: String, reason: String) {
+        blocked[id] = reason
+    }
+
+    override suspend fun pendingPeople(limit: Long): List<wishkaro.db.Person> =
+        pendingPeopleIds.take(limit.toInt()).map { id ->
             wishkaro.db.Person(
                 id = id,
                 display_name = "Person $id",
@@ -315,11 +332,13 @@ private class FakeStore(
                 is_minor = 0,
                 completeness_score = 0,
                 completeness_suggestions = "",
+                sync_blocked = 0,
+                sync_block_reason = null,
             )
         }
 
-    override suspend fun pendingEvents(): List<wishkaro.db.Event> =
-        pendingEventIds.map { id ->
+    override suspend fun pendingEvents(limit: Long): List<wishkaro.db.Event> =
+        pendingEventIds.take(limit.toInt()).map { id ->
             wishkaro.db.Event(
                 id = id,
                 person_id = "p1",
@@ -333,11 +352,13 @@ private class FakeStore(
                 sentiment = "CELEBRATORY",
                 label = null,
                 is_muted = 0,
+                sync_blocked = 0,
+                sync_block_reason = null,
             )
         }
 
-    override suspend fun pendingTraits(): List<wishkaro.db.Person_trait> =
-        pendingTraitIds.map { id ->
+    override suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait> =
+        pendingTraitIds.take(limit.toInt()).map { id ->
             wishkaro.db.Person_trait(
                 id = id,
                 person_id = "p1",
@@ -347,6 +368,8 @@ private class FakeStore(
                 updated_at = "2026-11-25T10:00:00Z",
                 deleted_at = null,
                 pending_sync = 1,
+                sync_blocked = 0,
+                sync_block_reason = null,
             )
         }
 

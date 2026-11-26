@@ -27,6 +27,12 @@ class ApiException(
     val status: Int,
     val code: String,
     override val message: String,
+    /**
+     * The server's per-issue detail, when it sent any. Empty for every error that is not a
+     * validation failure — and empty, too, for a validation failure the client could not
+     * parse, which callers must treat as "no idea which row", not as "no rows at fault".
+     */
+    val details: List<ApiErrorIssue> = emptyList(),
 ) : Exception("$status $code: $message")
 
 /**
@@ -184,6 +190,7 @@ class WishKaroApi(
             status = status.value,
             code = parsed?.error?.code ?: "HTTP_${status.value}",
             message = parsed?.error?.message ?: text.ifBlank { status.description },
+            details = parsed?.error?.details.orEmpty(),
         )
     }
 

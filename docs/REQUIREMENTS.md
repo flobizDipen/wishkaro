@@ -1,7 +1,7 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.7 — M0, M1 and M2 built and merged; M3 prompt written
-> **Date:** 2026-11-25
+> **Status:** v0.8 — M0, M1 and M2 merged; M3 (import) built and in review
+> **Date:** 2026-11-26
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
 > **Repo:** single **public** GitHub monorepo — `github.com/flobizDipen/wishkaro`.
@@ -195,7 +195,7 @@ Every item below was accepted on 2026-11-24. Kept in the doc rather than deleted
 
 | id | Requirement |
 |---|---|
-| FR-PPL-01 | Adding a person requires exactly three inputs: **name**, **event date**, **relation**. Everything else is optional. |
+| FR-PPL-01 | Adding a person requires **name** and **event date**. **Relation** is strongly encouraged and is the first prompt the completeness score makes, but it does not block a manual add — and **import requires it** (FR-IMP-03). *(Corrected in M3 to match the code M1 shipped, where `relation` is nullable on both the screen and the schema. Import is stricter on purpose: bulk is where unlabelled people pile up, and the mapping screen offers a default so a file with no relation column still imports in one tap. `M3_PLAN.md` §4.1.)* |
 | FR-PPL-02 | `relation` is a chip picker with a curated Indian-context list (Mother, Father, Brother, Sister, Spouse, Son, Daughter, Grandparent, Uncle, Aunt, Cousin, Friend, Best Friend, Colleague, Boss, Neighbour, Other) plus free text. |
 | FR-PPL-03 | A person may have multiple events (birthday + anniversary), and multiple people may share one event (a couple's anniversary). |
 | FR-PPL-04 | Optional profile fields, all progressively collected: photo, gender, phone, email, hobbies/interests (chips), likes, dislikes, budget band, notes, deceased flag. |
@@ -229,7 +229,7 @@ Every item below was accepted on 2026-11-24. Kept in the doc rather than deleted
 | FR-IMP-01 | **Contacts import**: reads display name, photo URI, phone, and the contact's birthday field from the device. Runs entirely on-device; only the records the user explicitly selects are persisted or synced. |
 | FR-IMP-02 | Contacts import shows a review screen: contacts *with* a birthday pre-selected and sorted first; contacts without one available but unselected. Never bulk-imports silently. |
 | FR-IMP-03 | Each imported row needs a relation before it saves; a bulk "set relation for selected" action is required or the flow is unusable at scale. |
-| FR-IMP-04 | **File import**: accepts `.csv`, `.xlsx`. Parsed client-side where possible; large files go to the server. |
+| FR-IMP-04 | **File import**: accepts `.csv`, `.xlsx`, parsed **entirely on-device**. Files above 5,000 rows or 10 MB are refused with a message saying so. *(Amended in M3. v1 said "parsed client-side where possible; large files go to the server", which would have meant two implementations of column mapping, date interpretation and dedup — in Kotlin for offline contacts import and in TypeScript for the server — and that duplication is the thing this project has twice decided not to have. It also means a spreadsheet of family birthdays never leaves the phone. The server-side path is deferred until a real file exceeds the cap; the endpoints below were removed rather than left documented and unbuilt. `M3_PLAN.md` §2.)* |
 | FR-IMP-05 | File import shows a **column-mapping screen** (source column → Name / Date / Relation / Phone / Notes) with a live 5-row preview. |
 | FR-IMP-06 | Date parsing tolerates the formats people actually type: `dd/MM/yyyy`, `dd-MM-yy`, `MM/dd/yyyy`, `d MMM yyyy`, `yyyy-MM-dd`, and day-month with no year. Ambiguous dd/MM vs MM/dd is resolved by an explicit user toggle, defaulted to dd/MM for India. |
 | FR-IMP-07 | Import produces a result report: imported / skipped / failed with per-row reasons, and failures are downloadable as a corrected CSV. |
@@ -478,8 +478,10 @@ POST   /v1/sync                        delta push (batched upserts + tombstones)
 GET    /v1/people            POST /v1/people
 GET    /v1/people/:id        PATCH /v1/people/:id      DELETE /v1/people/:id
 POST   /v1/people/:id/traits
-POST   /v1/people/import/file          multipart CSV/XLSX → job
-GET    /v1/import/:jobId
+# NOTE: there is deliberately no file-import endpoint. Import is entirely on-device
+# (FR-IMP-04, amended in M3). POST /v1/people/import/file and GET /v1/import/:jobId were
+# listed here until M3 and were never built; they are removed rather than left as fiction.
+# Imported people reach the server through POST /v1/sync like every other local write.
 
 GET    /v1/events/upcoming?from=&to=
 POST   /v1/events            PATCH /v1/events/:id      DELETE /v1/events/:id

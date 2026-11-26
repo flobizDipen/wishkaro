@@ -65,6 +65,10 @@ sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sq
 sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
 sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
+# JVM driver, TEST ONLY. It is what lets a unit test stand up a real in-memory SQLite and
+# drive LocalStore for real — the seam where M3 found the derived-values bug, and which until
+# now could only be tested through hand-written fakes that cannot disagree with the database.
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 
 
 # --- android ---

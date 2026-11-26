@@ -19,7 +19,12 @@ CREATE TABLE event (
     label        TEXT,
     -- Stops reminders without deleting the event. A deceased person's birthday arrives
     -- muted; un-muting it is the remembrance opt-in (FR-EVT-05).
-    is_muted     INTEGER NOT NULL DEFAULT 0
+    is_muted     INTEGER NOT NULL DEFAULT 0,
+    -- ---- added in M3 (schema version 6) ----
+    -- See Person.sq and 5.sqm: a row the server named and refused leaves the drain without
+    -- losing its pending flag, so it cannot jam the rows around it.
+    sync_blocked INTEGER NOT NULL DEFAULT 0,
+    sync_block_reason TEXT
 );
 
 CREATE INDEX event_person ON event(person_id);
@@ -39,7 +44,22 @@ selectAllForPerson:
 SELECT * FROM event WHERE person_id = ?;
 
 selectPendingSync:
-SELECT * FROM event WHERE pending_sync = 1;
+SELECT * FROM event
+WHERE pending_sync = 1 AND sync_blocked = 0
+ORDER BY updated_at, id
+LIMIT :limit;
+
+selectBlocked:
+SELECT * FROM event WHERE sync_blocked = 1 ORDER BY updated_at;
+
+countBlocked:
+SELECT COUNT(*) FROM event WHERE sync_blocked = 1;
+
+markSyncBlocked:
+UPDATE event SET sync_blocked = 1, sync_block_reason = ? WHERE id = ?;
+
+clearSyncBlocked:
+UPDATE event SET sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 -- NOTE: no `ON CONFLICT ... DO UPDATE` (UPSERT) anywhere in this schema.
 -- UPSERT needs SQLite 3.24, which arrived in Android 11 (API 30). minSdk is 26 (OD-13), so
@@ -55,20 +75,34 @@ INSERT OR REPLACE INTO event(
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 updateEvent:
-UPDATE event SET type = ?, label = ?, day = ?, month = ?, year = ?, updated_at = ?, pending_sync = 1
+UPDATE event SET type = ?, label = ?, day = ?, month = ?, year = ?, updated_at = ?, pending_sync = 1,
+    -- A user edit clears any block: this is different data from whatever the server
+    -- refused, and leaving it set aside would make the edit silently unsendable.
+    sync_blocked = 0, sync_block_reason = NULL
 WHERE id = ?;
 
 setMuted:
-UPDATE event SET is_muted = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE event SET is_muted = ?, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 markDeleted:
-UPDATE event SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE event SET deleted_at = ?, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 markRestored:
-UPDATE event SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE event SET deleted_at = NULL, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 selectByMonth:
 SELECT * FROM event WHERE month = ? AND deleted_at IS NULL;
+
+-- The one column on an event that the server owns (FR-EVT-01a). Same reasoning as
+-- person.applyServerDerived, and a sharper edge: the client writes a PLACEHOLDER sentiment
+-- at insert time and relies on the server's answer to correct it. Dropping that answer for
+-- a clock skew leaves a deceased person's birthday reading CELEBRATORY, which FR-EVT-05
+-- calls the worst failure this app can have.
+applyServerDerived:
+UPDATE event SET sentiment = ? WHERE id = ?;
 
 clearPendingSync:
 UPDATE event SET pending_sync = 0 WHERE id = ?;
@@ -85,5 +119,10 @@ DELETE FROM event;
 -- The local-alarm fallback (FR-REM-10) arms only for these: the moment an event reaches the
 -- server the plan governs it, and a fallback firing at the global hour would otherwise claim
 -- the dedupe key and suppress the server's correctly-scheduled reminder.
+--
+-- Deliberately NOT filtered by `sync_blocked`, unlike selectPendingSync. A blocked event is
+-- one the server will never accept, so it will never get a plan row — which makes the local
+-- fallback the only reminder it is ever going to have. Dropping it here would silence the
+-- user's event because of a wire-format problem they cannot see.
 selectUnsynced:
 SELECT * FROM event WHERE pending_sync = 1 AND deleted_at IS NULL AND is_muted = 0;

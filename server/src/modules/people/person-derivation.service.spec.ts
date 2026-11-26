@@ -29,6 +29,7 @@ interface FakeEvent {
   month: number;
   year: number | null;
   deletedAt: Date | null;
+  updatedAt: Date;
 }
 
 interface FakePerson {
@@ -41,6 +42,7 @@ interface FakePerson {
   phone: string | null;
   email: string | null;
   notes: string | null;
+  updatedAt: Date;
 }
 
 interface World {
@@ -62,6 +64,9 @@ function event(id: string, type: EventType, overrides: Partial<FakeEvent> = {}):
     month: 9,
     year: 1988,
     deletedAt: null,
+    // Rows carry a timestamp in reality, and the derivation reads it to avoid moving a row
+    // backwards (see `bumped`). A fixture without one let the fake disagree with the schema.
+    updatedAt: new Date('2026-11-25T10:00:00.000Z'),
     ...overrides,
   };
 }
@@ -81,6 +86,7 @@ function buildWorld(
     phone: null,
     email: null,
     notes: null,
+    updatedAt: new Date('2026-11-25T10:00:00.000Z'),
     ...personOverrides,
   };
 

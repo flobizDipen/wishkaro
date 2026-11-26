@@ -100,7 +100,7 @@ export class PersonDerivationService {
       for (const birthday of birthdays) {
         await db.event.update({
           where: { id: birthday.id },
-          data: { isMuted: true, updatedAt: now },
+          data: { isMuted: true, updatedAt: bumped(birthday.updatedAt, now) },
         });
         this.logger.log(
           `Muted birthday ${birthday.id}: person ${personId} is now deceased. ` +
@@ -137,7 +137,7 @@ export class PersonDerivationService {
     if (personChanged) {
       await db.person.update({
         where: { id: personId },
-        data: { isDeceased, isMinor, completenessScore: score, updatedAt: now },
+        data: { isDeceased, isMinor, completenessScore: score, updatedAt: bumped(person.updatedAt, now) },
       });
     }
 
@@ -151,7 +151,7 @@ export class PersonDerivationService {
       if (event.sentiment !== correct) {
         await db.event.update({
           where: { id: event.id },
-          data: { sentiment: correct, updatedAt: now },
+          data: { sentiment: correct, updatedAt: bumped(event.updatedAt, now) },
         });
         this.logger.log(
           `Re-derived sentiment for event ${event.id} (${event.type}): ` +
@@ -178,4 +178,28 @@ export class PersonDerivationService {
       await this.recompute(id, db, now, contexts?.get(id) ?? {});
     }
   }
+}
+
+/**
+ * A timestamp for a re-derivation that is never OLDER than the row it is re-deriving.
+ *
+ * `updatedAt` on a synced row is whatever the CLIENT stamped it with, because that is what
+ * drives last-write-wins. A device whose clock runs fast therefore writes a timestamp in the
+ * server's future — and `new Date()` at derivation time is then earlier than the row's own
+ * `updatedAt`, so writing it moves the row's version BACKWARDS.
+ *
+ * Two things go wrong when it does. The client's last-write-wins sees the corrected copy as
+ * older and discards it, which is how an entire handset's completeness scores were lost in
+ * M3 (docs/M3_VERIFY.md §6.3). And `updatedAt` is the sync cursor's ordering key, so a row
+ * that moves backwards can fall behind a cursor that has already passed it and never be
+ * delivered again.
+ *
+ * One millisecond past, not more: Postgres stores `timestamp(3)` and the API formats with
+ * `toISOString()`, so anything finer is invisible on the wire. The client's own retry stamp
+ * uses exactly the same trick for exactly the same reason — see `SyncEngine.retryStamp`.
+ */
+export function bumped(current: Date | null | undefined, now: Date): Date {
+  // No recorded timestamp means no constraint: there is nothing to move backwards from.
+  if (!current) return now;
+  return now.getTime() > current.getTime() ? now : new Date(current.getTime() + 1);
 }

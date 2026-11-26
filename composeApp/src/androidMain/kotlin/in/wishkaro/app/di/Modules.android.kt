@@ -2,6 +2,10 @@ package `in`.wishkaro.app.di
 
 import android.content.Context
 import `in`.wishkaro.app.platform.ActivityHolder
+import `in`.wishkaro.app.platform.AndroidContactsGateway
+import `in`.wishkaro.app.platform.AndroidFileGateway
+import `in`.wishkaro.app.platform.ContactsGateway
+import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.platform.AndroidGoogleSignInClient
 import `in`.wishkaro.app.platform.AndroidNotificationGateway
 import `in`.wishkaro.app.platform.DatabaseDriverFactory
@@ -26,4 +30,6 @@ actual fun platformModule(): Module = module {
     single<NotificationGateway> { AndroidNotificationGateway(androidContext()) }
     single<ReminderScheduler> { AndroidReminderScheduler(androidContext(), get()) }
     single<OemBatteryHelper> { AndroidOemBatteryHelper(androidContext()) }
+    single<ContactsGateway> { AndroidContactsGateway(androidContext()) }
+    single<FileGateway> { AndroidFileGateway(androidContext()) }
 }

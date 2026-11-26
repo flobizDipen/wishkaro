@@ -19,6 +19,7 @@ import `in`.wishkaro.app.platform.OemHelperOutcome
 import `in`.wishkaro.app.platform.OemInstructions
 import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.platform.ReminderScheduler
+import `in`.wishkaro.app.ui.importing.ImportStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -47,6 +48,16 @@ sealed interface Screen {
 
     /** M2 creates this screen; the app had no settings at all before now (FR-SET-01). */
     data object Settings : Screen
+
+    // ---- M3: import (FR-IMP-01..08, FR-VIEW-05, FR-AUTH-05) ----
+
+    /** Contacts or a file. */
+    data object ImportStart : Screen
+    data object ImportContacts : Screen
+    data object ImportFile : Screen
+
+    /** What happened, with a reason for every row that did not come in (FR-IMP-07). */
+    data object ImportResult : Screen
 }
 
 /**
@@ -99,6 +110,7 @@ class AppStore(
     private val plan: ReminderPlanRepository,
     private val scheduler: ReminderScheduler,
     private val oem: OemBatteryHelper,
+    private val importing: ImportStore,
     private val scope: CoroutineScope,
     private val now: () -> Instant = Clock.System::now,
 ) {
@@ -187,6 +199,69 @@ class AppStore(
     // Session
     // -----------------------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------------------
+    // Import (M3)
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * Every route into import comes through here — the people-list action, the empty state
+     * and the first-run offer — so this is the one place that can guarantee the flow starts
+     * without a previous run's report still sitting in the store.
+     *
+     * It has to happen BEFORE an import screen composes. Those screens navigate to the
+     * report by observing `result != null`, so a leftover result made them bounce straight
+     * back out: the user could not reach the contacts list at all until they had tapped
+     * Done on a report they had already read. Reachable because there is no BackHandler —
+     * the system back button on the report finishes the Activity while the store, a
+     * singleton on the Application, keeps the result.
+     */
+    fun openImport() {
+        importing.clearResult()
+        go(Screen.ImportStart)
+    }
+
+    fun openImportContacts() = go(Screen.ImportContacts)
+
+    fun openImportFile() = go(Screen.ImportFile)
+
+    /**
+     * The import finished; show the report.
+     *
+     * The result screen REPLACES the flow rather than stacking on it: backing out of a
+     * report onto the review screen that produced it would invite the user to press Import
+     * a second time, which is safe — it is idempotent — but says the opposite of what just
+     * happened.
+     */
+    fun openImportResult() {
+        backStack.clear()
+        backStack.addLast(Screen.People)
+        _screen.value = Screen.ImportResult
+    }
+
+    fun finishImport() {
+        backStack.clear()
+        _screen.value = Screen.People
+    }
+
+    /**
+     * FR-AUTH-05's "add your first 3 people", where contacts import is offered.
+     *
+     * Only for somebody who has nobody — a returning user signing in on a new phone syncs
+     * their people down and must not be sent into an import flow they do not need. "Not now"
+     * lands on the people list, whose empty state offers the same thing again (FR-VIEW-05),
+     * so declining costs nothing and the route stays visible.
+     *
+     * The count is read at the END of [afterSignedIn], after its pull has run, so a
+     * restored account is never mistaken for a new one.
+     *
+     * Only on an explicit sign-in, never on a session restore at launch. Being navigated
+     * somewhere you did not ask to go is tolerable once, in the five seconds after you
+     * create an account; it is not tolerable every time you open the app.
+     */
+    private suspend fun offerImportToANewUser() {
+        if (people.findAnyPerson() == null) _screen.value = Screen.ImportStart
+    }
+
     fun start() {
         auth.restore()
         _screen.value = if (auth.state.value is AuthState.SignedIn) Screen.People else Screen.SignIn
@@ -200,7 +275,11 @@ class AppStore(
             auth.signIn()
                 .onSuccess {
                     _screen.value = Screen.People
-                    afterSignedIn()
+                    // The import offer rides INSIDE afterSignedIn, after its pull. Called
+                    // out here it would race the sync, and a returning user on a new phone
+                    // would be shoved into an import flow a second before their own people
+                    // arrived.
+                    afterSignedIn(offerImport = true)
                 }
                 .onFailure { error ->
                     if (error !is SignInCancelled) {
@@ -218,7 +297,7 @@ class AppStore(
      * Permission is requested here rather than at first launch so the ask lands when the user
      * has just signed in and the reason is obvious (FR-AUTH-05).
      */
-    private fun afterSignedIn() {
+    private fun afterSignedIn(offerImport: Boolean = false) {
         scope.launch {
             if (!notifications.hasPermission()) notifications.requestPermission()
             auth.registerDevice().onFailure {
@@ -233,6 +312,8 @@ class AppStore(
             // they are stored rather than held in memory.
             plan.refresh()
             refreshReliability()
+            // Last, and only after the pull above: by now a returning account has its people.
+            if (offerImport) offerImportToANewUser()
         }
     }
 

@@ -1,6 +1,8 @@
 package `in`.wishkaro.app.di
 
 import `in`.wishkaro.app.data.TokenStore
+import `in`.wishkaro.app.platform.ContactsGateway
+import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
@@ -44,6 +46,10 @@ class ModulesTest {
                 NotificationGateway::class,
                 ReminderScheduler::class,
                 OemBatteryHelper::class,
+                // M3's two new platform seams: contacts need a ContentResolver and a
+                // runtime permission, files need the Activity's result launchers.
+                ContactsGateway::class,
+                FileGateway::class,
                 // Built inside the module itself from those factories.
                 TokenStore::class,
                 CoroutineScope::class,

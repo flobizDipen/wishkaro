@@ -1,9 +1,14 @@
 package `in`.wishkaro.app.data.repository
 
+import `in`.wishkaro.app.data.local.ImportEntry
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.DedupCandidate
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.domain.RowPlan
+import `in`.wishkaro.app.domain.nameTokens
+import `in`.wishkaro.app.domain.tokensOverlap
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.platform.newId
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +34,9 @@ class PeopleRepository(
     fun observeDeleted(): Flow<List<Person>> = local.observeDeleted()
 
     suspend fun findPerson(id: String): Person? = local.findPerson(id)
+
+    /** Any person at all, for "is this account empty?" — cheaper than loading the list. */
+    suspend fun findAnyPerson(): Person? = local.allPeopleOnce().firstOrNull { it.deletedAt == null }
 
     private fun now(): String = Clock.System.now().toString()
 
@@ -142,10 +150,48 @@ class PeopleRepository(
         if (wanted.isEmpty()) return emptyList()
         return local.allPeopleOnce().filter { person ->
             if (person.deletedAt != null) return@filter false
-            if (nameTokens(person.displayName).none { it in wanted }) return@filter false
+            if (!tokensOverlap(wanted, nameTokens(person.displayName))) return@filter false
             if (date == null) return@filter true
             person.events.any { it.date.day == date.day && it.date.month == date.month }
         }
+    }
+
+    /**
+     * The people for the dedup index, read once per import run rather than per row.
+     *
+     * See [DedupIndex] for why: `findDuplicates` re-tokenises every name on every call,
+     * which is right for the create path and quadratic for a file of 600.
+     */
+    suspend fun dedupCandidates(): List<DedupCandidate> =
+        local.allPeopleOnce().filter { it.deletedAt == null }.map(DedupCandidate::from)
+
+    /**
+     * Write a whole import, then sync.
+     *
+     * The SAME local-first path as every other write: rows land in SQLDelight with
+     * `pending_sync = 1` and the sync engine drains the outbox in pages. There is
+     * deliberately no POST-per-person path — one was not added for import and must not be.
+     *
+     * Returns the ids written, in the order they were written, so the caller can report what
+     * happened rather than assuming it worked.
+     */
+    suspend fun importPeople(ready: List<RowPlan.Ready>): List<String> {
+        if (ready.isEmpty()) return emptyList()
+        val nowIso = now()
+        val entries = ready.map {
+            ImportEntry(
+                personId = newId(),
+                eventId = newId(),
+                displayName = it.name,
+                relation = it.relation,
+                phone = it.phone,
+                notes = it.notes,
+                date = it.date,
+            )
+        }
+        local.importPeopleLocally(entries, nowIso)
+        syncInBackground()
+        return entries.map { it.personId }
     }
 
     fun syncInBackground() {
@@ -154,14 +200,3 @@ class PeopleRepository(
 
     suspend fun syncNow(): Result<SyncEngine.Result> = sync.sync()
 }
-
-/**
- * Lower-cased tokens of two or more characters, so word order and punctuation do not matter.
- * Mirrors the server's rule in people.service.ts — "Jansari Jaydatt" and "Jaydatt Jansari"
- * are one person, and no edit distance would say so.
- */
-private fun nameTokens(name: String): Set<String> =
-    name.lowercase()
-        .split(Regex("[^\\p{L}\\p{N}]+"))
-        .filter { it.length >= 2 }
-        .toSet()

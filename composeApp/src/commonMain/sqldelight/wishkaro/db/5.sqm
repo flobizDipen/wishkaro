@@ -1,0 +1,26 @@
+-- Schema version 5 -> 6 (M3: a row the server refuses must not jam the outbox).
+--
+-- Six additive ALTERs, no back-fill, nothing an existing install can lose. Every new column
+-- has a DEFAULT, so rows written before this migration read as "not blocked", which is what
+-- they are.
+--
+-- WHY THIS EXISTS. Validation on the server runs before anything is applied and the whole
+-- request is rejected together. Until M3 the client sent its entire outbox in one request,
+-- so one row the server would not accept stopped every other row from ever reaching it —
+-- including rows that had nothing to do with it. Chunking the push shrinks the blast radius
+-- from "everything" to "one page of 200". These columns shrink it the rest of the way: the
+-- validation error names the row, so that row is set aside here, with the server's own
+-- reason, and the page goes again without it.
+--
+-- `pending_sync` deliberately STAYS 1 on a blocked row. The row really does still hold an
+-- unsent change; it is only excluded from the drain while it is blocked. Clearing the flag
+-- would be the same as deciding the change had been sent, which is exactly the lie this
+-- milestone is trying not to tell anywhere.
+ALTER TABLE person ADD COLUMN sync_blocked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE person ADD COLUMN sync_block_reason TEXT;
+
+ALTER TABLE event ADD COLUMN sync_blocked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE event ADD COLUMN sync_block_reason TEXT;
+
+ALTER TABLE person_trait ADD COLUMN sync_blocked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE person_trait ADD COLUMN sync_block_reason TEXT;

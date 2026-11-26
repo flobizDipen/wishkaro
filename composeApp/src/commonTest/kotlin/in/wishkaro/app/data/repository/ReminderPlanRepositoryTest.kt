@@ -274,6 +274,8 @@ private fun event(id: String, day: Int, month: Int) = wishkaro.db.Event(
     sentiment = "CELEBRATORY",
     label = null,
     is_muted = 0L,
+    sync_blocked = 0L,
+    sync_block_reason = null,
 )
 
 private fun person(name: String) = Person(

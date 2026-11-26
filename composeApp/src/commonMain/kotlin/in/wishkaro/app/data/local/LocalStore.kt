@@ -2,6 +2,7 @@ package `in`.wishkaro.app.data.local
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOne
 import `in`.wishkaro.app.data.repository.SyncStore
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
@@ -180,6 +181,59 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
         }
     }
 
+    /**
+     * Writes a whole import in ONE transaction, local-first and queued for sync like every
+     * other write (D23). There is no POST-per-person path and there must not be one.
+     *
+     * One transaction for the lot, deliberately. The rows were all decided before this is
+     * called — `planImport` is pure and runs to completion first — so there is nothing left
+     * that can fail halfway on its own merits, and a 600-person import becomes 1,200 inserts
+     * that either all land or none do. That is what "all-or-nothing within the transaction,
+     * partial with respect to the file" means in docs/M3_PLAN.md §5: the FILE may be
+     * half-imported and reported as such, but the database is never half-written, and no
+     * sync run can observe half an import and push it.
+     */
+    suspend fun importPeopleLocally(entries: List<ImportEntry>, nowIso: String) =
+        withContext(Dispatchers.Default) {
+            db.transaction {
+                for (entry in entries) {
+                    people.insertOrReplace(
+                        id = entry.personId,
+                        display_name = entry.displayName,
+                        relation_to_owner = entry.relation,
+                        is_self = 0L,
+                        // RESERVED for M6. An imported contact's photo URI is shown on the
+                        // review screen and discarded; nothing is persisted here and nothing
+                        // is uploaded.
+                        photo_key = null,
+                        gender = null,
+                        phone = entry.phone,
+                        email = null,
+                        notes = entry.notes,
+                        is_deceased = 0L,
+                        // Both derived SERVER-side. Written as zero and overwritten by the
+                        // next pull; import does not get to tell the server what a person is.
+                        is_minor = 0L,
+                        completeness_score = 0L,
+                        completeness_suggestions = "",
+                        updated_at = nowIso,
+                        deleted_at = null,
+                        pending_sync = 1L,
+                    )
+                    insertEvent(
+                        id = entry.eventId,
+                        personId = entry.personId,
+                        type = EventType.BIRTHDAY,
+                        label = null,
+                        date = entry.date,
+                        nowIso = nowIso,
+                        muted = false,
+                        pending = true,
+                    )
+                }
+            }
+        }
+
     suspend fun updatePersonLocally(
         personId: String,
         displayName: String,
@@ -332,14 +386,58 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
     // Sync plumbing
     // -----------------------------------------------------------------------------------
 
-    override suspend fun pendingPeople(): List<wishkaro.db.Person> =
-        withContext(Dispatchers.Default) { people.selectPendingSync().executeAsList() }
+    override suspend fun pendingPeople(limit: Long): List<wishkaro.db.Person> =
+        withContext(Dispatchers.Default) { people.selectPendingSync(limit).executeAsList() }
 
-    override suspend fun pendingEvents(): List<wishkaro.db.Event> =
-        withContext(Dispatchers.Default) { events.selectPendingSync().executeAsList() }
+    override suspend fun pendingEvents(limit: Long): List<wishkaro.db.Event> =
+        withContext(Dispatchers.Default) { events.selectPendingSync(limit).executeAsList() }
 
-    override suspend fun pendingTraits(): List<wishkaro.db.Person_trait> =
-        withContext(Dispatchers.Default) { traits.selectPendingSync().executeAsList() }
+    override suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait> =
+        withContext(Dispatchers.Default) { traits.selectPendingSync(limit).executeAsList() }
+
+    /**
+     * Every person id still waiting to be pushed, blocked ones included.
+     *
+     * Blocked ones ARE included, deliberately: a blocked person is not on the server, so
+     * their events must not be sent either. Excluding them here would send an event whose
+     * person can never arrive, earning an UNKNOWN_PERSON on every run for ever.
+     */
+    override suspend fun pendingPersonIds(): Set<String> = withContext(Dispatchers.Default) {
+        val drainable = people.selectPendingSync(Long.MAX_VALUE).executeAsList().map { it.id }
+        val blocked = people.selectBlocked().executeAsList().map { it.id }
+        (drainable + blocked).toSet()
+    }
+
+    override suspend fun blockPerson(id: String, reason: String) {
+        withContext(Dispatchers.Default) { people.markSyncBlocked(reason, id) }
+    }
+
+    override suspend fun blockEvent(id: String, reason: String) {
+        withContext(Dispatchers.Default) { events.markSyncBlocked(reason, id) }
+    }
+
+    override suspend fun blockTrait(id: String, reason: String) {
+        withContext(Dispatchers.Default) { traits.markSyncBlocked(reason, id) }
+    }
+
+    /** Rows the server named and refused, for the banner that tells the user about them. */
+    fun observeBlockedCount(): Flow<Long> = combine(
+        people.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+        events.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+        traits.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+    ) { p, e, t -> p + e + t }
+
+    /** The blocked rows themselves, with the server's reason, newest problem last. */
+    suspend fun blockedRows(): List<BlockedRow> = withContext(Dispatchers.Default) {
+        val byId = people.selectAll().executeAsList().associateBy({ it.id }, { it.display_name })
+        people.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "person", it.display_name, it.sync_block_reason.orEmpty())
+        } + events.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "event", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
+        } + traits.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "trait", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
+        }
+    }
 
     override suspend fun clearPersonPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(people::clearPendingSync) }
@@ -383,6 +481,13 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
      * SQLite 3.24 and minSdk is 26. A row still flagged `pending_sync` is never overwritten:
      * the local edit has not reached the server yet, so the server's copy is by definition
      * the older one.
+     *
+     * Last-write-wins governs the fields the USER writes. It does NOT govern the columns the
+     * server derives — `is_minor`, `completeness_score`, `completeness_suggestions` and an
+     * event's `sentiment` — because the client never writes those and so can never hold a
+     * newer version of them. Those are taken from any pull that is not racing an unpushed
+     * local edit, whatever the timestamps say. See the comments inside, and §6.3 of
+     * docs/M3_VERIFY.md for the two-second clock skew that made this cost real data.
      */
     override suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
@@ -396,6 +501,28 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
                 if (local != null &&
                     (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
                 ) {
+                    // The local copy wins — for the fields the USER writes. The derived
+                    // columns are a different matter: the client never writes them, so it
+                    // cannot be holding a newer version worth keeping, and deciding them on
+                    // a timestamp comparison is a category error rather than a close call.
+                    //
+                    // It cost real data. The handset M3 was verified on ran two seconds
+                    // ahead of the server, so every freshly pushed person came back with a
+                    // server timestamp OLDER than its own and had its completeness score
+                    // thrown away — FR-PPL-05 inert on every record that device created,
+                    // with nothing in any log. docs/M3_VERIFY.md §6.3.
+                    //
+                    // Not while an edit is still unpushed, though: the server derived these
+                    // from the copy it has, which is the one before that edit, so they are
+                    // stale by definition and the next push-and-pull produces the right ones.
+                    if (local.pending_sync == 0L) {
+                        people.applyServerDerived(
+                            is_minor = if (remote.isMinor) 1L else 0L,
+                            completeness_score = remote.completenessScore.toLong(),
+                            completeness_suggestions = remote.completenessSuggestions.joinToString(","),
+                            id = remote.id,
+                        )
+                    }
                     return@forEach
                 }
                 people.insertOrReplace(
@@ -422,6 +549,14 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
                 if (local != null &&
                     (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
                 ) {
+                    // `sentiment` the same way, and it matters more here than anywhere: the
+                    // client writes a PLACEHOLDER at insert time and depends on the server
+                    // to correct it (FR-EVT-01a). Dropping that correction leaves a deceased
+                    // person's birthday reading CELEBRATORY, which FR-EVT-05 names as the
+                    // worst thing this app can get wrong.
+                    if (local.pending_sync == 0L) {
+                        events.applyServerDerived(sentiment = remote.sentiment, id = remote.id)
+                    }
                     return@forEach
                 }
                 events.insertOrReplace(
@@ -884,4 +1019,35 @@ private fun wishkaro.db.User_settings.toDomain() = ReminderSettings(
     timezone = timezone,
     updatedAt = updated_at,
     pendingSync = pending_sync == 1L,
+)
+
+/**
+ * One row the server named and refused, ready to show the user.
+ *
+ * `personName` rather than an id, because the only useful thing to say about a blocked row
+ * is whose it is — and `reason` is the server's own message, passed through rather than
+ * reworded, so a report of this is a report of what actually happened.
+ */
+data class BlockedRow(
+    val id: String,
+    val entity: String,
+    val personName: String,
+    val reason: String,
+)
+
+/**
+ * One person-and-their-date, ready to write.
+ *
+ * Ids are generated by the CALLER, before the transaction opens, because a client-generated
+ * id is the record's identity for ever (D23) and the transaction should contain nothing but
+ * writes.
+ */
+data class ImportEntry(
+    val personId: String,
+    val eventId: String,
+    val displayName: String,
+    val relation: String?,
+    val phone: String?,
+    val notes: String?,
+    val date: EventDate,
 )

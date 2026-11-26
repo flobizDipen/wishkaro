@@ -11,7 +11,12 @@ CREATE TABLE person_trait (
     source       TEXT    NOT NULL DEFAULT 'USER',
     updated_at   TEXT    NOT NULL,
     deleted_at   TEXT,
-    pending_sync INTEGER NOT NULL DEFAULT 0
+    pending_sync INTEGER NOT NULL DEFAULT 0,
+    -- ---- added in M3 (schema version 6) ----
+    -- See Person.sq and 5.sqm: a row the server named and refused leaves the drain without
+    -- losing its pending flag, so it cannot jam the rows around it.
+    sync_blocked INTEGER NOT NULL DEFAULT 0,
+    sync_block_reason TEXT
 );
 
 CREATE INDEX person_trait_person ON person_trait(person_id);
@@ -28,13 +33,29 @@ selectAllForPerson:
 SELECT * FROM person_trait WHERE person_id = ?;
 
 markRestored:
-UPDATE person_trait SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE person_trait SET deleted_at = NULL, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 selectById:
 SELECT * FROM person_trait WHERE id = ?;
 
 selectPendingSync:
-SELECT * FROM person_trait WHERE pending_sync = 1;
+SELECT * FROM person_trait
+WHERE pending_sync = 1 AND sync_blocked = 0
+ORDER BY updated_at, id
+LIMIT :limit;
+
+selectBlocked:
+SELECT * FROM person_trait WHERE sync_blocked = 1 ORDER BY updated_at;
+
+countBlocked:
+SELECT COUNT(*) FROM person_trait WHERE sync_blocked = 1;
+
+markSyncBlocked:
+UPDATE person_trait SET sync_blocked = 1, sync_block_reason = ? WHERE id = ?;
+
+clearSyncBlocked:
+UPDATE person_trait SET sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 -- No UPSERT anywhere in this schema: it needs SQLite 3.24 (Android 11) and minSdk is 26.
 insertOrReplace:
@@ -43,7 +64,8 @@ INSERT OR REPLACE INTO person_trait(
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 markDeleted:
-UPDATE person_trait SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE person_trait SET deleted_at = ?, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 clearPendingSync:
 UPDATE person_trait SET pending_sync = 0 WHERE id = ?;
