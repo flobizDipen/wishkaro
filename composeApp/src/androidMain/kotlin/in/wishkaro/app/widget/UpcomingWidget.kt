@@ -61,7 +61,7 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
      * does not re-render on every pixel of a resize drag.
      */
     override val sizeMode = SizeMode.Responsive(
-        setOf(SMALL, MEDIUM, LARGE),
+        setOf(SMALL, MEDIUM, TALL, LARGE),
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -77,14 +77,27 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
     }
 
     companion object {
-        /** A 2x2 phone cell. Count and a name or two. */
+        /**
+         * With SizeMode.Responsive, `LocalSize.current` is the BUCKET the launcher picked,
+         * not the widget's real size. That is why these four heights matter: the row count
+         * is computed from them, so a bucket nobody can reach is a layout nobody will see.
+         *
+         * The first version declared only 110dp and 250dp, and dragging the widget to its
+         * full height on a Pixel 9a still reported 110dp — so it stayed at one row and
+         * "+7 more" however large the user made it. [TALL] is the one that fixes that.
+         */
+
+        /** 2x2 on a phone. The count and whoever is first. */
         val SMALL = DpSize(140.dp, 110.dp)
 
         /** 4x2: the usual home-screen row. */
         val MEDIUM = DpSize(250.dp, 110.dp)
 
-        /** 4x4, and what a tablet home screen has room for (FR-VIEW-10). */
-        val LARGE = DpSize(250.dp, 250.dp)
+        /** 4x3-4, which is as tall as a phone's grid goes. */
+        val TALL = DpSize(250.dp, 200.dp)
+
+        /** What a tablet home screen has room for (FR-VIEW-10). */
+        val LARGE = DpSize(300.dp, 300.dp)
 
         /**
          * A week, because the widget answers "whose birthday is it?" and not "what does my
@@ -101,10 +114,14 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
 @androidx.compose.runtime.Composable
 private fun WidgetBody(entries: List<UpcomingEntry>) {
     val size = LocalSize.current
-    val rows = when {
-        size.height >= UpcomingWidget.LARGE.height -> 6
-        else -> 2
-    }
+
+    // How many rows FIT, rather than a breakpoint. The first version switched from 2 rows to
+    // 6 at a single 250dp threshold, and on a phone's home-screen grid that threshold is
+    // effectively unreachable: dragging the widget to its full height on a Pixel 9a still
+    // showed two names and "+6 more". A widget the user has made twice as tall should show
+    // twice as much, on every device, without anybody guessing at grid sizes.
+    val available = size.height - HEADER_HEIGHT - PADDING * 2
+    val rows = (available / ROW_HEIGHT).toInt().coerceIn(1, UpcomingWidget.MAX_ROWS)
     val compact = size.width < UpcomingWidget.MEDIUM.width
 
     Column(
@@ -240,6 +257,11 @@ private fun EntryRow(entry: UpcomingEntry, compact: Boolean) {
         )
     }
 }
+
+/** Measured from the rendered widget on a Pixel 9a rather than guessed. */
+private val HEADER_HEIGHT = 34.dp
+private val ROW_HEIGHT = 46.dp
+private val PADDING = 12.dp
 
 private fun Int.sp() = androidx.compose.ui.unit.TextUnit(
     this.toFloat(),

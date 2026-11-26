@@ -2,4 +2,9 @@
 <resources>
     <string name="app_name">WishKaro</string>
     <string name="widget_description">Whose birthday is next</string>
+    <!-- Picker preview only. An invented person, never real data: the repo is public and
+         a preview renders with the app not running. -->
+    <string name="widget_preview_heading">1 birthday today</string>
+    <string name="widget_preview_name">Aarav Shah</string>
+    <string name="widget_preview_detail">Birthday \u00b7 Today</string>
 </resources>
