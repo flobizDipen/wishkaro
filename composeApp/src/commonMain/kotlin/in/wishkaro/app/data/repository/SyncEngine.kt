@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.local.RemoteWish
 import `in`.wishkaro.app.data.remote.ApiException
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
@@ -14,6 +15,7 @@ import `in`.wishkaro.app.data.remote.SyncPushRequest
 import `in`.wishkaro.app.data.remote.SyncPushResponse
 import `in`.wishkaro.app.data.remote.SyncSkipped
 import `in`.wishkaro.app.data.remote.SyncTraitPush
+import `in`.wishkaro.app.data.remote.SyncWishPush
 import `in`.wishkaro.app.domain.ReminderSettings
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,8 +48,13 @@ class SyncEngine(
 ) {
     private val mutex = Mutex()
 
-    data class Counts(val people: Int = 0, val events: Int = 0, val traits: Int = 0) {
-        val total: Int get() = people + events + traits
+    data class Counts(
+        val people: Int = 0,
+        val events: Int = 0,
+        val traits: Int = 0,
+        val wishes: Int = 0,
+    ) {
+        val total: Int get() = people + events + traits + wishes
     }
 
     data class Result(
@@ -67,8 +74,9 @@ class SyncEngine(
          */
         val blocked: List<Blocked> = emptyList(),
         /**
-         * Events and traits deliberately held back because their person is pending but did
-         * not fit in this run's snapshot. They go next run. Zero in every ordinary case.
+         * Events, traits and wishes deliberately held back because their person is pending
+         * but did not fit in this run's snapshot. They go next run. Zero in every ordinary
+         * case.
          */
         val deferred: Int = 0,
         /**
@@ -226,9 +234,19 @@ class SyncEngine(
         val people = local.pendingPeople(OUTBOX_SNAPSHOT_LIMIT)
         val events = local.pendingEvents(OUTBOX_SNAPSHOT_LIMIT)
         val traits = local.pendingTraits(OUTBOX_SNAPSHOT_LIMIT)
-        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) return PushOutcome()
+        val wishes = local.pendingWishes(OUTBOX_SNAPSHOT_LIMIT)
+        if (people.isEmpty() && events.isEmpty() && traits.isEmpty() && wishes.isEmpty()) {
+            return PushOutcome()
+        }
 
-        val plan = planPages(people, events, traits, local.pendingPersonIds(), maxPages = maxPushPages)
+        val plan = planPages(
+            people,
+            events,
+            traits,
+            wishes,
+            local.pendingPersonIds(),
+            maxPages = maxPushPages,
+        )
 
         var counts = Counts()
         val rejected = mutableListOf<SyncSkipped>()
@@ -240,6 +258,7 @@ class SyncEngine(
                 people = counts.people + result.counts.people,
                 events = counts.events + result.counts.events,
                 traits = counts.traits + result.counts.traits,
+                wishes = counts.wishes + result.counts.wishes,
             )
             rejected += result.skipped
         }
@@ -287,6 +306,7 @@ class SyncEngine(
                     PERSON -> local.blockPerson(row.id, row.reason)
                     EVENT -> local.blockEvent(row.id, row.reason)
                     TRAIT -> local.blockTrait(row.id, row.reason)
+                    WISH -> local.blockWish(row.id, row.reason)
                 }
                 blocked += Blocked(row.id, row.entity, row.reason)
             }
@@ -336,9 +356,20 @@ class SyncEngine(
             clear = local::clearTraitPending,
             restamp = { local.restampTraitPending(it, retryStamp) },
         )
+        settle(
+            ids = page.wishes.map { it.id },
+            skipped = response.skipped.filter { it.entity == WISH },
+            clear = local::clearWishPending,
+            restamp = { local.restampWishPending(it, retryStamp) },
+        )
 
         return PageResult(
-            counts = Counts(page.people.size, page.events.size, page.traits.size),
+            counts = Counts(
+                page.people.size,
+                page.events.size,
+                page.traits.size,
+                page.wishes.size,
+            ),
             skipped = response.skipped,
         )
     }
@@ -389,6 +420,25 @@ class SyncEngine(
                 value = it.value_,
                 updatedAt = it.updated_at,
                 deletedAt = it.deleted_at,
+            )
+        },
+        wishes = wishes.map {
+            SyncWishPush(
+                id = it.id,
+                personId = it.person_id,
+                type = it.type,
+                occurrenceYear = it.occurrence_year.toInt(),
+                eventId = it.event_id,
+                messageText = it.message_text,
+                tone = it.tone,
+                language = it.language,
+                channel = it.channel,
+                source = it.source,
+                sentAt = it.sent_at,
+                updatedAt = it.updated_at,
+                deletedAt = it.deleted_at,
+                // `sentiment` is deliberately not sent. The server derives it, and its write
+                // schema is .strict() — sending it would turn every sync into a 400.
             )
         },
     )
@@ -483,12 +533,31 @@ class SyncEngine(
                         deletedAt = it.deletedAt,
                     )
                 },
+                remoteWishes = page.wishes.map {
+                    RemoteWish(
+                        id = it.id,
+                        personId = it.personId,
+                        type = it.type,
+                        occurrenceYear = it.occurrenceYear,
+                        sentiment = it.sentiment,
+                        eventId = it.eventId,
+                        messageText = it.messageText,
+                        tone = it.tone,
+                        language = it.language,
+                        channel = it.channel,
+                        source = it.source,
+                        sentAt = it.sentAt,
+                        updatedAt = it.updatedAt,
+                        deletedAt = it.deletedAt,
+                    )
+                },
                 cursor = page.cursor,
             )
             counts = Counts(
                 counts.people + page.people.size,
                 counts.events + page.events.size,
                 counts.traits + page.traits.size,
+                counts.wishes + page.wishes.size,
             )
             cursor = page.cursor
             if (!page.hasMore) return counts
@@ -499,7 +568,7 @@ class SyncEngine(
     private companion object {
         const val MAX_PAGES = 50
 
-        // PERSON / EVENT / TRAIT are the same wire values, and live in SyncPaging.kt
+        // PERSON / EVENT / TRAIT / WISH are the same wire values, and live in SyncPaging.kt
         // because the paging code needs them too. Matched as strings so an unrecognised
         // reason from a newer server is simply not one of the ones we hold — it clears,
         // exactly as an acknowledgement would, rather than sticking in the outbox forever.

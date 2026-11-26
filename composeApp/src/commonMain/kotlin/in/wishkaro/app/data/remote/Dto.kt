@@ -192,6 +192,31 @@ data class SyncTraitDto(
     val deletedAt: String? = null,
 )
 
+/**
+ * A wish on the way DOWN (FR-HIS-01). M5.
+ *
+ * `sentiment` is here and absent from [SyncWishPush], the same split [SyncEventDto] and
+ * [SyncEventPush] already have: the app has to word a history entry correctly with no server
+ * in reach, and it must never be the side that decides what solemn means.
+ */
+@Serializable
+data class SyncWishDto(
+    val id: String,
+    val personId: String,
+    val type: String = "BIRTHDAY",
+    val occurrenceYear: Int,
+    val sentiment: String = "SOLEMN",
+    val eventId: String? = null,
+    val messageText: String,
+    val tone: String,
+    val language: String,
+    val channel: String,
+    val source: String,
+    val sentAt: String,
+    val updatedAt: String,
+    val deletedAt: String? = null,
+)
+
 // ---- push shapes: derived fields deliberately absent ----
 
 @Serializable
@@ -233,11 +258,34 @@ data class SyncTraitPush(
     val deletedAt: String? = null,
 )
 
+/**
+ * A wish on the way UP. No `sentiment` — the server derives it and `.strict()` rejects it —
+ * and no `posterId`, which M6 owns and nothing writes yet.
+ */
+@Serializable
+data class SyncWishPush(
+    val id: String,
+    val personId: String,
+    val type: String = "BIRTHDAY",
+    val occurrenceYear: Int,
+    val eventId: String? = null,
+    val messageText: String,
+    val tone: String,
+    val language: String,
+    val channel: String,
+    val source: String,
+    val sentAt: String,
+    val updatedAt: String,
+    val deletedAt: String? = null,
+)
+
 @Serializable
 data class SyncPullResponse(
     val people: List<SyncPersonDto> = emptyList(),
     val events: List<SyncEventDto> = emptyList(),
     val traits: List<SyncTraitDto> = emptyList(),
+    /** Empty from an M4 server, which has never heard of a wish. M5. */
+    val wishes: List<SyncWishDto> = emptyList(),
     /** Always present from M2; nullable so an older server does not break the client. */
     val settings: SettingsDto? = null,
     val cursor: String,
@@ -250,11 +298,17 @@ data class SyncPushRequest(
     val people: List<SyncPersonPush> = emptyList(),
     val events: List<SyncEventPush> = emptyList(),
     val traits: List<SyncTraitPush> = emptyList(),
+    val wishes: List<SyncWishPush> = emptyList(),
     val settings: SettingsPush? = null,
 )
 
 @Serializable
-data class SyncApplied(val people: Int = 0, val events: Int = 0, val traits: Int = 0)
+data class SyncApplied(
+    val people: Int = 0,
+    val events: Int = 0,
+    val traits: Int = 0,
+    val wishes: Int = 0,
+)
 
 @Serializable
 data class SyncSkipped(val id: String, val entity: String, val reason: String)

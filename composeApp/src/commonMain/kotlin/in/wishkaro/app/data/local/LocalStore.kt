@@ -11,6 +11,11 @@ import `in`.wishkaro.app.domain.PersonEvent
 import `in`.wishkaro.app.domain.PersonTrait
 import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.TraitKind
+import `in`.wishkaro.app.domain.Wish
+import `in`.wishkaro.app.domain.WishChannel
+import `in`.wishkaro.app.domain.WishLanguage
+import `in`.wishkaro.app.domain.WishSource
+import `in`.wishkaro.app.domain.WishTone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -79,6 +84,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
     private val delivery = db.deliveryReportQueries
     private val settings = db.userSettingsQueries
     private val scheduled = db.scheduledReminderQueries
+    private val wishes = db.wishQueries
 
     // -----------------------------------------------------------------------------------
     // Reads
@@ -383,6 +389,86 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
         }
 
     // -----------------------------------------------------------------------------------
+    // Wish history (FR-HIS-01, FR-WSH-07, FR-PPL-07)
+    // -----------------------------------------------------------------------------------
+
+    /** This person's history, newest first, live. FR-PPL-07's list on the person screen. */
+    fun observeWishes(personId: String): Flow<List<Wish>> =
+        wishes.selectForPerson(personId).asFlow().mapToList(Dispatchers.Default)
+            .map { rows -> rows.map { it.toWish() } }
+
+    /**
+     * FR-HIS-04's "Last year you sent…", read locally so it is there with the radio off.
+     *
+     * Strictly earlier years, the same line the server's no-repeat query draws. The two have
+     * to agree about which side of it today is on, or the composer would show the user a
+     * message the model was never told to avoid.
+     */
+    suspend fun previousWishes(
+        personId: String,
+        type: EventType,
+        occurrenceYear: Int,
+        limit: Long = 3,
+    ): List<Wish> = withContext(Dispatchers.Default) {
+        wishes
+            .selectPreviousForOccasion(personId, type.wire, occurrenceYear.toLong(), limit)
+            .executeAsList()
+            .map { it.toWish() }
+    }
+
+    /**
+     * Record a wish the user has just sent (FR-WSH-07).
+     *
+     * Written locally first and flagged for the outbox, like every other write in this app —
+     * so answering "yes, I sent it" works on a train, which is exactly where somebody who
+     * just handed a message to WhatsApp is likely to be.
+     *
+     * `sentiment` is a PLACEHOLDER taken from the person's mirrored flag, and the next pull
+     * replaces it with the server's answer. The client is allowed to guess here because it is
+     * copying a value the server already derived onto the person; it is not allowed to KEEP
+     * its guess, which is what applyRemote's applyServerDerived call is for.
+     */
+    suspend fun recordWishLocally(
+        id: String,
+        personId: String,
+        type: EventType,
+        occurrenceYear: Int,
+        sentiment: Sentiment,
+        eventId: String?,
+        messageText: String,
+        tone: WishTone,
+        language: WishLanguage,
+        channel: WishChannel,
+        source: WishSource,
+        nowIso: String,
+    ): Unit = withContext(Dispatchers.Default) {
+        wishes.insertOrReplace(
+            id = id,
+            person_id = personId,
+            type = type.wire,
+            occurrence_year = occurrenceYear.toLong(),
+            sentiment = sentiment.name,
+            event_id = eventId,
+            message_text = messageText,
+            tone = tone.wire,
+            language = language.wire,
+            channel = channel.wire,
+            source = source.wire,
+            poster_id = null,
+            sent_at = nowIso,
+            updated_at = nowIso,
+            deleted_at = null,
+            pending_sync = 1L,
+        )
+    }
+
+    /** The user withdrawing an entry from their own history. A tombstone, never a DELETE. */
+    suspend fun deleteWishLocally(wishId: String, nowIso: String): Unit =
+        withContext(Dispatchers.Default) {
+            wishes.markDeleted(deleted_at = nowIso, updated_at = nowIso, id = wishId)
+        }
+
+    // -----------------------------------------------------------------------------------
     // Sync plumbing
     // -----------------------------------------------------------------------------------
 
@@ -394,6 +480,9 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
 
     override suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait> =
         withContext(Dispatchers.Default) { traits.selectPendingSync(limit).executeAsList() }
+
+    override suspend fun pendingWishes(limit: Long): List<wishkaro.db.Wish> =
+        withContext(Dispatchers.Default) { wishes.selectPendingSync(limit).executeAsList() }
 
     /**
      * Every person id still waiting to be pushed, blocked ones included.
@@ -420,12 +509,17 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
         withContext(Dispatchers.Default) { traits.markSyncBlocked(reason, id) }
     }
 
+    override suspend fun blockWish(id: String, reason: String) {
+        withContext(Dispatchers.Default) { wishes.markSyncBlocked(reason, id) }
+    }
+
     /** Rows the server named and refused, for the banner that tells the user about them. */
     fun observeBlockedCount(): Flow<Long> = combine(
         people.countBlocked().asFlow().mapToOne(Dispatchers.Default),
         events.countBlocked().asFlow().mapToOne(Dispatchers.Default),
         traits.countBlocked().asFlow().mapToOne(Dispatchers.Default),
-    ) { p, e, t -> p + e + t }
+        wishes.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+    ) { p, e, t, w -> p + e + t + w }
 
     /** The blocked rows themselves, with the server's reason, newest problem last. */
     suspend fun blockedRows(): List<BlockedRow> = withContext(Dispatchers.Default) {
@@ -436,6 +530,8 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
             BlockedRow(it.id, "event", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
         } + traits.selectBlocked().executeAsList().map {
             BlockedRow(it.id, "trait", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
+        } + wishes.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "wish", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
         }
     }
 
@@ -449,6 +545,10 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
 
     override suspend fun clearTraitPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(traits::clearPendingSync) }
+    }
+
+    override suspend fun clearWishPending(ids: List<String>) = withContext(Dispatchers.Default) {
+        db.transaction { ids.forEach(wishes::clearPendingSync) }
     }
 
     /**
@@ -474,6 +574,11 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
             db.transaction { ids.forEach { traits.restampPending(updatedAt, it) } }
         }
 
+    override suspend fun restampWishPending(ids: List<String>, updatedAt: String) =
+        withContext(Dispatchers.Default) {
+            db.transaction { ids.forEach { wishes.restampPending(updatedAt, it) } }
+        }
+
     /**
      * Applies a page pulled from the server.
      *
@@ -493,6 +598,7 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
         remotePeople: List<RemotePerson>,
         remoteEvents: List<RemoteEvent>,
         remoteTraits: List<RemoteTrait>,
+        remoteWishes: List<RemoteWish>,
         cursor: String,
     ) = withContext(Dispatchers.Default) {
         db.transaction {
@@ -587,6 +693,40 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
                     kind = remote.kind,
                     value_ = remote.value,
                     source = remote.source,
+                    updated_at = remote.updatedAt,
+                    deleted_at = remote.deletedAt,
+                    pending_sync = 0L,
+                )
+            }
+            remoteWishes.forEach { remote ->
+                val local = wishes.selectById(remote.id).executeAsOneOrNull()
+                if (local != null &&
+                    (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt))
+                ) {
+                    // `sentiment` is the server's, exactly as it is on an event, and for the
+                    // same reason: the client writes a placeholder when it records a wish and
+                    // depends on the server to correct it. Dropping that correction over a
+                    // clock skew would word a dead person's history entry as a celebration.
+                    if (local.pending_sync == 0L) {
+                        wishes.applyServerDerived(sentiment = remote.sentiment, id = remote.id)
+                    }
+                    return@forEach
+                }
+                wishes.insertOrReplace(
+                    id = remote.id,
+                    person_id = remote.personId,
+                    type = remote.type,
+                    occurrence_year = remote.occurrenceYear.toLong(),
+                    sentiment = remote.sentiment,
+                    event_id = remote.eventId,
+                    message_text = remote.messageText,
+                    tone = remote.tone,
+                    language = remote.language,
+                    channel = remote.channel,
+                    source = remote.source,
+                    // M6 owns this column; an M5 server never sends one.
+                    poster_id = null,
+                    sent_at = remote.sentAt,
                     updated_at = remote.updatedAt,
                     deleted_at = remote.deletedAt,
                     pending_sync = 0L,
@@ -949,6 +1089,33 @@ private fun wishkaro.db.Person_trait.toTrait(): PersonTrait? {
     return PersonTrait(id = id, personId = person_id, kind = parsed, value = value_)
 }
 
+/**
+ * A wish row to the domain.
+ *
+ * Unlike [toTrait] this never returns null, and the difference is deliberate. A trait with an
+ * unrecognised `kind` is a chip we do not know how to show, so dropping it costs nothing. A
+ * wish with an unrecognised tone is still something the user sent to somebody, and dropping
+ * it would make FR-PPL-07's history silently incomplete and FR-WSH-02's no-repeat rule
+ * silently weaker. So the unknown ENUM becomes null and the row survives.
+ *
+ * `sentiment` uses [Sentiment.from], which falls back to SOLEMN — the safe direction. A
+ * history entry we cannot classify is worded as remembrance rather than as a celebration.
+ */
+private fun wishkaro.db.Wish.toWish(): Wish = Wish(
+    id = id,
+    personId = person_id,
+    type = EventType.from(type),
+    occurrenceYear = occurrence_year.toInt(),
+    sentiment = Sentiment.from(sentiment),
+    eventId = event_id,
+    messageText = message_text,
+    tone = WishTone.from(tone),
+    language = WishLanguage.from(language),
+    channel = WishChannel.from(channel),
+    source = WishSource.from(source),
+    sentAt = sent_at,
+)
+
 data class RemotePerson(
     val id: String,
     val displayName: String,
@@ -986,6 +1153,23 @@ data class RemoteTrait(
     val kind: String,
     val value: String,
     val source: String,
+    val updatedAt: String,
+    val deletedAt: String?,
+)
+
+data class RemoteWish(
+    val id: String,
+    val personId: String,
+    val type: String,
+    val occurrenceYear: Int,
+    val sentiment: String,
+    val eventId: String?,
+    val messageText: String,
+    val tone: String,
+    val language: String,
+    val channel: String,
+    val source: String,
+    val sentAt: String,
     val updatedAt: String,
     val deletedAt: String?,
 )

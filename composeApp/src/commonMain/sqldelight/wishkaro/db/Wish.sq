@@ -1,0 +1,122 @@
+-- Local mirror of the server's wish table (FR-HIS-01, FR-WSH-07, FR-PPL-07). M5.
+--
+-- The fourth synced entity, and it behaves like the other three: `pending_sync` is the
+-- outbox, soft deletes are tombstones rather than DELETEs, and `sync_blocked` sets aside a
+-- row the server has named and refused so it cannot jam the rows around it.
+--
+-- COLUMN ORDER IS LOAD-BEARING — see the note in Person.sq. This table is CREATED whole by
+-- 6.sqm rather than being ALTERed into shape, so the order here is simply the order 6.sqm
+-- uses, and the two must stay identical or `verifyMigrations` fails the build.
+--
+-- `sentiment` is MIRRORED from the server and never computed here, exactly as event.sentiment
+-- is. A history entry on a deceased person's screen has to be worded solemnly offline, and a
+-- client that derived tone from `type` would get a remembrance birthday wrong — FR-EVT-05
+-- calls that the worst failure this app can have, and M1 made it once.
+--
+-- `event_id` is a SOFT reference with no foreign key, matching the server. Deleting an event
+-- must not delete the record of what was sent for it.
+CREATE TABLE wish (
+    id                TEXT    NOT NULL PRIMARY KEY,
+    person_id         TEXT    NOT NULL,
+    type              TEXT    NOT NULL,
+    occurrence_year   INTEGER NOT NULL,
+    -- Server-derived. The client writes a placeholder at insert time and relies on the
+    -- server's answer to correct it, the same arrangement event.sentiment already has.
+    --
+    -- The default is SOLEMN where event.sentiment's is CELEBRATORY, deliberately. That
+    -- column's default dates from M0, when nothing could be deceased; this one is written
+    -- knowing otherwise, and it matches Sentiment.from(), which falls back to SOLEMN because
+    -- the safe direction is to say too little. A default is only ever reached when something
+    -- has already gone wrong, and the wrong answer in that moment should not be the one that
+    -- congratulates somebody about a death.
+    sentiment         TEXT    NOT NULL DEFAULT 'SOLEMN',
+    event_id          TEXT,
+    message_text      TEXT    NOT NULL,
+    tone              TEXT    NOT NULL,
+    language          TEXT    NOT NULL,
+    channel           TEXT    NOT NULL,
+    source            TEXT    NOT NULL,
+    -- Reserved for M6's poster. Nothing writes it in M5.
+    poster_id         TEXT,
+    -- When the user said yes, not when the draft was produced (FR-WSH-07).
+    sent_at           TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL,
+    deleted_at        TEXT,
+    pending_sync      INTEGER NOT NULL DEFAULT 0,
+    sync_blocked      INTEGER NOT NULL DEFAULT 0,
+    sync_block_reason TEXT
+);
+
+CREATE INDEX wish_person ON wish(person_id);
+CREATE INDEX wish_pending_sync ON wish(pending_sync);
+-- FR-PPL-07's history list and FR-HIS-04's "last year you sent…" both read this.
+CREATE INDEX wish_occasion ON wish(person_id, type, occurrence_year);
+
+-- The person screen's history (FR-PPL-07), newest first.
+selectForPerson:
+SELECT * FROM wish WHERE person_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC;
+
+selectById:
+SELECT * FROM wish WHERE id = ?;
+
+-- FR-HIS-04: "Last year you sent…", shown in the composer and on the person screen.
+--
+-- STRICTLY earlier years. A wish already recorded for this year is the user having already
+-- sent one, not something to compare against — the server's no-repeat query draws the same
+-- line, in wish-history.service.ts, and the two must agree about which side of it today is on.
+selectPreviousForOccasion:
+SELECT * FROM wish
+WHERE person_id = ? AND type = ? AND occurrence_year < ? AND deleted_at IS NULL
+ORDER BY occurrence_year DESC, sent_at DESC
+LIMIT :limit;
+
+-- The outbox, as the sync engine drains it. See Person.sq for why the three clauses are
+-- each load-bearing.
+selectPendingSync:
+SELECT * FROM wish
+WHERE pending_sync = 1 AND sync_blocked = 0
+ORDER BY updated_at, id
+LIMIT :limit;
+
+selectBlocked:
+SELECT * FROM wish WHERE sync_blocked = 1 ORDER BY updated_at;
+
+countBlocked:
+SELECT COUNT(*) FROM wish WHERE sync_blocked = 1;
+
+markSyncBlocked:
+UPDATE wish SET sync_blocked = 1, sync_block_reason = ? WHERE id = ?;
+
+clearSyncBlocked:
+UPDATE wish SET sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
+
+-- INSERT OR REPLACE rather than UPSERT: minSdk is 26 and UPSERT needs SQLite 3.24
+-- (Android 11). See the note in Person.sq.
+insertOrReplace:
+INSERT OR REPLACE INTO wish(
+    id, person_id, type, occurrence_year, sentiment, event_id,
+    message_text, tone, language, channel, source, poster_id,
+    sent_at, updated_at, deleted_at, pending_sync
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- A wish the user has withdrawn from their own history. A tombstone the sync engine pushes,
+-- never a DELETE — a deletion made offline still has to reach the server.
+markDeleted:
+UPDATE wish SET deleted_at = ?, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
+
+-- The one column on a wish the server owns. Same reasoning as event.applyServerDerived: the
+-- client cannot hold a newer version of something it never writes, so arbitrating it with a
+-- client clock is a category error (M3 §6.3).
+applyServerDerived:
+UPDATE wish SET sentiment = ? WHERE id = ?;
+
+clearPendingSync:
+UPDATE wish SET pending_sync = 0 WHERE id = ?;
+
+-- See person.restampPending: re-assert a local write the server rejected as STALE.
+restampPending:
+UPDATE wish SET updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+deleteAll:
+DELETE FROM wish;

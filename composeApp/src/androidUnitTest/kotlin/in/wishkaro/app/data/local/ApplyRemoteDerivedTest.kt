@@ -117,6 +117,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(updatedAt = "2026-11-26T06:04:00.481Z")),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -138,6 +139,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(name = "STALE NAME FROM THE SERVER", updatedAt = "2026-11-26T06:04:00.481Z")),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -155,6 +157,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(updatedAt = "2026-11-26T06:04:00.481Z", isMinor = true)),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -175,6 +178,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(updatedAt = "2026-11-26T06:04:00.481Z")),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -192,6 +196,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(name = "New Name", updatedAt = "2026-11-26T06:05:00.000Z")),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -208,6 +213,7 @@ class ApplyRemoteDerivedTest {
             remotePeople = listOf(remote(id = "new", updatedAt = "2026-11-26T06:05:00.000Z")),
             remoteEvents = emptyList(),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -259,6 +265,7 @@ class ApplyRemoteDerivedTest {
                 ),
             ),
             remoteTraits = emptyList(),
+            remoteWishes = emptyList(),
             cursor = "c1",
         )
 
@@ -269,7 +276,7 @@ class ApplyRemoteDerivedTest {
 
     @Test
     fun the_cursor_is_still_advanced() = runTest {
-        store.applyRemote(emptyList(), emptyList(), emptyList(), cursor = "cursor-42")
+        store.applyRemote(emptyList(), emptyList(), emptyList(), emptyList(), cursor = "cursor-42")
         assertTrue(store.cursor() == "cursor-42")
     }
 }
