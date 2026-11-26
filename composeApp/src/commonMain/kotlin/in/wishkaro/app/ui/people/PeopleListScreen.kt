@@ -15,6 +15,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
+import `in`.wishkaro.app.data.local.BlockedRow
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +69,7 @@ fun PeopleListScreen(
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenImport: () -> Unit,
+    blockedRecords: List<BlockedRow>,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -144,6 +154,14 @@ fun PeopleListScreen(
                 // makes import a feature you can use once, by accident, on your first day.
                 TextButton(onClick = onOpenImport) { Text("Import") }
                 TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
+            }
+
+            // Records the server refused and this device has set aside. Shown here, above
+            // the list, because the consequence is invisible otherwise: those people stop
+            // syncing and never get a server-scheduled reminder, and nothing else in the app
+            // would ever mention it.
+            if (blockedRecords.isNotEmpty()) {
+                BlockedBanner(blockedRecords)
             }
 
             if (cards.isEmpty()) {
@@ -295,5 +313,63 @@ private fun EmptyState(
                 TextButton(onClick = onAddPerson) { Text("Add one by hand") }
             }
         }
+    }
+}
+
+/**
+ * "2 records could not be saved to the server" — and, on a tap, which and why.
+ *
+ * The reason shown is the SERVER'S own message, passed through rather than reworded. It is
+ * the only thing that tells the user what to change, and a friendlier paraphrase of a
+ * message we did not write would be a guess.
+ */
+@Composable
+private fun BlockedBanner(blocked: List<BlockedRow>) {
+    var open by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clickable { open = true },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                if (blocked.size == 1) {
+                    "1 record could not be saved to the server"
+                } else {
+                    "${blocked.size} records could not be saved to the server"
+                },
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                "They are safe on this phone, but they are not syncing and will not get " +
+                    "reminders. Tap to see why.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("Not saved to the server") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Editing one of these people re-queues it, so fixing what the " +
+                            "server objected to is enough to get them syncing again.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    for (row in blocked) {
+                        Text(row.personName, style = MaterialTheme.typography.titleSmall)
+                        Text(row.reason, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
+        )
     }
 }
