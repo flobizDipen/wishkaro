@@ -1,0 +1,17 @@
+Full Name,Birthday,How I know them,Mobile,Notes
+Aarav Shah,04/01/1990,Cousin,+91 98200 11111,likes cricket
+Meera Raghunathan,22 Sep 1988,Aunt,,
+Rohit Desai,14-03-65,Uncle,9820022222,two-digit year — 1965 not 2065
+Kavya Nair,25/12,Friend,,day and month only
+Ishaan Patel,05/06/1992,Friend,,ambiguous: 5 June under dd/MM
+Ananya Rao,1990-02-14,Colleague,,ISO
+"Rajesh ""Raj"" Kumar, Jr",15 August 1975,Neighbour,9820033333,"quotes, and a comma in the name"
+Saanvi Joshi,29/02,Sister,,29 Feb with no year is a real birthday
+जयदत्त जांसरी,02/10/1985,Father,,Devanagari
+જયદત્ત જાંસરી,02/10/1985,Father,,Gujarati — the same person, written another way
+Diya Menon,31/04/1990,Colleague,,BROKEN: 31 April does not exist
+Vihaan Iyer,29/02/2023,Boss,,BROKEN: 2023 was not a leap year
+Myra Bhatt,not a date,Friend,,BROKEN: unreadable
+,04/01/1990,Friend,,BROKEN: no name
+Arjun Pillai,,Cousin,,BROKEN: no date
+Aarav Shah,04/01/1990,Cousin,,DUPLICATE of row 2 — same file, same person
