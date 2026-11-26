@@ -40,7 +40,27 @@ export class SpendCapService {
    *
    * Summed from the ledger rather than from a counter, because the ledger is already the
    * record of what was spent and a second source of truth for the same number is a second
-   * thing to get wrong. At this app's volume the query is an index scan over one day.
+   * thing to get wrong.
+   *
+   * **It needs `@@index([createdAt])`, and an earlier version of this comment claimed a
+   * performance property the schema did not support.** `ai_usage` originally had only
+   * `(userId, createdAt)` and `(feature, createdAt)`; `created_at` is the TRAILING column in
+   * both, so neither can range-scan on it. Measured on 200,000 rows:
+   *
+   * | | buffers | time |
+   * |---|---|---|
+   * | before the index | 1,465 to return 227 rows | 7.77 ms |
+   * | after it | 226 | 0.43 ms |
+   *
+   * The work was proportional to every row the table had ever held, not to one day's — and
+   * this runs BEFORE the per-user limiter (see `DraftingService`), so it also ran for every
+   * request the limiter was about to reject. A rail meant to stop a runaway was the most
+   * expensive thing in the request and got slower daily. On a public endpoint behind a token
+   * anybody can mint, a cheap request that forces a full scan is also the shape somebody
+   * abuses.
+   *
+   * The sentence that was here is the kind a reader trusts instead of checking, so the
+   * numbers above are measured rather than asserted.
    *
    * **UTC days**, like the per-user limiter and for the same reason: a spend ceiling is a
    * property of our bill, not of any user's calendar, and a per-user local day would make the
@@ -66,7 +86,18 @@ export class SpendCapService {
     return true;
   }
 
-  /** Today's total, in INR, across every feature. Also the number worth putting on a dashboard. */
+  /**
+   * Today's total, in INR, **across every feature** — and that is the intent rather than an
+   * accident of the query.
+   *
+   * §10 rule 6 says "a global daily spend cap", and the thing being capped is the bill. M6's
+   * posters and M8's gift ideas write to this same table and will land in this same total,
+   * so the cap they share is the one that actually bounds what a day can cost. A per-feature
+   * cap would let three features each sit just under their own ceiling and together spend
+   * three times what anybody intended.
+   *
+   * Also the number worth putting on a dashboard.
+   */
   async spentToday(now: Date = new Date()): Promise<number> {
     const startOfDay = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),

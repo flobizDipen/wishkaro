@@ -303,7 +303,30 @@ Per §D, and all of them went red:
 | `Retry-After` on a 429 | 2, through a real request |
 | The provider the DI graph hands out | 1 |
 
-### 5.2 A revert-check that went green, and what it exposed
+### 5.2 A doc comment that claimed a performance property the schema did not have
+
+The spend cap's comment said its query was "an index scan over one day". Raised in review,
+and `EXPLAIN (ANALYZE, BUFFERS)` on 200,000 rows settled it rather than an argument about it:
+
+| | buffers | time |
+|---|---|---|
+| before `@@index([createdAt])` | **1,465** to return 227 rows | 7.77 ms |
+| after it | **226** | 0.43 ms |
+
+It *was* an index scan — over the whole index, with the date as a filter, because
+`created_at` is the TRAILING column in both of `ai_usage`'s original indexes. The work grew
+with every row the table had ever held.
+
+Worse than a slow query, because of where the check sits: `isCapped()` runs **before** the
+per-user limiter, so the scan also ran for every request the limiter was about to reject. The
+rail meant to stop a runaway was the most expensive thing in the request and got slower
+daily — and on a public endpoint behind a token anybody can mint, a cheap request that forces
+a full scan is the shape somebody abuses.
+
+Fixed with the index. The comment now carries the measured numbers rather than an assertion,
+because the sentence that was there is the kind a reader trusts instead of checking.
+
+### 5.3 A revert-check that went green, and what it exposed
 
 Deleting `text: { format: DRAFT_SCHEMA }` from the OpenAI request broke **nothing**. Every
 adapter test drives a fake client that ignores the request and returns a canned response, so
@@ -317,7 +340,7 @@ revert-check bites now.
 Worth generalising: a fake that stands in for a remote service tests the response handling
 for free and the request construction not at all, unless it is asked to.
 
-### 5.3 A test that passed by luck
+### 5.4 A test that passed by luck
 
 Two composer tests asserted on a history row written on `Dispatchers.Default`, and **one of
 them passed anyway**. That is worse than both failing: a green suite that is not actually

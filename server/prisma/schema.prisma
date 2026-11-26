@@ -615,5 +615,19 @@ model AiUsage {
   @@index([userId, createdAt])
   /// "What does this feature cost" — the question M6 needs answered before it prices posters.
   @@index([feature, createdAt])
+  /// `createdAt` ALONE, for the global daily spend cap (§10 rule 6).
+  ///
+  /// The two indexes above both lead on another column, so neither can range-scan on
+  /// `created_at`. Measured on 200,000 rows before this index existed, the cap's
+  /// `SUM(cost_inr) WHERE created_at >= $startOfDay` read **1,465 buffers to return 227
+  /// rows** — a full index scan using the date as a filter, so the work grew with every row
+  /// the table had ever held rather than with one day's.
+  ///
+  /// That is on the hot path and on the wrong side of it: `isCapped()` runs BEFORE the
+  /// per-user rate limiter, so it also ran for every request the limiter was about to
+  /// reject. A rail meant to stop a runaway was the most expensive thing in the request and
+  /// got slower daily — and on a public endpoint behind a token anybody can mint, a cheap
+  /// request that forces a full scan is also the shape somebody abuses.
+  @@index([createdAt])
   @@map("ai_usage")
 }
