@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import type { EventType, TraitKind } from '@prisma/client';
 import { APP_ENV, type AppEnv } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
+import { nameTokens, tokensOverlap } from './name-tokens';
 import {
   daysUntil,
   formatCivil,
@@ -560,20 +561,4 @@ export class PeopleService {
         .sort((a, b) => a.daysUntil - b.daysUntil),
     };
   }
-}
-
-/** Lower-cased alphanumeric tokens, so word order and punctuation do not matter. */
-function nameTokens(name: string): Set<string> {
-  return new Set(
-    name
-      .toLowerCase()
-      .split(/[^a-z0-9ऀ-ॿ]+/)
-      .filter((t) => t.length >= 2),
-  );
-}
-
-/** True when the two names share a whole token — a surname, or a first name. */
-function tokensOverlap(a: Set<string>, b: Set<string>): boolean {
-  for (const token of a) if (b.has(token)) return true;
-  return false;
 }

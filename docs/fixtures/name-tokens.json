@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "The ONE table of cases for the name-token rule, read by BOTH implementations:",
+    "composeApp/src/commonTest/.../NameTokensTest.kt and server/src/modules/people/name-tokens.spec.ts.",
+    "",
+    "The rule is a normalised-token match, not an edit distance: 'Jansari Jaydatt' and",
+    "'Jaydatt Jansari' are the same human and no sensible edit distance says so, while",
+    "'Aarav' and 'Aarti' are different humans and a loose edit distance says they are not.",
+    "",
+    "Every person in this file is INVENTED. The repo is public.",
+    "",
+    "`tokens` is the expected set, order-insensitive. See docs/M3_PLAN.md §3 for why both",
+    "implementations had to change to agree on it."
+  ],
+  "cases": [
+    { "name": "Jansari Jaydatt", "tokens": ["jansari", "jaydatt"], "why": "the base case" },
+    { "name": "Jaydatt Jansari", "tokens": ["jansari", "jaydatt"], "why": "word order must not matter — the case BUILD_PROMPT_M3 names" },
+    { "name": "  Jaydatt   Jansari  ", "tokens": ["jansari", "jaydatt"], "why": "double spaces and padding collapse" },
+    { "name": "JAYDATT JANSARI", "tokens": ["jansari", "jaydatt"], "why": "case folds" },
+
+    { "name": "जयदत्त जांसरी", "tokens": ["जयदत्त", "जांसरी"], "why": "Devanagari: the virama and the vowel signs are PART of the word, not separators. The Kotlin rule used to split here, yielding जयदत + सर" },
+    { "name": "જયદત્ત જાંસરી", "tokens": ["જયદત્ત", "જાંસરી"], "why": "Gujarati: the TypeScript rule used to produce an EMPTY set, which findDuplicates reads as 'no duplicates' for every such person" },
+    { "name": "ஜெயதத் ஜான்சரி", "tokens": ["ஜெயதத்", "ஜான்சரி"], "why": "Tamil: same failure as Gujarati on the server side" },
+    { "name": "জয়দত্ত জানসারি", "tokens": ["জয়দত্ত", "জানসারি"], "why": "Bengali" },
+    { "name": "ಜಯದತ್ತ ಜಾನಸರಿ", "tokens": ["ಜಯದತ್ತ", "ಜಾನಸರಿ"], "why": "Kannada" },
+
+    { "name": "José Álvarez", "tokens": ["josé", "álvarez"], "why": "accented Latin: the server used to give jos + lvarez, so the two sides disagreed about whether two records were one person" },
+    { "name": "Zoë", "tokens": ["zoë"], "why": "a single accented token survives the two-character floor" },
+    { "name": "Jose Alvarez", "tokens": ["jose", "alvarez"], "why": "KNOWN LIMIT: this does NOT match José Álvarez. Stripping diacritics means stripping combining marks, which is exactly what breaks every Indic name above" },
+
+    { "name": "Anne-Marie Dsouza", "tokens": ["anne", "marie", "dsouza"], "why": "a hyphen separates" },
+    { "name": "O'Brien", "tokens": ["brien"], "why": "the apostrophe separates and the one-letter O is below the floor — deliberate, and the reason a one-token name can still match on a surname" },
+    { "name": "Dr. Meera Raghunathan", "tokens": ["dr", "meera", "raghunathan"], "why": "a title is a token; it is common to both records or to neither" },
+    { "name": "R. K. Narayanan", "tokens": ["narayanan"], "why": "single-letter initials fall below the floor; the surname carries the match" },
+    { "name": "Aarav Shah 2", "tokens": ["aarav", "shah"], "why": "a single digit is below the floor too" },
+    { "name": "Priya (work)", "tokens": ["priya", "work"], "why": "brackets separate; a disambiguating note becomes its own token" },
+
+    { "name": "", "tokens": [], "why": "no tokens. findDuplicates must return nothing rather than matching everyone" },
+    { "name": "   ", "tokens": [], "why": "whitespace only" },
+    { "name": "A B", "tokens": [], "why": "every token below the floor — same as empty" }
+  ],
+  "duplicate_pairs": [
+    { "a": "Jansari Jaydatt", "b": "Jaydatt Jansari", "match": true, "why": "shared tokens, order reversed" },
+    { "a": "Meera Raghunathan", "b": "Dr. Meera Raghunathan", "match": true, "why": "a title does not make a second person" },
+    { "a": "Aarav Shah", "b": "Aarti Shah", "match": true, "why": "they share a surname, so the NAME rule matches — the day/month check is what separates them. This is why dedup is name tokens PLUS a date, never name alone" },
+    { "a": "Aarav", "b": "Aarti", "match": false, "why": "no shared token. A loose edit distance would call these one person; this rule does not" },
+    { "a": "જયદત્ત જાંસરી", "b": "જાંસરી જયદત્ત", "match": true, "why": "the Gujarati case that used to match NOTHING on the server" },
+    { "a": "Priya", "b": "Priya Menon", "match": true, "why": "a first name alone is a legitimate match" },
+    { "a": "José Álvarez", "b": "Jose Alvarez", "match": false, "why": "the known limit, stated as a case so it is a decision and not a surprise" }
+  ]
+}

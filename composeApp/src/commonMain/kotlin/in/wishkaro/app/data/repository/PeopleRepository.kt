@@ -4,6 +4,8 @@ import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.domain.nameTokens
+import `in`.wishkaro.app.domain.tokensOverlap
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.platform.newId
 import kotlinx.coroutines.CoroutineScope
@@ -142,7 +144,7 @@ class PeopleRepository(
         if (wanted.isEmpty()) return emptyList()
         return local.allPeopleOnce().filter { person ->
             if (person.deletedAt != null) return@filter false
-            if (nameTokens(person.displayName).none { it in wanted }) return@filter false
+            if (!tokensOverlap(wanted, nameTokens(person.displayName))) return@filter false
             if (date == null) return@filter true
             person.events.any { it.date.day == date.day && it.date.month == date.month }
         }
@@ -154,14 +156,3 @@ class PeopleRepository(
 
     suspend fun syncNow(): Result<SyncEngine.Result> = sync.sync()
 }
-
-/**
- * Lower-cased tokens of two or more characters, so word order and punctuation do not matter.
- * Mirrors the server's rule in people.service.ts — "Jansari Jaydatt" and "Jaydatt Jansari"
- * are one person, and no edit distance would say so.
- */
-private fun nameTokens(name: String): Set<String> =
-    name.lowercase()
-        .split(Regex("[^\\p{L}\\p{N}]+"))
-        .filter { it.length >= 2 }
-        .toSet()
