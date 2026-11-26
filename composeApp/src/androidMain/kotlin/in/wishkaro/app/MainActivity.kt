@@ -8,6 +8,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import `in`.wishkaro.app.platform.ActivityHolder
 import `in`.wishkaro.app.platform.ContactsPermissionBridge
 import `in`.wishkaro.app.platform.FilePickerBridge
@@ -17,6 +22,7 @@ import `in`.wishkaro.app.ui.AppStore
 import kotlinx.coroutines.CompletableDeferred
 import org.koin.android.ext.android.inject
 
+@OptIn(ExperimentalComposeUiApi::class)
 class MainActivity : ComponentActivity() {
 
     private val store: AppStore by inject()
@@ -132,7 +138,17 @@ class MainActivity : ComponentActivity() {
         }
 
         handleDeepLink(intent)
-        setContent { App() }
+        setContent {
+            // Makes every `Modifier.testTag("...")` in the shared UI appear as a
+            // `resource-id` in a `uiautomator dump`, which is what lets tools/device/ui.sh
+            // resolve a tap target from the view tree instead of reading a coordinate off a
+            // screenshot. Three blind taps across M2 and M3 went into another app, a Slack
+            // reply box and a different person's record; every guard rail those bought
+            // checks the state BEFORE the tap. See docs/M4_PLAN.md §4.
+            //
+            // Android-only API, so it lives here rather than in commonMain's App().
+            Box(Modifier.semantics { testTagsAsResourceId = true }) { App() }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
