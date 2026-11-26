@@ -1,0 +1,235 @@
+{
+  "_comment": [
+    "The ONE table of cases for the poster theme library, read by BOTH implementations:",
+    "server/src/modules/posters/theme-library.spec.ts and",
+    "composeApp/src/androidUnitTest/.../PosterThemesTest.kt.",
+    "",
+    "The rule exists twice, in two languages, because the SERVER refuses a theme that does",
+    "not belong to the occasion's family and the CLIENT filters the picker so the user never",
+    "sees one. Neither half can be dropped: a client that only filtered would let a tampered",
+    "request through, and a server that only validated would show somebody a cake on a",
+    "remembrance and then 400 when they tapped it. MILESTONE_CHECKLIST.md §C — a rule",
+    "implemented twice is held to one shared table of cases, and the table is this file,",
+    "not a copy of it.",
+    "",
+    "== TBD-5 IS NOT ANSWERED, AND THESE ARE NOT ART DIRECTION ==",
+    "",
+    "REQUIREMENTS.md §18 lists TBD-5 — 'visual identity: palette, type, icon, poster template",
+    "art direction' — as due at M4. It is still open. FR-POS-04 asks for themes that are",
+    "HAND-APPROVED and FR-POS-13 asks for a solemn family, and neither is a thing a session",
+    "can decide: 'hand-approved' names a hand.",
+    "",
+    "So every theme below is a PLACEHOLDER and says so in its own display name. Their",
+    "`approved` flag is false in theme_cache until a person sets it, and the picker only ever",
+    "offers approved rows. What is being built and tested here is the MECHANISM — the",
+    "families, the filter, the cache key, the compositor's geometry. What the posters look",
+    "like is Dipen's, and when he answers TBD-5 the fix is this file and the palettes, not",
+    "the pipeline. docs/M6_PLAN.md §2.1.",
+    "",
+    "== FR-POS-13, as a lexicon on the DATA rather than on a prompt ==",
+    "",
+    "FR-POS-13: a solemn theme has a 'muted palette, no balloons, confetti, cake or party",
+    "motifs'. `banned_on_solemn` below is that sentence as a list, and both suites assert no",
+    "SOLEMN theme's id, display name, art prompt or motif list contains any of those words.",
+    "",
+    "M5 §0.3 learned where a lexicon assertion can and cannot live: it CANNOT be pointed at a",
+    "prompt, because a prompt has to name what it forbids — 'never congratulate' fails its own",
+    "check. It CAN be pointed at the words a recipient actually reads, or at data like this.",
+    "These are motifs that get drawn, so this is the right surface for it.",
+    "",
+    "== REQUIREMENTS.md §11 files this under CORRECTNESS ==",
+    "",
+    "'Automated tests assert that no SOLEMN event can ever produce celebratory copy, a",
+    "celebratory template, a gift suggestion or a T-7 gifting reminder.' The middle clause is",
+    "M6's, and the `offered: false` rows in `picker_cases` are the test that must go RED if",
+    "somebody puts a celebratory theme back into the solemn family — docs/BUILD_PROMPT_M6.md,",
+    "definition of done item 2."
+  ],
+
+  "families": ["CELEBRATORY", "SOLEMN"],
+
+  "_family_for_sentiment": [
+    "The mapping, in one place. It is one-to-one today and it is still written down rather",
+    "than inlined, because FR-POS-13's filter is the thing most likely to go wrong in this",
+    "milestone and a mapping nobody can point at is a mapping two call sites will disagree",
+    "about. A sentiment is a fact about an occasion; a family is a property of a picture."
+  ],
+  "family_for_sentiment": {
+    "CELEBRATORY": "CELEBRATORY",
+    "SOLEMN": "SOLEMN"
+  },
+
+  "_aspect_ratios": [
+    "FR-POS-05's three output formats, as the aspect-ratio component of FR-POS-03's cache",
+    "key. STATUS is the default — the WhatsApp status size, which is what this product is",
+    "for."
+  ],
+  "aspect_ratios": {
+    "STATUS": { "ratio": "9:16", "width": 1080, "height": 1920 },
+    "SQUARE": { "ratio": "1:1", "width": 1080, "height": 1080 },
+    "LINK": { "ratio": "1.91:1", "width": 1200, "height": 630 }
+  },
+  "default_format": "STATUS",
+
+  "banned_on_solemn": [
+    "balloon",
+    "balloons",
+    "confetti",
+    "cake",
+    "party",
+    "streamer",
+    "streamers",
+    "firework",
+    "fireworks",
+    "celebrate",
+    "celebration",
+    "congratulations",
+    "congrats",
+    "cheers",
+    "hurray",
+    "festive"
+  ],
+
+  "themes": [
+    {
+      "id": "ph-confetti",
+      "family": "CELEBRATORY",
+      "displayName": "Confetti — placeholder",
+      "palette": "festive",
+      "motifs": ["confetti", "streamers"],
+      "background": { "from": "#F9A826", "to": "#EF5DA8" },
+      "textColor": "#1A1A1A"
+    },
+    {
+      "id": "ph-sunrise",
+      "family": "CELEBRATORY",
+      "displayName": "Sunrise — placeholder",
+      "palette": "warm",
+      "motifs": ["sun", "gradient"],
+      "background": { "from": "#FFD166", "to": "#EF476F" },
+      "textColor": "#1A1A1A"
+    },
+    {
+      "id": "ph-bloom",
+      "family": "CELEBRATORY",
+      "displayName": "Bloom — placeholder",
+      "palette": "floral",
+      "motifs": ["flowers", "petals"],
+      "background": { "from": "#A8E6CF", "to": "#3D84A8" },
+      "textColor": "#0B2B33"
+    },
+    {
+      "id": "ph-gold",
+      "family": "CELEBRATORY",
+      "displayName": "Gold — placeholder",
+      "palette": "gold",
+      "motifs": ["foil", "rays"],
+      "background": { "from": "#F7E7A1", "to": "#B8860B" },
+      "textColor": "#2B2000"
+    },
+
+    {
+      "_comment": [
+        "The solemn family. Muted, by construction rather than by filter — these are three",
+        "separate entries in a separate family, not celebratory themes with the motifs taken",
+        "out. domain/Tone.kt took the same decision for words and said why: a conditional is",
+        "a thing someone can forget, and a set you have to pick is a thing the compiler makes",
+        "you pick.",
+        "",
+        "A remembrance template is never a birthday template with the balloons removed."
+      ],
+      "id": "ph-stillwater",
+      "family": "SOLEMN",
+      "displayName": "Still water — placeholder",
+      "palette": "muted-blue",
+      "motifs": ["water", "horizon"],
+      "background": { "from": "#5C7A89", "to": "#2E4057" },
+      "textColor": "#F2F4F5"
+    },
+    {
+      "id": "ph-dusk",
+      "family": "SOLEMN",
+      "displayName": "Dusk — placeholder",
+      "palette": "muted-grey",
+      "motifs": ["sky", "dusk"],
+      "background": { "from": "#8D99AE", "to": "#2B2D42" },
+      "textColor": "#F2F4F5"
+    },
+    {
+      "id": "ph-lamp",
+      "family": "SOLEMN",
+      "displayName": "Lamp — placeholder",
+      "palette": "muted-amber",
+      "motifs": ["diya", "flame"],
+      "background": { "from": "#7A6652", "to": "#2C2418" },
+      "textColor": "#F5EFE6"
+    }
+  ],
+
+  "_picker_cases": [
+    "What the picker offers, per sentiment. REQUIREMENTS.md §11 files this under correctness,",
+    "and FR-POS-13 says celebratory themes are filtered OUT for a solemn occasion rather than",
+    "merely ranked lower.",
+    "",
+    "Every `offered: false` row here is a test that must go RED if somebody widens the",
+    "filter — definition-of-done item 2. Note that the solemn themes are NOT offered on a",
+    "celebratory occasion either: that direction is not a tone-safety failure, but a picker",
+    "that quietly offered everything to everybody would make the four rows above pass for the",
+    "wrong reason, and a rule that holds in only one direction is a rule nobody can rely on."
+  ],
+  "picker_cases": [
+    { "sentiment": "CELEBRATORY", "themeId": "ph-confetti", "offered": true, "why": "a birthday gets the celebratory family" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-sunrise", "offered": true, "why": "same family" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-bloom", "offered": true, "why": "same family" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-gold", "offered": true, "why": "same family" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-stillwater", "offered": false, "why": "a remembrance theme is not an error on a birthday, but it is not what was asked for" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-dusk", "offered": false, "why": "same" },
+    { "sentiment": "CELEBRATORY", "themeId": "ph-lamp", "offered": false, "why": "same" },
+
+    { "sentiment": "SOLEMN", "themeId": "ph-confetti", "offered": false, "why": "THE failure this milestone is most likely to produce: confetti on a death anniversary" },
+    { "sentiment": "SOLEMN", "themeId": "ph-sunrise", "offered": false, "why": "FR-POS-13 — celebratory themes are filtered OUT, not ranked lower" },
+    { "sentiment": "SOLEMN", "themeId": "ph-bloom", "offered": false, "why": "same" },
+    { "sentiment": "SOLEMN", "themeId": "ph-gold", "offered": false, "why": "a milestone flourish on a remembrance is the same mistake wearing better clothes" },
+    { "sentiment": "SOLEMN", "themeId": "ph-stillwater", "offered": true, "why": "the solemn family" },
+    { "sentiment": "SOLEMN", "themeId": "ph-dusk", "offered": true, "why": "the solemn family" },
+    { "sentiment": "SOLEMN", "themeId": "ph-lamp", "offered": true, "why": "the solemn family" }
+  ],
+
+  "_key_cases": [
+    "FR-POS-03's cache key — (theme, event type, milestone, palette, aspect ratio) — composed",
+    "in exactly ONE place on each side so that two call sites cannot disagree about what a",
+    "cache hit is. §8's indexing note: theme_cache(theme_key) must be unique or caching",
+    "silently fails, and a key built twice is a uniqueness constraint protecting two different",
+    "things.",
+    "",
+    "The null-milestone row matters: FR-EVT-02 makes 'year unknown' a first-class case, so a",
+    "birthday with no year has no milestone, and the key for it must be stable rather than",
+    "containing the word 'undefined'."
+  ],
+  "key_cases": [
+    {
+      "themeId": "ph-confetti",
+      "eventType": "BIRTHDAY",
+      "milestone": null,
+      "palette": "festive",
+      "aspectRatio": "9:16",
+      "key": "ph-confetti|BIRTHDAY|-|festive|9:16"
+    },
+    {
+      "themeId": "ph-gold",
+      "eventType": "WEDDING_ANNIVERSARY",
+      "milestone": "25th Silver",
+      "palette": "gold",
+      "aspectRatio": "1:1",
+      "key": "ph-gold|WEDDING_ANNIVERSARY|25th Silver|gold|1:1"
+    },
+    {
+      "themeId": "ph-stillwater",
+      "eventType": "DEATH_ANNIVERSARY",
+      "milestone": "12 years",
+      "palette": "muted-blue",
+      "aspectRatio": "1.91:1",
+      "key": "ph-stillwater|DEATH_ANNIVERSARY|12 years|muted-blue|1.91:1"
+    }
+  ]
+}
