@@ -7,6 +7,8 @@ import `in`.wishkaro.app.platform.IosContactsGateway
 import `in`.wishkaro.app.platform.IosFileGateway
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.IosGoogleSignInClient
+import `in`.wishkaro.app.platform.IosMessageSender
+import `in`.wishkaro.app.platform.MessageSender
 import `in`.wishkaro.app.platform.IosNotificationGateway
 import `in`.wishkaro.app.platform.NoopOemBatteryHelper
 import `in`.wishkaro.app.platform.NoopReminderScheduler
@@ -29,4 +31,7 @@ actual fun platformModule(): Module = module {
     // asking again would do nothing, which is what that outcome means.
     single<ContactsGateway> { IosContactsGateway() }
     single<FileGateway> { IosFileGateway() }
+    // M5: same again. Returning false is handled by the composer, which already has to
+    // cope with WhatsApp not being installed on Android.
+    single<MessageSender> { IosMessageSender() }
 }

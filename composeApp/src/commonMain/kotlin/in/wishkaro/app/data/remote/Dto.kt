@@ -192,6 +192,31 @@ data class SyncTraitDto(
     val deletedAt: String? = null,
 )
 
+/**
+ * A wish on the way DOWN (FR-HIS-01). M5.
+ *
+ * `sentiment` is here and absent from [SyncWishPush], the same split [SyncEventDto] and
+ * [SyncEventPush] already have: the app has to word a history entry correctly with no server
+ * in reach, and it must never be the side that decides what solemn means.
+ */
+@Serializable
+data class SyncWishDto(
+    val id: String,
+    val personId: String,
+    val type: String = "BIRTHDAY",
+    val occurrenceYear: Int,
+    val sentiment: String = "SOLEMN",
+    val eventId: String? = null,
+    val messageText: String,
+    val tone: String,
+    val language: String,
+    val channel: String,
+    val source: String,
+    val sentAt: String,
+    val updatedAt: String,
+    val deletedAt: String? = null,
+)
+
 // ---- push shapes: derived fields deliberately absent ----
 
 @Serializable
@@ -233,11 +258,34 @@ data class SyncTraitPush(
     val deletedAt: String? = null,
 )
 
+/**
+ * A wish on the way UP. No `sentiment` — the server derives it and `.strict()` rejects it —
+ * and no `posterId`, which M6 owns and nothing writes yet.
+ */
+@Serializable
+data class SyncWishPush(
+    val id: String,
+    val personId: String,
+    val type: String = "BIRTHDAY",
+    val occurrenceYear: Int,
+    val eventId: String? = null,
+    val messageText: String,
+    val tone: String,
+    val language: String,
+    val channel: String,
+    val source: String,
+    val sentAt: String,
+    val updatedAt: String,
+    val deletedAt: String? = null,
+)
+
 @Serializable
 data class SyncPullResponse(
     val people: List<SyncPersonDto> = emptyList(),
     val events: List<SyncEventDto> = emptyList(),
     val traits: List<SyncTraitDto> = emptyList(),
+    /** Empty from an M4 server, which has never heard of a wish. M5. */
+    val wishes: List<SyncWishDto> = emptyList(),
     /** Always present from M2; nullable so an older server does not break the client. */
     val settings: SettingsDto? = null,
     val cursor: String,
@@ -250,11 +298,17 @@ data class SyncPushRequest(
     val people: List<SyncPersonPush> = emptyList(),
     val events: List<SyncEventPush> = emptyList(),
     val traits: List<SyncTraitPush> = emptyList(),
+    val wishes: List<SyncWishPush> = emptyList(),
     val settings: SettingsPush? = null,
 )
 
 @Serializable
-data class SyncApplied(val people: Int = 0, val events: Int = 0, val traits: Int = 0)
+data class SyncApplied(
+    val people: Int = 0,
+    val events: Int = 0,
+    val traits: Int = 0,
+    val wishes: Int = 0,
+)
 
 @Serializable
 data class SyncSkipped(val id: String, val entity: String, val reason: String)
@@ -295,4 +349,44 @@ data class ApiErrorIssue(
     val path: String,
     val message: String,
     val code: String? = null,
+)
+
+// ---- M5: wish drafting (FR-WSH-01..04) ----
+
+/**
+ * What the client is allowed to ask for.
+ *
+ * Ids and choices, never meanings. No relation, no hobbies, no `sentiment` — the server looks
+ * those up, and `sentiment` in particular decides which prompt family runs and which tones
+ * are legal, so a client that could assert it could ask for a Funny draft about a death
+ * anniversary. The server's schema is `.strict()` and would reject one anyway; not having a
+ * field to put it in is the half that makes it a compile error here.
+ */
+@Serializable
+data class DraftWishRequest(
+    val personId: String,
+    val eventId: String? = null,
+    val eventType: String,
+    val occurrenceYear: Int,
+    val tone: String,
+    val language: String,
+    /** Drafts turned down in THIS sitting (FR-WSH-04). Ephemeral — nothing is stored. */
+    val avoid: List<String> = emptyList(),
+)
+
+@Serializable
+data class DraftWishResponse(
+    val text: String,
+    val tone: String,
+    val language: String,
+    /**
+     * AI or TEMPLATE, decided by the SERVER.
+     *
+     * The client does not get to say whether a model wrote this. Writing AI into the history
+     * for something a template produced would be the app lying in its own records, and the
+     * server is the only side that knows which provider served the call.
+     */
+    val source: String = "AI",
+    val model: String? = null,
+    val draftedAt: String? = null,
 )

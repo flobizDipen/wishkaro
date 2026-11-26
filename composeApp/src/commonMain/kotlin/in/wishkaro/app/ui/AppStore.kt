@@ -13,6 +13,7 @@ import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.domain.TraitKind
+import `in`.wishkaro.app.domain.Wish
 import `in`.wishkaro.app.domain.toCard
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
@@ -160,6 +161,9 @@ class AppStore(
     private var pendingDeepLinkPersonId: String? = null
 
     /** Guards [start] against re-entry from a recomposed root. See the comment there. */
+    /** See [composeWishFor]. One-shot, cleared the instant it is used. */
+    private var pendingComposeFor: Pair<String, String?>? = null
+
     private val started = MutableStateFlow(false)
 
     /**
@@ -584,10 +588,59 @@ class AppStore(
      * field, which is cleared the instant it is used.
      */
     private fun consumePendingDeepLink() {
+        val pendingCompose = pendingComposeFor
+        if (pendingCompose != null) {
+            pendingComposeFor = null
+            if (auth.state.value !is AuthState.SignedIn) return
+            navigate(
+                NavEvent.ResetTo(
+                    listOf(
+                        Screen.People,
+                        Screen.PersonDetail(pendingCompose.first),
+                        Screen.WishComposer(pendingCompose.first, pendingCompose.second),
+                    ),
+                ),
+            )
+            return
+        }
+
         val personId = pendingDeepLinkPersonId ?: return
         pendingDeepLinkPersonId = null
         if (auth.state.value !is AuthState.SignedIn) return
         navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
+    }
+
+    /**
+     * A notification's **Send wish** / **Send message** action was tapped (FR-WSH-01).
+     *
+     * The synthetic stack is People → the person → the composer, deliberately three deep.
+     * Backing out of a message somebody decided not to send should land on that person, not
+     * on a list — they tapped a reminder ABOUT someone, and the thing they are most likely
+     * to want next is that someone.
+     *
+     * The same one-shot rule as [focusPerson], for the same reason and with the same history:
+     * a `Screen` left on this Application-scoped object is re-read by every later Activity,
+     * so rotating after a notification threw the user back into the composer. `_focusedPersonId`
+     * stays a value because "which row the list highlights" has a duration; this does not.
+     */
+    fun composeWishFor(personId: String, eventId: String?) {
+        _focusedPersonId.value = personId
+        if (auth.state.value is AuthState.SignedIn) {
+            navigate(
+                NavEvent.ResetTo(
+                    listOf(
+                        Screen.People,
+                        Screen.PersonDetail(personId),
+                        Screen.WishComposer(personId, eventId),
+                    ),
+                ),
+            )
+        } else {
+            // Cold start: the Activity handled the intent in onCreate, which runs before
+            // composition, which is where [start] restores the session. Hold it until there
+            // is somebody to show it to — M4 §found this with the person deep link.
+            pendingComposeFor = personId to eventId
+        }
     }
 
     // -----------------------------------------------------------------------------------
@@ -723,6 +776,38 @@ class AppStore(
     fun removeTrait(traitId: String) {
         scope.launch { people.removeTrait(traitId) }
     }
+
+    // -----------------------------------------------------------------------------------
+    // Wish history (FR-PPL-07)
+    // -----------------------------------------------------------------------------------
+
+    /**
+     * One person's history, live, from the local mirror.
+     *
+     * A flow per person rather than one map for everybody: a person screen wants one
+     * person's rows and nothing else, and the 575-person account makes "all wishes, grouped"
+     * a query nobody needs. The sync pull writes into the same table, so this updates on its
+     * own when another device's send arrives.
+     *
+     * **COLD, and deliberately not a `StateFlow`.** Every other flow on this store is a
+     * property initialised once; this is the only one behind a function, because it takes an
+     * argument — and the first version ended it with the same
+     * `.stateIn(scope, WhileSubscribed, emptyList())` the properties use.
+     *
+     * That was wrong in two ways at once, found in review of PR #7. `stateIn` launches a
+     * sharing coroutine into `scope`, which lives on the Koin Application singleton and is
+     * never cancelled, so **one coroutine and one SQLDelight subscription accumulated per
+     * call** — and the call site was inline in composition with no `remember`, so it ran on
+     * every recomposition. `collectAsState` also keys on the flow INSTANCE, so each new one
+     * restarted collection from `emptyList()` and the history visibly flashed empty whenever
+     * anything recomposed that screen.
+     *
+     * Returning the cold flow fixes the leak at the source: nothing is launched here, and
+     * collection lives and dies with the composition that asks for it. The call site
+     * remembers it by `personId` so the instance is stable. The signature is the guard —
+     * putting `stateIn` back is a deliberate type change rather than a line somebody adds.
+     */
+    fun wishesOf(personId: String): Flow<List<Wish>> = local.observeWishes(personId)
 
     /**
      * A one-line note for the snackbar, for callers outside the store.

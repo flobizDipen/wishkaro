@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.local.RemoteWish
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.DeliveryReportResponse
@@ -397,10 +398,19 @@ private class FakeStore(
         ids.forEach { restampedTraits[it] = updatedAt }
     }
 
+    override suspend fun pendingWishes(limit: Long): List<wishkaro.db.Wish> = emptyList()
+
+    override suspend fun blockWish(id: String, reason: String) = Unit
+
+    override suspend fun clearWishPending(ids: List<String>) = Unit
+
+    override suspend fun restampWishPending(ids: List<String>, updatedAt: String) = Unit
+
     override suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
         remoteEvents: List<RemoteEvent>,
         remoteTraits: List<RemoteTrait>,
+        remoteWishes: List<RemoteWish>,
         cursor: String,
     ) = Unit
 

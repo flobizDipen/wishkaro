@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -29,6 +30,8 @@ import `in`.wishkaro.app.ui.importing.ImportFileScreen
 import `in`.wishkaro.app.ui.importing.ImportResultScreen
 import `in`.wishkaro.app.ui.importing.ImportStartScreen
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.wish.WishComposerScreen
+import `in`.wishkaro.app.ui.wish.WishStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
 import `in`.wishkaro.app.ui.nav.showsTabs
@@ -62,6 +65,7 @@ fun App(modifier: Modifier = Modifier) {
     WishKaroTheme {
         val store: AppStore = koinInject()
         val importStore: ImportStore = koinInject()
+        val wishStore: WishStore = koinInject()
         val nav = rememberWishKaroNavigation()
         // FR-VIEW-06: compact gets a bottom bar, medium and expanded get a rail. Read once,
         // here, so the whole shell agrees about which it is.
@@ -140,7 +144,7 @@ fun App(modifier: Modifier = Modifier) {
             if (authState !is AuthState.SignedIn) {
                 SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
             } else {
-                val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, nav, inner))
+                val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, wishStore, nav, inner))
                 val twoPane = rememberTwoPaneSceneStrategy<NavKey>()
                 RailOrNot(
                     kind = navigationKind,
@@ -224,6 +228,7 @@ private fun TopLevelScaffold(
 private fun wishKaroEntryProvider(
     store: AppStore,
     importStore: ImportStore,
+    wishStore: WishStore,
     nav: WishKaroNavigation,
     inner: Modifier,
 ): (NavKey) -> NavEntry<NavKey> = entryProvider {
@@ -279,6 +284,9 @@ private fun wishKaroEntryProvider(
                 sections = sections,
                 focusedPersonId = focused,
                 onOpenPerson = { nav.goTo(Screen.PersonDetail(it)) },
+                onSendWish = { personId, eventId ->
+                    nav.goTo(Screen.WishComposer(personId, eventId))
+                },
                 onAddPerson = {
                     store.prepareAddPerson()
                     nav.goTo(Screen.AddPerson)
@@ -402,6 +410,12 @@ private fun wishKaroEntryProvider(
             onDelete = { store.deletePerson(key.personId, person?.displayName ?: "They") },
             onAddTrait = { kind, value -> store.addTrait(key.personId, kind, value) },
             onRemoveTrait = store::removeTrait,
+            onSendWish = { eventId -> nav.goTo(Screen.WishComposer(key.personId, eventId)) },
+            // `remember` by personId, not inline. Without it a new flow instance is built on
+            // every recomposition and `collectAsState` keys on the instance, so collection
+            // restarts from empty and the history flashes. See AppStore.wishesOf.
+            wishes = remember(key.personId) { store.wishesOf(key.personId) }
+                .collectAsState(emptyList()).value,
             modifier = inner,
         )
     }
@@ -493,6 +507,56 @@ private fun wishKaroEntryProvider(
     // of a report onto the review screen would invite the user to press Import a second
     // time. That is safe — it is idempotent — but it says the opposite of what just
     // happened. `resetTo` above is what makes back from here reach the list.
+    /**
+     * The composer (FR-WSH-01).
+     *
+     * NO two-pane metadata, and that is FR-VIEW-08 implemented rather than omitted: two
+     * panes are opt-in, so staying single-pane at every width is what saying nothing does.
+     *
+     * `LaunchedEffect(key)` rather than a one-shot flag: the key carries the person and the
+     * event, so navigating from one person's composer to another's re-opens it, and a
+     * recomposition does not. Closing on dispose clears the draft, which matters because a
+     * half-written message to one person must never appear in a composer for another.
+     */
+    entry<Screen.WishComposer> { key ->
+        val person = store.personOf(key.personId)
+        val loaded by store.peopleLoaded.collectAsState()
+        val composer by wishStore.state.collectAsState()
+
+        LaunchedEffect(key, person?.id, loaded) {
+            if (person != null && composer.person?.id != person.id) wishStore.open(person, key.eventId)
+        }
+        DisposableEffect(key) { onDispose { wishStore.close() } }
+
+        WishComposerScreen(
+            state = composer.copy(person = person ?: composer.person, loaded = loaded),
+            onBack = nav::back,
+            onToneChange = wishStore::setTone,
+            onLanguageChange = wishStore::setLanguage,
+            onRegenerate = wishStore::regenerate,
+            onEdit = wishStore::edit,
+            onSend = { channel ->
+                if (!wishStore.handOff(channel)) {
+                    store.showMessage("Couldn't open that app. Try Copy instead.")
+                }
+            },
+            onConfirmSent = {
+                wishStore.confirmSent()
+                store.showMessage("Saved to their history")
+            },
+            onDismissConfirm = wishStore::dismissConfirm,
+            // FR-HIS-05. "Add it" goes to the editor, where the field actually lives —
+            // a one-question dialog that collected a hobby would be a second place that
+            // writes a trait, and M1 already keeps that in one screen.
+            onNudgeAccepted = {
+                wishStore.dismissNudge()
+                nav.goTo(Screen.EditPerson(key.personId))
+            },
+            onNudgeDismissed = wishStore::dismissNudge,
+            modifier = inner,
+        )
+    }
+
     entry<Screen.ImportResult> {
         val result by importStore.result.collectAsState()
         val savedReport by importStore.savedReport.collectAsState()

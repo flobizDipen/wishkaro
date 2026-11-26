@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.local.RemoteWish
 import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.DeliveryReportResponse
@@ -46,6 +47,9 @@ interface SyncStore {
 
     suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait>
 
+    /** M5. The fourth entity, drained exactly like the other three. */
+    suspend fun pendingWishes(limit: Long): List<wishkaro.db.Wish>
+
     /**
      * Ids of every person with unsent changes, blocked ones included and without a limit.
      *
@@ -65,11 +69,15 @@ interface SyncStore {
 
     suspend fun blockTrait(id: String, reason: String)
 
+    suspend fun blockWish(id: String, reason: String)
+
     suspend fun clearPersonPending(ids: List<String>)
 
     suspend fun clearEventPending(ids: List<String>)
 
     suspend fun clearTraitPending(ids: List<String>)
+
+    suspend fun clearWishPending(ids: List<String>)
 
     /**
      * Keep these rows in the outbox but move their `updated_at` to [updatedAt], so the next
@@ -83,10 +91,13 @@ interface SyncStore {
 
     suspend fun restampTraitPending(ids: List<String>, updatedAt: String)
 
+    suspend fun restampWishPending(ids: List<String>, updatedAt: String)
+
     suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
         remoteEvents: List<RemoteEvent>,
         remoteTraits: List<RemoteTrait>,
+        remoteWishes: List<RemoteWish>,
         cursor: String,
     )
 

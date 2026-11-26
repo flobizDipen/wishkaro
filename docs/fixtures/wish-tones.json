@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "The ONE table of cases for which wish tones are legal on which sentiment, read by BOTH",
+    "implementations: composeApp/src/commonTest/.../WishToneRulesTest.kt and",
+    "server/src/modules/wishes/tone-rules.spec.ts.",
+    "",
+    "The rule exists twice, in two languages, because the server VALIDATES it on every draft",
+    "and on every history write, and the client HIDES the chips that are not offered. Neither",
+    "side can be dropped: a client that only hid the chips would let a tampered request",
+    "through, and a server that only validated would show the user a Funny button that 400s",
+    "on a death anniversary. MILESTONE_CHECKLIST.md §C is explicit about the price of that —",
+    "a rule implemented twice is held to one shared table of cases. The table is this file,",
+    "not a copy of it.",
+    "",
+    "Six tones, not five. FR-WSH-03 lists the celebratory set (Warm, Funny, Respectful,",
+    "Short, Poetic) and FR-WSH-09 lists the solemn one (Respectful, Short, Heartfelt). They",
+    "overlap on two and HEARTFELT exists only on the solemn side, so neither is a subset of",
+    "the other and the union is six.",
+    "",
+    "REQUIREMENTS.md §11 files 'no SOLEMN event can ever produce celebratory copy' under",
+    "correctness rather than content. The two rows marked expect:false on SOLEMN are",
+    "therefore the test that must go RED if somebody puts Funny or Poetic back —",
+    "docs/BUILD_PROMPT_M5.md, definition of done item 9.",
+    "",
+    "Tone comes from the PERSON, never from the event type. A deceased person's birthday is a",
+    "SOLEMN event whose type is still BIRTHDAY, and M1 already got that wrong once — which is",
+    "why the last block below is keyed on (eventType, isDeceased) rather than on tone at all."
+  ],
+
+  "tones": ["WARM", "FUNNY", "RESPECTFUL", "SHORT", "POETIC", "HEARTFELT"],
+  "languages": ["ENGLISH", "HINDI", "HINGLISH"],
+
+  "allowed": {
+    "CELEBRATORY": ["WARM", "FUNNY", "RESPECTFUL", "SHORT", "POETIC"],
+    "SOLEMN": ["RESPECTFUL", "SHORT", "HEARTFELT"]
+  },
+
+  "default_tone": {
+    "CELEBRATORY": "WARM",
+    "SOLEMN": "RESPECTFUL"
+  },
+
+  "cases": [
+    { "sentiment": "CELEBRATORY", "tone": "WARM", "expect": true, "why": "the default, and the base case" },
+    { "sentiment": "CELEBRATORY", "tone": "FUNNY", "expect": true, "why": "FR-WSH-03" },
+    { "sentiment": "CELEBRATORY", "tone": "RESPECTFUL", "expect": true, "why": "FR-WSH-03. Shared with the solemn set" },
+    { "sentiment": "CELEBRATORY", "tone": "SHORT", "expect": true, "why": "FR-WSH-03. Shared with the solemn set" },
+    { "sentiment": "CELEBRATORY", "tone": "POETIC", "expect": true, "why": "FR-WSH-03" },
+    { "sentiment": "CELEBRATORY", "tone": "HEARTFELT", "expect": false, "why": "FR-WSH-09 introduces HEARTFELT for the solemn composer only. FR-WSH-03's list does not contain it, so offering it on a birthday would be inventing a sixth celebratory tone nobody specified" },
+
+    { "sentiment": "SOLEMN", "tone": "RESPECTFUL", "expect": true, "why": "FR-WSH-09, and the solemn default" },
+    { "sentiment": "SOLEMN", "tone": "SHORT", "expect": true, "why": "FR-WSH-09" },
+    { "sentiment": "SOLEMN", "tone": "HEARTFELT", "expect": true, "why": "FR-WSH-09" },
+    { "sentiment": "SOLEMN", "tone": "FUNNY", "expect": false, "why": "THE ONE THAT MUST STAY RED. FR-WSH-09 makes Funny unavailable and REQUIREMENTS.md §11 files it under correctness: a joke on a death anniversary is the bug that gets an app uninstalled and screenshotted" },
+    { "sentiment": "SOLEMN", "tone": "POETIC", "expect": false, "why": "the other half of FR-WSH-09's exclusion. Less obviously harmful than Funny and excluded for the same reason — the solemn set is a set you have to pick, not a filter applied afterwards" },
+    { "sentiment": "SOLEMN", "tone": "WARM", "expect": false, "why": "not in FR-WSH-09's list. 'Warm' is the celebratory default, and a default that leaked across would be the failure mode M1 had: the wrong set chosen because nobody chose" }
+  ],
+
+  "sentiment_cases": [
+    { "eventType": "BIRTHDAY", "isDeceased": false, "sentiment": "CELEBRATORY", "why": "the base case" },
+    { "eventType": "WEDDING_ANNIVERSARY", "isDeceased": false, "sentiment": "CELEBRATORY", "why": "" },
+    { "eventType": "ENGAGEMENT_ANNIVERSARY", "isDeceased": false, "sentiment": "CELEBRATORY", "why": "" },
+    { "eventType": "CUSTOM", "isDeceased": false, "sentiment": "CELEBRATORY", "why": "" },
+    { "eventType": "DEATH_ANNIVERSARY", "isDeceased": false, "sentiment": "SOLEMN", "why": "the type alone is enough. In practice creating one also sets is_deceased (FR-EVT-04), but the rule must not depend on the order those two writes land in" },
+    { "eventType": "DEATH_ANNIVERSARY", "isDeceased": true, "sentiment": "SOLEMN", "why": "" },
+
+    { "eventType": "BIRTHDAY", "isDeceased": true, "sentiment": "SOLEMN", "why": "THE REMEMBRANCE BIRTHDAY, and the case M1 got wrong. The type is still BIRTHDAY. A composer that read tone off the event type would offer Funny and draft many happy returns for somebody who has died — FR-EVT-05 and REQUIREMENTS.md §7.3 call that the worst failure this product can have" },
+    { "eventType": "WEDDING_ANNIVERSARY", "isDeceased": true, "sentiment": "SOLEMN", "why": "a widow's wedding anniversary. Same shape as the remembrance birthday and easier to forget, because nothing in the type hints at it" },
+    { "eventType": "ENGAGEMENT_ANNIVERSARY", "isDeceased": true, "sentiment": "SOLEMN", "why": "" },
+    { "eventType": "CUSTOM", "isDeceased": true, "sentiment": "SOLEMN", "why": "anything owned by a deceased person is SOLEMN, whatever its type and whatever the user named it" }
+  ]
+}

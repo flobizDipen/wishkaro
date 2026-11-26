@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.local.RemoteWish
 import `in`.wishkaro.app.data.remote.ApiErrorIssue
 import `in`.wishkaro.app.data.remote.ApiException
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
@@ -614,10 +615,19 @@ private class FakeOutbox : SyncStore {
 
     override suspend fun restampTraitPending(ids: List<String>, updatedAt: String) = Unit
 
+    override suspend fun pendingWishes(limit: Long): List<wishkaro.db.Wish> = emptyList()
+
+    override suspend fun blockWish(id: String, reason: String) = Unit
+
+    override suspend fun clearWishPending(ids: List<String>) = Unit
+
+    override suspend fun restampWishPending(ids: List<String>, updatedAt: String) = Unit
+
     override suspend fun applyRemote(
         remotePeople: List<RemotePerson>,
         remoteEvents: List<RemoteEvent>,
         remoteTraits: List<RemoteTrait>,
+        remoteWishes: List<RemoteWish>,
         cursor: String,
     ) = Unit
 

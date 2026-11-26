@@ -1,4 +1,4 @@
-import { Body, Controller, Module, Post } from '@nestjs/common';
+import { Body, Controller, HttpException, HttpStatus, Module, Post } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -27,7 +27,19 @@ class EchoController {
   }
 }
 
-@Module({ controllers: [EchoController] })
+/** Throws the exact shape M5's rate limiter throws (FR-WSH-08). */
+@Controller('limited')
+class LimitedController {
+  @Post()
+  limited(@Body() body: { seconds?: unknown }): never {
+    throw new HttpException(
+      { code: 'RATE_LIMITED', message: 'Give it a few minutes.', retryAfterSeconds: body.seconds },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+}
+
+@Module({ controllers: [EchoController, LimitedController] })
 class EchoModule {}
 
 async function appUnderTest(): Promise<NestExpressApplication> {
@@ -97,5 +109,56 @@ describe('the HTTP layer main.ts installs', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('BAD_REQUEST');
+  });
+});
+
+/**
+ * `Retry-After`, found by curl rather than by a test.
+ *
+ * M5's limiter computes the seconds until its window rolls and `toErrorBody` keeps only
+ * `code`, `message` and `details` — so the number was computed and dropped, which is the
+ * first shape MILESTONE_CHECKLIST.md says to look for. The unit test above it asserted on
+ * the thrown exception and therefore never saw the wire; only a real request did.
+ */
+describe('Retry-After on a 429', () => {
+  let app: NestExpressApplication;
+
+  beforeAll(async () => {
+    app = await appUnderTest();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('reaches the client as a header', async () => {
+    const response = await request(app.getHttpServer()).post('/limited').send({ seconds: 1847 });
+
+    expect(response.status).toBe(429);
+    expect(response.headers['retry-after']).toBe('1847');
+    // And the body keeps its one shape: no fourth key leaking into every error response.
+    expect(response.body).toEqual({
+      error: { code: 'RATE_LIMITED', message: 'Give it a few minutes.' },
+    });
+  });
+
+  it('rounds a fractional value up rather than truncating it', async () => {
+    // Truncating would tell a client to retry a moment before the window actually rolls,
+    // which is a second 429 for a client that did exactly what it was told.
+    const response = await request(app.getHttpServer()).post('/limited').send({ seconds: 0.2 });
+    expect(response.headers['retry-after']).toBe('1');
+  });
+
+  it('is absent when the thrower did not say', async () => {
+    // Every other error in the app throws without one; none of them should grow a header.
+    const response = await request(app.getHttpServer()).post('/limited').send({});
+    expect(response.headers['retry-after']).toBeUndefined();
+  });
+
+  it('ignores a value that is not a sane number of seconds', async () => {
+    for (const seconds of ['soon', -5, Number.NaN]) {
+      const response = await request(app.getHttpServer()).post('/limited').send({ seconds });
+      expect(response.headers['retry-after']).toBeUndefined();
+    }
   });
 });

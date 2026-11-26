@@ -35,8 +35,10 @@ internal data class PushPage(
     val people: List<wishkaro.db.Person> = emptyList(),
     val events: List<wishkaro.db.Event> = emptyList(),
     val traits: List<wishkaro.db.Person_trait> = emptyList(),
+    val wishes: List<wishkaro.db.Wish> = emptyList(),
 ) {
-    fun isEmpty(): Boolean = people.isEmpty() && events.isEmpty() && traits.isEmpty()
+    fun isEmpty(): Boolean =
+        people.isEmpty() && events.isEmpty() && traits.isEmpty() && wishes.isEmpty()
 
     /** The same page without the rows the server has just named and refused. */
     fun without(rejected: List<RejectedRow>): PushPage {
@@ -45,6 +47,7 @@ internal data class PushPage(
             people = people.filterNot { it.id in ids[PERSON].orEmpty() },
             events = events.filterNot { it.id in ids[EVENT].orEmpty() },
             traits = traits.filterNot { it.id in ids[TRAIT].orEmpty() },
+            wishes = wishes.filterNot { it.id in ids[WISH].orEmpty() },
         )
     }
 }
@@ -66,6 +69,7 @@ internal data class RejectedRow(val entity: String, val id: String, val reason: 
 internal const val PERSON = "person"
 internal const val EVENT = "event"
 internal const val TRAIT = "trait"
+internal const val WISH = "wish"
 
 /**
  * Cut the outbox snapshot into requests, so that a person is **never in a later page than
@@ -90,6 +94,7 @@ internal fun planPages(
     people: List<wishkaro.db.Person>,
     events: List<wishkaro.db.Event>,
     traits: List<wishkaro.db.Person_trait>,
+    wishes: List<wishkaro.db.Wish>,
     pendingPersonIds: Set<String>,
     pageSize: Int = PUSH_PAGE_SIZE,
     maxPages: Int = MAX_PUSH_PAGES,
@@ -97,6 +102,7 @@ internal fun planPages(
     val inSnapshot = people.mapTo(mutableSetOf()) { it.id }
     val eventsByPerson = events.groupBy { it.person_id }
     val traitsByPerson = traits.groupBy { it.person_id }
+    val wishesByPerson = wishes.groupBy { it.person_id }
 
     val units = mutableListOf<PushPage>()
     for (person in people) {
@@ -104,6 +110,7 @@ internal fun planPages(
             people = listOf(person),
             events = eventsByPerson[person.id].orEmpty(),
             traits = traitsByPerson[person.id].orEmpty(),
+            wishes = wishesByPerson[person.id].orEmpty(),
         )
     }
 
@@ -124,34 +131,59 @@ internal fun planPages(
         }
         units += PushPage(traits = listOf(trait))
     }
+    // A wish depends on its PERSON and on nothing else. That is the whole reason
+    // `wish.event_id` is a soft reference with no foreign key: with a real one, a wish would
+    // have to be in the same page as its event as well, and a unit cannot express two
+    // parents. See the Wish model in schema.prisma and docs/M5_PLAN.md §2.3.
+    for (wish in wishes) {
+        if (wish.person_id in inSnapshot) continue
+        if (wish.person_id in pendingPersonIds) {
+            deferred += 1
+            continue
+        }
+        units += PushPage(wishes = listOf(wish))
+    }
 
     val pages = mutableListOf<PushPage>()
     var currentPeople = mutableListOf<wishkaro.db.Person>()
     var currentEvents = mutableListOf<wishkaro.db.Event>()
     var currentTraits = mutableListOf<wishkaro.db.Person_trait>()
+    var currentWishes = mutableListOf<wishkaro.db.Wish>()
+
+    fun isCurrentEmpty(): Boolean =
+        currentPeople.isEmpty() && currentEvents.isEmpty() &&
+            currentTraits.isEmpty() && currentWishes.isEmpty()
 
     fun flush() {
-        if (currentPeople.isEmpty() && currentEvents.isEmpty() && currentTraits.isEmpty()) return
-        pages += PushPage(currentPeople.toList(), currentEvents.toList(), currentTraits.toList())
+        if (isCurrentEmpty()) return
+        pages += PushPage(
+            currentPeople.toList(),
+            currentEvents.toList(),
+            currentTraits.toList(),
+            currentWishes.toList(),
+        )
         currentPeople = mutableListOf()
         currentEvents = mutableListOf()
         currentTraits = mutableListOf()
+        currentWishes = mutableListOf()
     }
 
     for (unit in units) {
         val wouldOverflow = currentPeople.size + unit.people.size > pageSize ||
             currentEvents.size + unit.events.size > pageSize ||
-            currentTraits.size + unit.traits.size > pageSize
+            currentTraits.size + unit.traits.size > pageSize ||
+            currentWishes.size + unit.wishes.size > pageSize
         // The emptiness check is what stops a unit bigger than a whole page from looping: a
         // person with more than `pageSize` events gets a page to themselves rather than
         // flushing an empty page for ever. The server's own 500 cap still applies to it, and
         // one person with 500 events is not a shape this app can produce.
-        if (wouldOverflow && !(currentPeople.isEmpty() && currentEvents.isEmpty() && currentTraits.isEmpty())) {
+        if (wouldOverflow && !isCurrentEmpty()) {
             flush()
         }
         currentPeople += unit.people
         currentEvents += unit.events
         currentTraits += unit.traits
+        currentWishes += unit.wishes
     }
     flush()
 
@@ -199,6 +231,10 @@ internal fun rowsRejectedBy(page: PushPage, issues: List<ApiErrorIssue>): List<R
             "traits" -> {
                 entity = TRAIT
                 id = page.traits.getOrNull(index)?.id ?: continue
+            }
+            "wishes" -> {
+                entity = WISH
+                id = page.wishes.getOrNull(index)?.id ?: continue
             }
             else -> continue
         }

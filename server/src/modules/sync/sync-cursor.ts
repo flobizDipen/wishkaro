@@ -25,9 +25,19 @@ export interface SyncCursor {
    * ordering keeps a page limit on people from stalling events or traits.
    */
   trait: EntityCursor | null;
+  /**
+   * Added in M5, by exactly the same argument traits were added in M1: a cursor minted by an
+   * M0–M4 client has no `wish` key, decodes to null, and that client gets a full wish resync
+   * on its next pull. It has never seen one, so a full resync IS the correct delta.
+   *
+   * A fourth independent ordering rather than a fourth thing jammed into one: a page limit
+   * reached on people must not be able to stall wishes, and a user with one busy entity must
+   * not starve the others.
+   */
+  wish: EntityCursor | null;
 }
 
-export const EMPTY_CURSOR: SyncCursor = { person: null, event: null, trait: null };
+export const EMPTY_CURSOR: SyncCursor = { person: null, event: null, trait: null, wish: null };
 
 export function encodeCursor(cursor: SyncCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
@@ -40,7 +50,12 @@ export function decodeCursor(encoded: string | undefined): SyncCursor {
     const parsed: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
     if (!parsed || typeof parsed !== 'object') return EMPTY_CURSOR;
     const o = parsed as Record<string, unknown>;
-    return { person: readEntity(o.person), event: readEntity(o.event), trait: readEntity(o.trait) };
+    return {
+      person: readEntity(o.person),
+      event: readEntity(o.event),
+      trait: readEntity(o.trait),
+      wish: readEntity(o.wish),
+    };
   } catch {
     return EMPTY_CURSOR;
   }

@@ -15,6 +15,7 @@ import { PeopleModule } from './modules/people/people.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SyncModule } from './modules/sync/sync.module';
+import { WishesModule } from './modules/wishes/wishes.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { SyncModule } from './modules/sync/sync.module';
     RemindersModule,
     SettingsModule,
     SyncModule,
+    WishesModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],

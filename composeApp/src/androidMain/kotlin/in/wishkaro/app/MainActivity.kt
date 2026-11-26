@@ -182,8 +182,14 @@ class MainActivity : ComponentActivity() {
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
         if (uri.scheme != "wishkaro") return
-        if (uri.host == "person") {
-            uri.pathSegments.firstOrNull()?.let(store::focusPerson)
+        when (uri.host) {
+            "person" -> uri.pathSegments.firstOrNull()?.let(store::focusPerson)
+            // M5. `wishkaro://wish/<personId>?event=<eventId>` — a notification's Send wish
+            // or Send message action (FR-WSH-01). The event is optional: a key that did not
+            // parse, or a widget tap, means "the next thing coming up for them".
+            "wish" -> uri.pathSegments.firstOrNull()?.let { personId ->
+                store.composeWishFor(personId, uri.getQueryParameter("event"))
+            }
         }
         intent.data = null
         setIntent(intent)

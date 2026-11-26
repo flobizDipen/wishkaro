@@ -93,6 +93,59 @@ enum TraitSource {
   INFERRED
 }
 
+/// Tone of a drafted wish (FR-WSH-03, FR-WSH-09).
+///
+/// SIX values, not five. FR-WSH-03 lists the celebratory set — Warm, Funny, Respectful,
+/// Short, Poetic — and FR-WSH-09 lists the solemn one — Respectful, Short, Heartfelt. The two
+/// overlap on two values and HEARTFELT exists only on the solemn side, so the union is six and
+/// neither set is a subset of the other.
+///
+/// Which tones are legal for which sentiment is NOT expressed here, because an enum cannot
+/// express it: a SOLEMN wish tagged FUNNY is a valid enum value and an invalid record. That
+/// rule lives in modules/wishes/tone-rules.ts, is enforced on every write, and is held to the
+/// same table of cases as the client's copy — docs/fixtures/wish-tones.json. See
+/// docs/M5_PLAN.md §5.2.
+enum WishTone {
+  WARM
+  FUNNY
+  RESPECTFUL
+  SHORT
+  POETIC
+  HEARTFELT
+}
+
+/// FR-WSH-03. Hindi here means a wish written in Hindi — it is not the Hindi UI
+/// localisation, which is v1.1 and a different thing entirely.
+enum WishLanguage {
+  ENGLISH
+  HINDI
+  HINGLISH
+}
+
+/// Where the user took the message (FR-WSH-05, FR-HIS-01).
+///
+/// Recorded, never acted on: FR-WSH-06 means the app hands a prepared message to another app
+/// and that app sends it. This column says which door the message went through, and the app
+/// does not actually know it arrived — which is exactly why FR-WSH-07 has to ask.
+enum WishChannel {
+  WHATSAPP
+  SMS
+  SHARE
+  COPY
+}
+
+/// Who wrote the words.
+///
+/// Not cosmetic. AI means the model drafted it; TEMPLATE means the phone's own offline
+/// template did, because there was no network or the model declined (docs/M5_PLAN.md §4);
+/// USER means the person typed it themselves. A history row is only as good as the question
+/// "was this us or them", and next year's no-repeat rule reads differently for each.
+enum WishSource {
+  AI
+  TEMPLATE
+  USER
+}
+
 // ---------------------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------------------
@@ -149,6 +202,8 @@ model User {
   reminders     Reminder[]
   devices       Device[]
   refreshTokens RefreshToken[]
+  wishes        Wish[]
+  aiUsage       AiUsage[]
 
   @@index([email])
   @@map("user")
@@ -198,6 +253,7 @@ model Person {
   user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   events Event[]
   traits PersonTrait[]
+  wishes Wish[]
 
   /// Drives the sync cursor: (updatedAt, id) is the monotonic ordering.
   @@index([userId, updatedAt, id])
@@ -322,7 +378,7 @@ model Reminder {
   /// Always UTC. User-facing times are derived in the owner's timezone, never stored.
   /// Quiet hours (FR-REM-09) are applied HERE, when the row is written, so that both
   /// delivery paths inherit the deferral from one implementation.
-  scheduledAtUtc DateTime        @map("scheduled_at_utc")
+  scheduledAtUtc DateTime       @map("scheduled_at_utc")
 
   /// M2: the channel that actually DELIVERED this reminder, not the one it was scheduled on.
   ///
@@ -397,4 +453,181 @@ model RefreshToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("refresh_token")
+}
+
+/// What the user actually sent, per person per occasion (FR-HIS-01, FR-WSH-07, FR-PPL-07).
+///
+/// M5's floor. FR-WSH-02's "must not repeat" cannot be built, tested or demonstrated against
+/// a table that does not exist, so this lands before the composer does — see
+/// docs/M5_PLAN.md §2 and docs/BUILD_PROMPT_M5.md, "Why history goes first".
+///
+/// A SYNCED entity, the fourth after person, event and trait, and it does the same three
+/// things they do: last-write-wins per record on `updatedAt`, soft delete as a tombstone, and
+/// a monotonic `(updatedAt, id)` cursor. The alternative — local-only, on the grounds that
+/// this is the user's own record of their own words — lost on two facts: the server builds
+/// the prompt, so it is the side that needs the history; and a reinstall would erase it,
+/// which for the thing FR-HIS-03 calls "the retention moat" is not survivable.
+///
+/// `updatedAt` will almost always equal `createdAt`. A wish is near-append-only: it is
+/// written once, when the user answers "did you send it?", and then edited approximately
+/// never. The column is here because the sync cursor orders on it, not because anybody
+/// expects it to move.
+model Wish {
+  id       String @id @default(uuid(7))
+  userId   String @map("user_id")
+  /// Denormalised from person, as `event.user_id` and `person_trait.user_id` already are:
+  /// the sync cursor scans by owner and ordering, and a join per page would be the one slow
+  /// query in the hot path.
+  personId String @map("person_id")
+
+  // --- which occasion this was ----------------------------------------------------------
+
+  /// The occasion's identity is (person, type, year) — see the `@@index` below.
+  ///
+  /// FR-HIS-01 says "per person per year", which does not identify a row: somebody can have a
+  /// birthday and a wedding anniversary in the same year. Read here as per person, per event
+  /// TYPE, per year, flagged in docs/M5_PLAN.md §2.4 rather than silently chosen.
+  eventType      EventType @map("event_type")
+  occurrenceYear Int       @map("occurrence_year")
+
+  /// DERIVED from the person's `is_deceased` and the event type by sentimentFor(), exactly as
+  /// `event.sentiment` is. Refused on the way up: the write schema is `.strict()`, so a client
+  /// that sends it gets a 400 naming the field rather than having it quietly dropped.
+  ///
+  /// Stored rather than re-derived on read because it is a fact about the moment the message
+  /// was sent. A person marked deceased in 2027 did not receive a solemn message in 2025, and
+  /// a history that rewrote itself would say they did.
+  sentiment Sentiment
+
+  /// A SOFT reference to the event row. Deliberately NOT a foreign key, and nullable.
+  ///
+  /// Three reasons, in order of weight (docs/M5_PLAN.md §2.3):
+  ///
+  ///   1. Deleting an event must not delete the history. The commonest repair in this app is
+  ///      "that date was wrong" — delete, re-add. Under a cascading FK, fixing your mother's
+  ///      birthday in 2026 would destroy the record of what you sent her in 2024. A fact
+  ///      about the past cannot be owned by a row the user is free to replace.
+  ///   2. It keeps a wish's only push dependency its PERSON. The client's planPages() packs a
+  ///      person together with their events and traits; a real FK to event would need a unit
+  ///      that spans both, which that function does not express.
+  ///   3. The no-repeat query does not use it.
+  ///
+  /// Kept at all so a later milestone can tighten the CUSTOM-event ambiguity named in §2.3
+  /// without a migration.
+  eventId String? @map("event_id")
+
+  // --- what was sent (FR-HIS-01) --------------------------------------------------------
+
+  /// The message as it was handed over, AFTER the user's edits. Never logged — §11 bans PII
+  /// in logs and this is prose about a named person.
+  messageText String       @map("message_text")
+  tone        WishTone
+  language    WishLanguage
+  channel     WishChannel
+  source      WishSource
+
+  /// Reserved for M6's poster (FR-HIS-01 asks for "the poster used"). NOTHING writes this in
+  /// M5. The column exists now so that milestone is a code change and not a migration — the
+  /// same reason `person.photo_key` has existed since M1.
+  posterId String? @map("poster_id")
+
+  /// When the user said yes, not when the draft was produced.
+  ///
+  /// FR-WSH-07 puts the question AFTER the hand-off, and the distinction is the whole point:
+  /// a draft that was generated and never sent is not history, must not suppress next year's
+  /// draft, and must not appear on the person screen. Regenerate writes nothing either.
+  sentAt DateTime @map("sent_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @default(now()) @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  /// Drives the sync cursor, the fourth entity after person, event and trait.
+  @@index([userId, updatedAt, id])
+  /// Drives FR-WSH-02's no-repeat rule and FR-PPL-07's history list.
+  @@index([personId, eventType, occurrenceYear])
+  @@map("wish")
+}
+
+/// One row per model call. FR-POS-10, which calls it non-negotiable.
+///
+/// M5 is where it starts even though FR-POS-10 lives under posters, because wish text is the
+/// first thing in this app that costs money per use — raised in docs/M5_PLAN.md §6.3 rather
+/// than quietly resolved.
+///
+/// Written in a `finally`, on EVERY outcome including a refusal, an error and a timeout: a
+/// call that produced tokens cost money whether or not the user got anything. A row that
+/// cannot be written fails the request, because the alternative — serve the draft, lose the
+/// row — is how a cost ledger quietly becomes a sample.
+///
+/// Not synced and never sent to a client. It is ours.
+model AiUsage {
+  id     String @id @default(uuid(7))
+  userId String @map("user_id")
+
+  /// Which surface spent the money. "wish_draft" in M5; M6 writes posters, M8 gift ideas.
+  /// A string rather than an enum so a new feature is not a migration.
+  feature  String
+  provider String
+  /// The model that ACTUALLY served it. A server-side fallback changes this, which is the
+  /// only way to find out afterwards that one happened.
+  model    String
+  /// OK | REFUSED | ERROR | TIMEOUT.
+  outcome  String
+
+  /// Four counts, not two. Cache reads are an order of magnitude cheaper than fresh input,
+  /// and a ledger that cannot see the difference cannot answer whether caching is working —
+  /// which is the one question prompt caching has to be checked against rather than assumed.
+  inputTokens      Int @map("input_tokens")
+  outputTokens     Int @map("output_tokens")
+  cacheReadTokens  Int @map("cache_read_tokens")
+  cacheWriteTokens Int @map("cache_write_tokens")
+
+  /// The rate and the conversion AS THEY WERE. Stored per row so that changing the price
+  /// table or the exchange rate later does not silently re-price what last month cost.
+  costUsd        Decimal @map("cost_usd") @db.Decimal(12, 6)
+  usdInrRate     Decimal @map("usd_inr_rate") @db.Decimal(10, 4)
+  costInr        Decimal @map("cost_inr") @db.Decimal(12, 4)
+  pricingVersion String  @map("pricing_version")
+
+  /// WHICH PROMPT produced this (REQUIREMENTS.md §10 rule 4).
+  ///
+  /// The rule is "prompts are versioned files in the repo, not string literals scattered
+  /// through services". One file was the harder half and M5 had it; the version was missing,
+  /// and without it a ledger row cannot be tied back to the words that produced it.
+  ///
+  /// That is not bookkeeping. FR-WSH-09 and TBD-4 have Dipen hand-reviewing solemn copy, and
+  /// a review of output nobody can trace to a prompt revision cannot be re-run after the
+  /// prompt changes — so the review silently stops meaning anything the first time somebody
+  /// edits a line of it.
+  ///
+  /// Rows written before this column default to "unversioned", which is true of them.
+  promptVersion String @default("unversioned") @map("prompt_version")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "What does one user cost per year" — the question M7's pricing is built on.
+  @@index([userId, createdAt])
+  /// "What does this feature cost" — the question M6 needs answered before it prices posters.
+  @@index([feature, createdAt])
+  /// `createdAt` ALONE, for the global daily spend cap (§10 rule 6).
+  ///
+  /// The two indexes above both lead on another column, so neither can range-scan on
+  /// `created_at`. Measured on 200,000 rows before this index existed, the cap's
+  /// `SUM(cost_inr) WHERE created_at >= $startOfDay` read **1,465 buffers to return 227
+  /// rows** — a full index scan using the date as a filter, so the work grew with every row
+  /// the table had ever held rather than with one day's.
+  ///
+  /// That is on the hot path and on the wrong side of it: `isCapped()` runs BEFORE the
+  /// per-user rate limiter, so it also ran for every request the limiter was about to
+  /// reject. A rail meant to stop a runaway was the most expensive thing in the request and
+  /// got slower daily — and on a public endpoint behind a token anybody can mint, a cheap
+  /// request that forces a full scan is also the shape somebody abuses.
+  @@index([createdAt])
+  @@map("ai_usage")
 }

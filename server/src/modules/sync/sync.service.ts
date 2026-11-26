@@ -12,7 +12,7 @@ import {
   type RecomputeContext,
 } from '../people/person-derivation.service';
 import { advance, cursorWhere, decodeCursor, encodeCursor, type SyncCursor } from './sync-cursor';
-import type { EventUpsert, PersonUpsert, SyncPush, TraitUpsert } from './sync.schemas';
+import type { EventUpsert, PersonUpsert, SyncPush, TraitUpsert, WishUpsert } from './sync.schemas';
 
 export interface SyncPersonDto {
   id: string;
@@ -65,10 +65,35 @@ export interface SyncTraitDto {
   deletedAt: string | null;
 }
 
+/**
+ * A wish on the wire (FR-HIS-01). M5.
+ *
+ * `sentiment` goes DOWN but is refused on the way up, exactly like `event.sentiment`: the
+ * client renders a person's whole screen offline and must be able to word a solemn history
+ * entry without a server in reach, but it must never be the one deciding what solemn means.
+ */
+export interface SyncWishDto {
+  id: string;
+  personId: string;
+  type: string;
+  occurrenceYear: number;
+  sentiment: string;
+  eventId: string | null;
+  messageText: string;
+  tone: string;
+  language: string;
+  channel: string;
+  source: string;
+  sentAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export interface SyncPullResult {
   people: SyncPersonDto[];
   events: SyncEventDto[];
   traits: SyncTraitDto[];
+  wishes: SyncWishDto[];
   /**
    * The user's reminder settings (FR-REM-03, FR-REM-09). Always sent, not paged and not
    * behind the cursor: there is one row, it is tiny, and a client that has just reinstalled
@@ -81,10 +106,10 @@ export interface SyncPullResult {
 }
 
 export type SkipReason = 'STALE' | 'NOT_OWNED' | 'UNKNOWN_PERSON';
-export type SyncEntity = 'person' | 'event' | 'trait';
+export type SyncEntity = 'person' | 'event' | 'trait' | 'wish';
 
 export interface SyncPushResult {
-  applied: { people: number; events: number; traits: number };
+  applied: { people: number; events: number; traits: number; wishes: number };
   skipped: { id: string; entity: SyncEntity; reason: SkipReason }[];
   /**
    * The settings as they stand AFTER the push, whether or not the client's copy won.
@@ -117,7 +142,7 @@ export class SyncService {
   ): Promise<SyncPullResult> {
     const cursor = decodeCursor(encodedCursor);
 
-    const [owner, people, events, traits] = await Promise.all([
+    const [owner, people, events, traits, wishes] = await Promise.all([
       this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } }),
       this.prisma.person.findMany({
         where: { userId, ...cursorWhere(cursor.person) },
@@ -142,6 +167,11 @@ export class SyncService {
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         take: limit,
       }),
+      this.prisma.wish.findMany({
+        where: { userId, ...cursorWhere(cursor.wish) },
+        orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+        take: limit,
+      }),
     ]);
 
     if (!owner) {
@@ -152,6 +182,7 @@ export class SyncService {
       person: advance(cursor.person, people),
       event: advance(cursor.event, events),
       trait: advance(cursor.trait, traits),
+      wish: advance(cursor.wish, wishes),
     };
 
     return {
@@ -205,9 +236,29 @@ export class SyncService {
         updatedAt: t.updatedAt.toISOString(),
         deletedAt: t.deletedAt?.toISOString() ?? null,
       })),
+      wishes: wishes.map((w) => ({
+        id: w.id,
+        personId: w.personId,
+        type: w.eventType,
+        occurrenceYear: w.occurrenceYear,
+        sentiment: w.sentiment,
+        eventId: w.eventId,
+        messageText: w.messageText,
+        tone: w.tone,
+        language: w.language,
+        channel: w.channel,
+        source: w.source,
+        sentAt: w.sentAt.toISOString(),
+        updatedAt: w.updatedAt.toISOString(),
+        deletedAt: w.deletedAt?.toISOString() ?? null,
+      })),
       settings: toSettingsDto(owner),
       cursor: encodeCursor(next),
-      hasMore: people.length === limit || events.length === limit || traits.length === limit,
+      hasMore:
+        people.length === limit ||
+        events.length === limit ||
+        traits.length === limit ||
+        wishes.length === limit,
       serverTime: new Date().toISOString(),
     };
   }
@@ -228,6 +279,7 @@ export class SyncService {
     let peopleApplied = 0;
     let eventsApplied = 0;
     let traitsApplied = 0;
+    let wishesApplied = 0;
     const touched = new Set<string>();
 
     // Pre-write `is_deceased` per person, for the recompute at the end. A sync batch writes
@@ -263,6 +315,34 @@ export class SyncService {
     // the first four would each see a half-applied batch.
     await this.derivation.recomputeMany(touched, this.prisma, contexts);
 
+    /**
+     * Wishes last of the four, and AFTER the recompute. Both halves are load-bearing.
+     *
+     * **After**, because `upsertWish` derives `sentiment` from `person.isDeceased`, and the
+     * recompute above is what SETS that flag. Running before it read a value that had not
+     * caught up: a batch carrying a new death anniversary and a BIRTHDAY wish for the same
+     * person — a remembrance composed offline, before the anniversary had ever synced —
+     * stored the wish CELEBRATORY. Permanently, unlike the identical expression in
+     * `upsertEvent`, because the recompute re-derives every live event and deliberately does
+     * not touch wishes. The client then took that wrong answer as authoritative on its next
+     * pull and overwrote its own correct placeholder with it. Found in review of PR #7.
+     *
+     * **Not added to `touched`**, still. A wish is not an input to anything the derivation
+     * computes — it cannot change a completeness score, mark anybody deceased or make
+     * somebody a minor — so a recompute could only produce the same values, while moving
+     * `person.updated_at`, which is the sync cursor's ordering key. Recording a wish would
+     * re-send the person to every device for no reason. M3 §6.3 bought that rule, and it is
+     * why this loop cannot simply join the others.
+     *
+     * `upsertWish` re-reads the person inside the loop, so moving it here is enough: it sees
+     * the flag the recompute has just written.
+     */
+    for (const wish of batch.wishes) {
+      const outcome = await this.upsertWish(userId, wish);
+      if (outcome === 'APPLIED') wishesApplied += 1;
+      else skipped.push({ id: wish.id, entity: 'wish', reason: outcome });
+    }
+
     // Settings last. They are one row and they do not interact with the records above, so
     // ordering them after the recompute keeps a settings-only push from paying for anything
     // and a records-only push from touching them at all.
@@ -275,7 +355,12 @@ export class SyncService {
     }
 
     return {
-      applied: { people: peopleApplied, events: eventsApplied, traits: traitsApplied },
+      applied: {
+        people: peopleApplied,
+        events: eventsApplied,
+        traits: traitsApplied,
+        wishes: wishesApplied,
+      },
       skipped,
       ...(settings ? { settings } : {}),
       serverTime: new Date().toISOString(),
@@ -465,6 +550,73 @@ export class SyncService {
         },
       });
     }
+    return 'APPLIED';
+  }
+
+  /**
+   * A wish arriving from a device (FR-WSH-07, FR-HIS-01). M5.
+   *
+   * Same three guards as the other three entities — UNKNOWN_PERSON, NOT_OWNED, STALE — and
+   * the same last-write-wins on `updatedAt`, so a replayed batch is a no-op rather than a
+   * duplicate.
+   *
+   * Two things are specific to this entity:
+   *
+   * `sentiment` is derived HERE from the person and the event type, using the same
+   * `sentimentFor()` that `upsertEvent` uses. Not re-derived on read: a wish records what
+   * was sent at a moment, and somebody marked deceased in 2027 did not receive a solemn
+   * message in 2025. The write schema is `.strict()`, so a client that sends `sentiment`
+   * gets a 400 naming the field rather than being quietly corrected.
+   *
+   * `eventId` is stored without being checked. It is a soft reference by design (see the
+   * Wish model in schema.prisma): the user is free to delete and re-add a date, and refusing
+   * to record what they said because they fixed a birthday would be the cascade this column
+   * exists to avoid.
+   */
+  private async upsertWish(userId: string, input: WishUpsert): Promise<'APPLIED' | SkipReason> {
+    const updatedAt = new Date(input.updatedAt);
+    const deletedAt = input.deletedAt ? new Date(input.deletedAt) : null;
+
+    const [existing, person] = await Promise.all([
+      this.prisma.wish.findUnique({ where: { id: input.id } }),
+      this.prisma.person.findUnique({ where: { id: input.personId } }),
+    ]);
+
+    if (!person || person.userId !== userId) return 'UNKNOWN_PERSON';
+    if (existing && existing.userId !== userId) return 'NOT_OWNED';
+    if (existing && existing.updatedAt.getTime() >= updatedAt.getTime()) return 'STALE';
+
+    // Exactly the expression upsertEvent uses, so that a batch carrying somebody's death
+    // anniversary AND the message sent for it cannot produce a celebratory wish because the
+    // person row had not caught up yet.
+    const deceased = person.isDeceased || marksPersonDeceased(input.type);
+
+    const data = {
+      eventType: input.type,
+      occurrenceYear: input.occurrenceYear,
+      sentiment: sentimentFor(input.type, deceased),
+      eventId: input.eventId ?? null,
+      messageText: input.messageText,
+      tone: input.tone,
+      language: input.language,
+      channel: input.channel,
+      source: input.source,
+      sentAt: new Date(input.sentAt),
+      updatedAt,
+      deletedAt,
+    };
+
+    if (existing) {
+      await this.prisma.wish.update({ where: { id: input.id }, data });
+    } else {
+      await this.prisma.wish.create({
+        data: { id: input.id, personId: input.personId, userId, ...data },
+      });
+    }
+
+    // Deliberately no log line carrying `messageText`. §11 bans PII in logs and a drafted
+    // wish is prose about a named person — the one thing in this app that must never be
+    // greppable in a log aggregator.
     return 'APPLIED';
   }
 }

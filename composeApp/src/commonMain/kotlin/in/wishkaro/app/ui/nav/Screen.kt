@@ -80,6 +80,24 @@ sealed interface Screen : NavKey {
     /** What happened, with a reason for every row that did not come in (FR-IMP-07). */
     @Serializable
     data object ImportResult : Screen
+
+    // ---- M5: wish sending (FR-WSH-01..06) ----
+
+    /**
+     * The composer (FR-WSH-01). Reachable from a notification action, an event card and the
+     * person screen.
+     *
+     * `eventId` is nullable because two of the three entry points do not have one: the
+     * person screen's button means "the next thing coming up for them", and so does a tap
+     * from the widget. Null is resolved to the soonest upcoming event when the screen opens,
+     * so the key stays small enough to live in saved state and survive process death.
+     *
+     * Note what is NOT on this key: the tone and the language. Those are composer state, they
+     * change while the screen is open, and putting them in a `NavKey` would mean every tap of
+     * a tone chip pushed a new back-stack entry.
+     */
+    @Serializable
+    data class WishComposer(val personId: String, val eventId: String? = null) : Screen
 }
 
 /**
@@ -123,6 +141,10 @@ val Screen.showsTabs: Boolean
         Screen.ImportContacts,
         Screen.ImportFile,
         Screen.ImportResult,
+        // A task, not a place. It owns the screen while it is open, it has one way out, and
+        // offering to switch tabs in the middle of writing to somebody is offering to lose
+        // what they wrote.
+        is Screen.WishComposer,
         -> false
 
         else -> true
@@ -159,6 +181,7 @@ val WISHKARO_SAVED_STATE: SavedStateConfiguration = SavedStateConfiguration {
             subclass(Screen.ImportContacts::class)
             subclass(Screen.ImportFile::class)
             subclass(Screen.ImportResult::class)
+            subclass(Screen.WishComposer::class)
         }
     }
 }
