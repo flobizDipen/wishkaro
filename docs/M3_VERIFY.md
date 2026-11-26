@@ -610,3 +610,78 @@ Nothing in M3. Two things carried forward, neither blocking:
 - **19 rows already damaged by §6.3** carry a completeness score of 0. The fix stops it
   happening again; it does not repair them, because their corrected copies sit behind a sync
   cursor that has moved past them. Editing any of those people repairs that one.
+
+---
+
+## 12. Found after the merge — a second review pass
+
+Two findings, on `fix/m3-review-findings`, off `main`. Both are failures of the same kind:
+something the user needed to be told, and was not.
+
+### 12.1 The row number in the report was not the row in the file
+
+`FR-IMP-07` exists so a user can open the row that failed. They could not. Both readers
+dropped all-blank rows before returning, and the numbering counted positions in the filtered
+list — so one blank line between households made every later row report one short, three
+blank lines made it three short. The user opens row 13, finds a good record, and now has no
+reason to believe any other number in the report.
+
+The `.xlsx` path was worse than occasional. `Xlsx.rows` read `r="C7"` on a *cell*, to pad the
+columns Excel omits, and threw away `r="14"` on the *row* — and Excel omits empty rows from
+the XML entirely, so that path drifted routinely.
+
+Fixed by keeping blank rows in both readers, honouring `r` on `<row>`, and moving the blank
+skipping into one shared `importDataRows` that runs *after* numbering. Six tests, red on
+revert, including an accumulating-drift case and an `.xlsx` whose row 4 is absent from the XML.
+
+Found reading the diff, not using the app — a two-row fixture cannot drift.
+
+### 12.2 A record the server refused reached nobody
+
+`observeBlockedCount()` and `blockedRows()` had **no callers anywhere in `composeApp/src`**,
+and `SyncEngine.Result.blocked` was read only by tests — while both carried comments
+promising otherwise: *"for the banner that tells the user about them"*, *"a row silently set
+aside would be the same silent-partial-success M3 exists to avoid."* There was no banner.
+
+That is this milestone's own failure mode, arriving through the machinery built to prevent it.
+
+What it cost, with no import involved at all: nothing in the person editor capped text length,
+while `PersonUpsertSchema` caps `notes` at 2,000. A long note saved locally, the next push
+came back 400 naming that row, `sync_blocked = 1`, and `selectPendingSync` filtered it out —
+so the person left the drain permanently. And because `pendingPersonIds()` deliberately
+includes blocked people, every event of theirs is deferred on every run too: **no
+server-scheduled reminder for that person, ever, silently.**
+
+**Device-verified, the exact reported path:**
+
+| Step | Result |
+|---|---|
+| Pasted ~2,250 characters into a person's notes, saved | Saved locally, no complaint |
+| `adb` + `run-as` into the app database after the next sync | `pending_sync = 1`, `sync_blocked = 1`, reason `notes: Too big: expected string to have <=2000 characters` |
+| Opened the people list | Banner present |
+| Tapped it | Dialog named the person, with the server's own message |
+| Edited the note down to five characters | Block cleared, row re-queued, **0 blocked / 0 pending** |
+
+The dialog passes the server's message through rather than rewording it. It is the only thing
+that says what to change, and a friendlier paraphrase of a message we did not write is a guess.
+
+### 12.3 And the hole that made it reachable
+
+`FieldLimits` caps the editor at the lengths the server accepts, with a counter in the last
+hundred characters. This is **not** validation and the distinction matters: the safety net
+stays `sync_blocked` plus the banner, because the server has rules this app does not mirror
+and will grow more. Capping `notes` closes the one hole reachable by typing; it does not make
+the banner dead code.
+
+### 12.4 Two things not claimed
+
+- **The blocked-row tests do not go red if only the UI wiring is removed.** They assert
+  `observeBlockedCount()` and `blockedRows()` against a real engine and a real database, and
+  those always worked — the bug was that nothing called them. Removing the wiring now breaks
+  the build rather than a test. The device run above is the real evidence.
+- **The length cap is unit-tested only, not device-verified.** Two attempts to drive the
+  editor by coordinates landed on the wrong screen — the second on a different person's
+  record with a text field focused, which I cancelled without typing, then confirmed nothing
+  had changed (`0 pending, 0 blocked`, no stray text in any note). I stopped there rather
+  than keep aiming blind taps at real contacts for a one-line `take()`. The banner, which is
+  the substantive fix, *is* device-verified.
