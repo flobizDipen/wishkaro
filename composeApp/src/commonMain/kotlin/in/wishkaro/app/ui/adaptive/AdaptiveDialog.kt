@@ -1,5 +1,6 @@
 package `in`.wishkaro.app.ui.adaptive
 
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +19,7 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -75,13 +76,28 @@ fun AdaptiveDialog(
     // usePlatformDefaultWidth = false, or the Dialog window is sized to its content and
     // "anchored to the trailing edge" anchors to the edge of a window that is already
     // centred — which looks exactly like a dialog with sheet corners.
+    //
+    // THE SCRIM IS NOT DECORATION. With usePlatformDefaultWidth = false and a fillMaxSize
+    // root, the dialog's decor view IS the whole window, and the platform decides
+    // "tapped outside" by testing the event against decor bounds — so no tap anywhere on
+    // the screen is ever outside, and onDismissRequest never fires from one. The comment
+    // here used to claim the opposite and FR-VIEW-08 parity was claimed on it. Handling
+    // the tap ourselves is what makes the claim true. pointerInput rather than clickable:
+    // a full-screen clickable would also hand accessibility services a screen-sized button.
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+            Box(
+                Modifier.fillMaxSize()
+                    .pointerInput(Unit) { detectTapGestures { onDismissRequest() } },
+            )
             Surface(
                 modifier = modifier.width(SIDE_SHEET_WIDTH).fillMaxHeight()
+                    // Swallows taps on the sheet so they do not reach the scrim behind it
+                    // and dismiss the thing the user is pointing at.
+                    .pointerInput(Unit) { detectTapGestures { } }
                     .testTag("adaptive_side_sheet"),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 shape = MaterialTheme.shapes.extraLarge,
@@ -90,7 +106,19 @@ fun AdaptiveDialog(
                     title?.let {
                         Box(Modifier.padding(bottom = 16.dp)) { it() }
                     }
-                    Box(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    // Bounded, but NOT scrolled here. Wrapping the text slot in a
+                    // verticalScroll of our own hands the caller's content an infinite
+                    // maximum height, and two of the three call sites pass a
+                    // `Column(Modifier.verticalScroll(...))` — which Compose answers by
+                    // throwing, not by picking one. Opening the import flow's relation
+                    // dialog on a tablet-sized window killed the app outright.
+                    //
+                    // The compact branch hands `text` straight to AlertDialog, where the
+                    // caller's own scroll works. Doing the same here is what makes the two
+                    // branches actually interchangeable, which is this function's whole
+                    // promise. `weight(1f, fill = false)` still bounds the slot, so the
+                    // caller's scroll has a finite height to scroll inside.
+                    Box(Modifier.weight(1f, fill = false)) {
                         text?.invoke()
                     }
                     Row(

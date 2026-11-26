@@ -121,3 +121,62 @@ fun eventsByDay(entries: List<UpcomingEntry>, year: Int, month: Int): Map<Int, L
     entries
         .filter { it.event.date.month == month }
         .groupBy { BirthdayMath.occursOnIn(it.event.date.day, it.event.date.month, year).day }
+
+/** One month of the year ahead, with whatever falls in it. */
+data class TimelineMonth(
+    val year: Int,
+    val month: Int,
+    val entries: List<UpcomingEntry>,
+)
+
+/**
+ * FR-VIEW-03's year ahead, as month slots — **thirteen** of them, not twelve.
+ *
+ * Twelve is the bug. The timeline buckets each entry by where its NEXT occurrence lands, and
+ * for anything whose day has already gone by this month that is the same month a year away.
+ * Generating only `today.month .. today.month + 11` never produces that key, so those entries
+ * were looked up in a slot that does not exist and vanished from the view entirely. Opened on
+ * 26 November, November showed only people born on the 26th or later, and on the last day of
+ * a month nearly the whole month was gone.
+ *
+ * Thirteen is not a fudge, it is the exact span: an annual event's next occurrence is always
+ * within one year of today, so it falls between this month and the same month next year
+ * INCLUSIVE, and that closed interval is thirteen slots wide. Every entry then has exactly
+ * one slot, and every slot exists.
+ *
+ * **Why not [eventsByDay]'s fix.** The calendar had the same symptom and the opposite cure:
+ * match on the event's own month, because a month grid is a view of the month rather than of
+ * the reminder queue. The timeline IS the queue — it is ordered by [UpcomingEntry.daysUntil]
+ * and every row shows a countdown — so putting a 20 November 2027 occurrence under a
+ * "November 2026" heading would both mislabel the year and break that ordering, standing a
+ * 364-day countdown next to a 2-day one. Same symptom, same root (next occurrence versus own
+ * month), different right answer, because the two views mean different things by "month".
+ *
+ * The trailing slot is dropped when nothing falls in it, so a month opened on its 1st shows a
+ * plain twelve. It only appears once something in this month has already passed — which is
+ * precisely when the user needs to be told that it has.
+ *
+ * Empty slots in the middle are kept on purpose: a year view that skipped them would be the
+ * upcoming list with different headings, and the point is to see the SHAPE of the year.
+ */
+fun timelineMonths(entries: List<UpcomingEntry>, today: LocalDate): List<TimelineMonth> {
+    val byMonth = entries.groupBy { it.nextOccurrence.year to it.nextOccurrence.month.number }
+    val slots = (0..MONTHS_AHEAD).map { offset ->
+        val (year, month) = monthPlus(today.year, today.month.number, offset)
+        TimelineMonth(
+            year = year,
+            month = month,
+            // Ties break the way upcomingEvents already broke them, so the order inside a
+            // slot is the order the Upcoming list would have shown.
+            entries = byMonth[year to month].orEmpty()
+                .sortedWith(compareBy({ it.daysUntil }, { it.displayName }, { it.event.id })),
+        )
+    }
+    return if (slots.last().entries.isEmpty()) slots.dropLast(1) else slots
+}
+
+/**
+ * Offset of the last slot: the same month next year. See [timelineMonths] for why the window
+ * is closed at both ends rather than eleven months wide.
+ */
+private const val MONTHS_AHEAD = 12

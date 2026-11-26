@@ -1,19 +1,19 @@
 package `in`.wishkaro.app.ui
 
+import `in`.wishkaro.app.data.local.BlockedRow
+import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.repository.AuthRepository
 import `in`.wishkaro.app.data.repository.AuthState
 import `in`.wishkaro.app.data.repository.PeopleRepository
+import `in`.wishkaro.app.data.repository.ReminderPlanRepository
 import `in`.wishkaro.app.data.repository.SignInCancelled
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
+import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
-import `in`.wishkaro.app.data.local.BlockedRow
-import `in`.wishkaro.app.data.local.LocalStore
-import `in`.wishkaro.app.data.repository.ReminderPlanRepository
-import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
 import `in`.wishkaro.app.platform.OemHelperOutcome
@@ -23,8 +23,11 @@ import `in`.wishkaro.app.platform.ReminderScheduler
 import `in`.wishkaro.app.ui.importing.ImportStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
+import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,12 +35,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
-import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.todayIn
 
@@ -152,6 +153,27 @@ class AppStore(
     private val _focusedPersonId = MutableStateFlow<String?>(null)
     val focusedPersonId: StateFlow<String?> = _focusedPersonId.asStateFlow()
 
+    /**
+     * A deep link that arrived before there was a session to act on it. One-shot: see
+     * [consumePendingDeepLink].
+     */
+    private var pendingDeepLinkPersonId: String? = null
+
+    /** Guards [start] against re-entry from a recomposed root. See the comment there. */
+    private val started = MutableStateFlow(false)
+
+    /**
+     * True once the database has emitted at least once in this process.
+     *
+     * Without it, "we have not read yet" and "there is nobody" are the same empty list, and
+     * every view that branches on emptiness shows its not-found state for the first frame —
+     * a 575-person account briefly claiming it has nobody, and a widget deep link into a cold
+     * process opening on "This person is no longer here". That message was blamed on the
+     * Intent replay (`MainActivity`); the replay was one cause of it and this was another.
+     */
+    private val _peopleLoaded = MutableStateFlow(false)
+    val peopleLoaded: StateFlow<Boolean> = _peopleLoaded.asStateFlow()
+
     val authState: StateFlow<AuthState> = auth.state
 
     /**
@@ -174,6 +196,7 @@ class AppStore(
                     compareBy(String.CASE_INSENSITIVE_ORDER) { it.person.displayName },
                 )
         }
+        .onEach { _peopleLoaded.value = true }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -275,12 +298,33 @@ class AppStore(
      * screen, and impossible for a sign-out to leave the previous user's stack behind.
      */
     fun start() {
+        // ONCE PER PROCESS, not once per composition.
+        //
+        // The caller is `LaunchedEffect(Unit)` at the composition root, and M4 is the first
+        // milestone where that re-runs: dropping the manifest's `configChanges` list for
+        // FR-VIEW-07 means every rotation, fold, unfold and multi-window resize builds a new
+        // Activity and a new composition. Both halves of this function assumed they ran once
+        // and quietly became once-per-rotation:
+        //
+        //  - [afterSignedIn] requests the notification permission, registers the device,
+        //    runs a FULL sync and re-arms every alarm. Five rotations on the owner's
+        //    575-person account is five push/pull cycles and five whole-plan re-arms, on the
+        //    user's own data connection.
+        //  - the deep link fired again off a value that outlives the Activity, throwing the
+        //    user back into a detail screen they had already left. See [consumePendingDeepLink].
+        //
+        // Once per process is exactly what this did before M4 — the Activity was simply never
+        // recreated — so this restores the intended behaviour rather than inventing one. It
+        // does mean a process alive for days never re-syncs on its own; that was true before
+        // M4 too, the periodic upkeep worker covers the reminder half, and widening it is a
+        // product decision rather than a bug fix.
+        if (!started.compareAndSet(expect = false, update = true)) return
         auth.restore()
         if (auth.state.value is AuthState.SignedIn) {
             afterSignedIn()
             // A deep link handled in onCreate got here before the session did. Now there is
             // one, so the person it named can finally be opened.
-            openFocusedPersonIfSignedIn()
+            consumePendingDeepLink()
         }
     }
 
@@ -425,6 +469,11 @@ class AppStore(
     fun signOut() {
         scope.launch {
             auth.signOut()
+            // Not just the stacks: the deep-linked person belonged to the account that is
+            // leaving. A highlighted row — or worse, a held navigation — carrying one user's
+            // record into the next user's session is the same leak as a back stack.
+            _focusedPersonId.value = null
+            pendingDeepLinkPersonId = null
             // Every tab, not just this one: the next person to sign in on this handset must
             // not be able to press back into the last one's data.
             navigate(NavEvent.ResetAll)
@@ -503,25 +552,40 @@ class AppStore(
      */
     fun focusPerson(personId: String?) {
         _focusedPersonId.value = personId
-        openFocusedPersonIfSignedIn()
+        if (personId == null) return
+        if (auth.state.value is AuthState.SignedIn) {
+            navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
+        } else {
+            // Cold start: the Activity handled the intent in onCreate, which runs before
+            // composition, which is where [start] restores the session. Hold it until there
+            // is somebody to show it to.
+            pendingDeepLinkPersonId = personId
+        }
     }
 
     /**
      * Navigate to whoever a deep link named, once there is a session to do it with.
      *
-     * Called from [focusPerson] AND from the end of [start], and the second call site is the
-     * bug. On a COLD start the Activity handles the intent in `onCreate`, which runs before
-     * composition, which is where `start()` restores the session — so the old code saw
-     * `AuthState.Unknown`, decided there was nobody to show the person to, and dropped the
-     * navigation on the floor. Tapping a reminder with the app not running landed you on the
-     * list. That has been true since M2 shipped notification deep links; it only surfaced
-     * now because M4 is the first milestone to drive a deep link into a cold process.
+     * On a COLD start the Activity handles the intent in `onCreate`, which runs before
+     * composition, which is where [start] restores the session — so [focusPerson] saw
+     * `AuthState.Unknown`, and the old code dropped the navigation on the floor. Tapping a
+     * reminder with the app not running landed you on the list. That has been true since M2
+     * shipped notification deep links; it surfaced in M4, the first milestone to drive a deep
+     * link into a cold process.
      *
-     * Safe to call twice: `_focusedPersonId` only holds a value when a deep link arrived in
-     * THIS process, and the navigation itself is a one-shot channel send.
+     * **A pending deep link is consumed, not read.** This is the same one-shot rule as
+     * `MainActivity.handleDeepLink`, one layer further in, and the first fix only moved the
+     * problem here. `_focusedPersonId` is the right shape for what it is for — "which row the
+     * list should highlight" is a thing with a duration — and exactly the wrong shape to
+     * trigger a navigation from, because it is a persistent value on an Application-scoped
+     * singleton and the process outlives the Activity. Re-reading it on the next composition
+     * re-navigated: tap a reminder for X, back out, switch to Calendar, rotate, and the stack
+     * is reset into X's detail screen again. So the navigation rides on its own one-shot
+     * field, which is cleared the instant it is used.
      */
-    private fun openFocusedPersonIfSignedIn() {
-        val personId = _focusedPersonId.value ?: return
+    private fun consumePendingDeepLink() {
+        val personId = pendingDeepLinkPersonId ?: return
+        pendingDeepLinkPersonId = null
         if (auth.state.value !is AuthState.SignedIn) return
         navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
     }
@@ -659,6 +723,14 @@ class AppStore(
     fun removeTrait(traitId: String) {
         scope.launch { people.removeTrait(traitId) }
     }
+
+    /**
+     * A one-line note for the snackbar, for callers outside the store.
+     *
+     * Used where the UI knows something the store cannot: `App.kt` restoring onto an import
+     * report whose contents did not survive the process, for one.
+     */
+    fun showMessage(text: String) { _message.value = text }
 
     fun clearMessage() {
         _message.value = null

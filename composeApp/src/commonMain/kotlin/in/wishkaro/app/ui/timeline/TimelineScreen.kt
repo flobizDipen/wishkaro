@@ -1,5 +1,11 @@
 package `in`.wishkaro.app.ui.timeline
 
+import `in`.wishkaro.app.domain.BirthdayMath
+import `in`.wishkaro.app.domain.MONTH_FULL_NAMES
+import `in`.wishkaro.app.domain.TimelineMonth
+import `in`.wishkaro.app.domain.UpcomingEntry
+import `in`.wishkaro.app.domain.timelineMonths
+import `in`.wishkaro.app.domain.toneFor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,20 +31,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import `in`.wishkaro.app.domain.BirthdayMath
-import `in`.wishkaro.app.domain.MONTH_FULL_NAMES
-import `in`.wishkaro.app.domain.UpcomingEntry
-import `in`.wishkaro.app.domain.monthPlus
-import `in`.wishkaro.app.domain.toneFor
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.number
-
-/** One month of the year ahead, with whatever falls in it. */
-private data class TimelineMonth(
-    val year: Int,
-    val month: Int,
-    val entries: List<UpcomingEntry>,
-)
 
 /**
  * FR-VIEW-03 — a scrollable year.
@@ -55,13 +49,11 @@ fun TimelineScreen(
     onOpenPerson: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val months = remember(entries, today) {
-        val byMonth = entries.groupBy { it.nextOccurrence.year to it.nextOccurrence.month.number }
-        (0..11).map { offset ->
-            val (year, month) = monthPlus(today.year, today.month.number, offset)
-            TimelineMonth(year, month, byMonth[year to month].orEmpty().sortedBy { it.daysUntil })
-        }
-    }
+    // The bucketing lives in domain/, next to eventsByDay, because it is the part that was
+    // wrong and the part a device check cannot pin: inline in this composable there was no
+    // seam and no test, and every event whose day had already gone by this month was being
+    // dropped silently. TimelineMonthsTest covers it now.
+    val months = remember(entries, today) { timelineMonths(entries, today) }
 
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("timeline_screen"),
@@ -69,7 +61,11 @@ fun TimelineScreen(
     ) {
         months.forEach { month ->
             item(key = "m-${month.year}-${month.month}") {
-                MonthHeading(month, isFirst = month == months.first())
+                MonthHeading(
+                    month,
+                    isFirst = month == months.first(),
+                    isLast = months.size > 12 && month == months.last(),
+                )
             }
 
             if (month.entries.isEmpty()) {
@@ -93,7 +89,7 @@ fun TimelineScreen(
 }
 
 @Composable
-private fun MonthHeading(month: TimelineMonth, isFirst: Boolean) {
+private fun MonthHeading(month: TimelineMonth, isFirst: Boolean, isLast: Boolean) {
     Column {
         if (!isFirst) HorizontalDivider(Modifier.padding(start = 72.dp))
         Row(
@@ -109,7 +105,9 @@ private fun MonthHeading(month: TimelineMonth, isFirst: Boolean) {
             )
             // The year, but only where it changes anything — writing "2026" beside all
             // twelve months is noise, and omitting it entirely is confusing in January.
-            if (month.month == 1 || isFirst) {
+            // The LAST slot is the exception that needs saying: it repeats the month the
+            // list opened on, a year later, and unlabelled it reads as a duplicate heading.
+            if (month.month == 1 || isFirst || isLast) {
                 Text(
                     " ${month.year}",
                     style = MaterialTheme.typography.titleMedium,

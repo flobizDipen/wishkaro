@@ -238,10 +238,14 @@ private fun wishKaroEntryProvider(
         // the timeline and the widget all read the same query, and routing it through a
         // UI store on the Application would put it back where M3 was bitten twice.
         val repository: UpcomingRepository = koinInject()
-        val entries by repository.observeUpcoming().collectAsState(emptyList())
+        // null until the database has answered. Same distinction as PersonDetail's:
+        // `emptyList()` as an initial value makes "we have not read yet" indistinguishable
+        // from "you know nobody", so a 575-person account opened cold flashed the
+        // add-your-first-person empty state before its own list arrived.
+        val entries by repository.observeUpcoming().collectAsState(null)
         val focused by store.focusedPersonId.collectAsState()
         val busy by store.busy.collectAsState()
-        val sections = remember(entries) { groupUpcoming(entries) }
+        val sections = remember(entries) { entries?.let(::groupUpcoming) }
 
         Scaffold(
             modifier = inner,
@@ -381,8 +385,14 @@ private fun wishKaroEntryProvider(
 
     entry<Screen.PersonDetail>(metadata = TwoPaneScene.detailPane()) { key ->
         val person = store.personOf(key.personId)
+        // "Not read yet" is not "deleted". Both are a null person, and telling the user
+        // their person is gone is the worse half to guess at — a widget tap into a cold
+        // process lands here before the first database emission, and that frame used to
+        // read "This person is no longer here." about somebody who exists.
+        val loaded by store.peopleLoaded.collectAsState()
         PersonDetailScreen(
             person = person,
+            stillLoading = !loaded,
             onBack = nav::back,
             onEdit = { nav.goTo(Screen.EditPerson(key.personId)) },
             onAddEvent = { nav.goTo(Screen.EventEditor(key.personId, null)) },
@@ -487,18 +497,43 @@ private fun wishKaroEntryProvider(
         val result by importStore.result.collectAsState()
         val savedReport by importStore.savedReport.collectAsState()
         val busy by store.busy.collectAsState()
-        result?.let {
-            ImportResultScreen(
-                result = it,
-                savedReport = savedReport,
-                busy = busy,
-                onSaveFailures = importStore::saveFailedRows,
-                onDone = {
-                    importStore.clearResult()
-                    nav.resetTo(Screen.People)
-                },
-                modifier = inner,
-            )
+        val report = result
+        if (report == null) {
+            // Restored onto a report that did not survive the process.
+            //
+            // The back stack is saved state as of M4 and `Screen.ImportResult` is in it, so
+            // a process death on this screen brings the user back to it — but the report
+            // itself is a plain in-memory value on a Koin single, and it is gone. The entry
+            // used to be `result?.let { ... }` with no else, and since this screen has no
+            // tabs either, what was drawn was NOTHING: no content, no top bar, no bottom
+            // bar. The most blank screen in the app, in the milestone that put FR-VIEW-05's
+            // "never a blank screen" in writing.
+            //
+            // Not made to survive, deliberately. The report is the story of one action in
+            // one process — which rows failed and why — and reconstructing it later would
+            // mean persisting it, versioning it, and deciding when it stops being true. The
+            // import ITSELF is already saved; it is only the receipt that is ephemeral. So
+            // the user goes where "Done" would have taken them, and is told why rather than
+            // being moved in silence.
+            LaunchedEffect(Unit) {
+                store.showMessage("Your import is saved. The report is no longer available.")
+                nav.resetTo(Screen.People)
+            }
+            return@entry
         }
+        ImportResultScreen(
+            result = report,
+            savedReport = savedReport,
+            busy = busy,
+            onSaveFailures = importStore::saveFailedRows,
+            // Navigate only; do NOT clear the result here. Clearing it while this entry is
+            // still composed drops `result` to null under the branch above, which would
+            // show "the report is no longer available" to somebody who had just pressed
+            // Done and read it. `AppStore.openImport` already clears on the way IN, so the
+            // next import starts clean either way — this call was only ever redundant, and
+            // the restore branch is what turned redundant into wrong.
+            onDone = { nav.resetTo(Screen.People) },
+            modifier = inner,
+        )
     }
 }

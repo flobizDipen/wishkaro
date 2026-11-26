@@ -1,8 +1,13 @@
 package `in`.wishkaro.app.ui.upcoming
 
+import `in`.wishkaro.app.domain.BirthdayMath
+import `in`.wishkaro.app.domain.UpcomingEntry
+import `in`.wishkaro.app.domain.UpcomingSection
+import `in`.wishkaro.app.domain.toneFor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,10 +32,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import `in`.wishkaro.app.domain.BirthdayMath
-import `in`.wishkaro.app.domain.UpcomingEntry
-import `in`.wishkaro.app.domain.UpcomingSection
-import `in`.wishkaro.app.domain.toneFor
 
 /**
  * FR-VIEW-01 — upcoming events grouped Today / This week / This month / Later.
@@ -43,13 +45,24 @@ import `in`.wishkaro.app.domain.toneFor
  */
 @Composable
 fun UpcomingListScreen(
-    sections: List<UpcomingSection>,
+    /** null while the first database read is still in flight. Not the same as empty. */
+    sections: List<UpcomingSection>?,
     focusedPersonId: String?,
     onOpenPerson: (String) -> Unit,
     onAddPerson: () -> Unit,
     onOpenImport: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (sections == null) {
+        // Still reading. Offering "add your first person" to somebody who has 575 of them,
+        // for the one frame before the query answers, is worse than a spinner: it is the
+        // app telling the user their data is gone.
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.testTag("upcoming_loading"))
+        }
+        return
+    }
+
     if (sections.isEmpty()) {
         // FR-VIEW-05: every view's empty state leads somewhere. Never a blank screen.
         UpcomingEmptyState(

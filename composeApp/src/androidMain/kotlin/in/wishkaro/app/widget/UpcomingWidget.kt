@@ -67,7 +67,12 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // Read ONCE, before provideContent. A widget update is a broadcast — it wakes, reads,
         // draws and is gone — so there is nothing to subscribe to and nobody to be live for.
-        val entries = upcoming.upcomingNow(withinDays = HORIZON_DAYS, limit = MAX_ROWS)
+        // NO limit. The layout truncates to what fits, and it needs the real total to say
+        // how many it left out: capping the query at MAX_ROWS made "+N more" count the
+        // truncation rather than the remainder, so thirty events in the next week on a 4x2
+        // widget read "+7 more" when twenty-nine were hidden. The horizon is a week, so the
+        // list this reads is small whatever the account size.
+        val entries = upcoming.upcomingNow(withinDays = HORIZON_DAYS)
 
         provideContent {
             GlanceTheme {
@@ -106,7 +111,10 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
          */
         const val HORIZON_DAYS = 7
 
-        /** More than the largest size can draw; the layout truncates to what fits. */
+        /**
+         * The most rows any size draws. A display cap, NOT a query cap — see [provideGlance]
+         * for why the difference matters to the "+N more" line.
+         */
         const val MAX_ROWS = 8
     }
 }

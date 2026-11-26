@@ -53,6 +53,15 @@ object WidgetUpdates {
      */
     suspend fun refresh(context: Context) {
         try {
+            // Ask first. The data-change half of FR-WID-03 watches the people flow for the
+            // life of the process and calls this on every write, and most installs have no
+            // widget on a home screen at all — this is the one decision [isPlaced] exists
+            // to inform, and it was being computed and then not read, which is the failure
+            // MILESTONE_CHECKLIST.md §C is a list of.
+            if (!isPlaced(context)) {
+                Log.d(TAG, "No widget placed; nothing to refresh")
+                return
+            }
             UpcomingWidget().updateAll(context)
         } catch (cause: Throwable) {
             Log.w(TAG, "Could not refresh the widget", cause)

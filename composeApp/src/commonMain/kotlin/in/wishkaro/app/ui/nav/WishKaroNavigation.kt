@@ -21,8 +21,8 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
  * are decisions rather than copying:
  *
  *  - **Exit through home.** The start route's entries are always at the bottom of the list,
- *    so backing out of any tab lands on People rather than closing the app. The user always
- *    leaves the same way they came in.
+ *    so backing out of any tab lands on Upcoming — `TOP_LEVEL_ROUTES.first()` — rather
+ *    than closing the app. The user always leaves the same way they came in.
  *  - **Every non-root state has a back handler.** `NavDisplay` only calls `onBack` when
  *    there is something to pop, so system back closes the app exactly when the user is
  *    standing on the start route and not before. M3 shipped a report screen with no

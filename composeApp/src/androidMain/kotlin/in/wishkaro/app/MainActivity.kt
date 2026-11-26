@@ -134,7 +134,14 @@ class MainActivity : ComponentActivity() {
             deferred.await()
         }
 
-        handleDeepLink(intent)
+        // Only a FRESH launch carries a deep link. A recreation — rotation, fold, or the
+        // process being rebuilt from Recents — is handed the Activity's ORIGINAL Intent
+        // again, data and all, because clearing it below mutates this process's copy and
+        // not what the system holds for the task. Without this guard the user is thrown
+        // back into the person a notification named every time they turn the phone over,
+        // and again when the app is restored days later. `savedInstanceState == null` is
+        // exactly the question "is this an arrival or a restoration?".
+        if (savedInstanceState == null) handleDeepLink(intent)
         setContent {
             // Makes every `Modifier.testTag("...")` in the shared UI appear as a
             // `resource-id` in a `uiautomator dump`, which is what lets tools/device/ui.sh
