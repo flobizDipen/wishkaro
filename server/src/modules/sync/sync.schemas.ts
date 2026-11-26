@@ -156,9 +156,60 @@ export const TraitUpsertSchema = z
   .strict();
 
 /**
- * The user's reminder settings, riding on the sync batch rather than being a fourth cursor
+ * A wish, the fourth cursor entity (FR-HIS-01, FR-WSH-07). M5.
+ *
+ * `sentiment` is DERIVED and therefore absent, exactly as it is absent from `EventUpsert`:
+ * the server computes it from the event type and whether the person is deceased, and
+ * `.strict()` turns a client that sends it into a 400 naming the field. `userId` is absent
+ * for the same reason it is absent everywhere else — it comes from the token.
+ *
+ * `eventId` is accepted but NOT validated against the event table. It is a soft reference
+ * (see the Wish model in schema.prisma): an event the user has since deleted is a normal
+ * state of affairs, not a bad request, and rejecting the wish would be refusing to record
+ * history because the user fixed a date.
+ */
+export const WishUpsertSchema = z
+  .object({
+    id: UuidSchema,
+    personId: UuidSchema,
+
+    type: EventTypeSchema,
+    /**
+     * Bounded rather than free. A year outside this cannot be a real occasion the user is
+     * recording, and an unbounded integer here is a cheap way to poison the no-repeat query's
+     * ordering for ever.
+     */
+    occurrenceYear: z.number().int().min(1900).max(2200),
+    /** Soft reference. Nullable, not validated — see above. */
+    eventId: UuidSchema.nullable().optional(),
+
+    /**
+     * The message as it was handed over, after the user's edits.
+     *
+     * 4000 rather than 2000 (the `notes` cap): a drafted wish in Hindi can be two or three
+     * times the byte length of the same text in English, and a user who has pasted in a poem
+     * must not silently lose their own words at the sync boundary.
+     */
+    messageText: z.string().trim().min(1).max(4000),
+    tone: z.enum(['WARM', 'FUNNY', 'RESPECTFUL', 'SHORT', 'POETIC', 'HEARTFELT']),
+    language: z.enum(['ENGLISH', 'HINDI', 'HINGLISH']),
+    channel: z.enum(['WHATSAPP', 'SMS', 'SHARE', 'COPY']),
+    source: z.enum(['AI', 'TEMPLATE', 'USER']),
+
+    /** When the user said yes, not when the draft was made. */
+    sentAt: IsoInstant,
+
+    updatedAt: IsoInstant,
+    deletedAt: IsoInstant.nullable().optional(),
+    // `posterId` is deliberately absent: M6 owns it and nothing writes it yet. Accepting it
+    // now would mean accepting a reference to a poster table that does not exist.
+  })
+  .strict();
+
+/**
+ * The user's reminder settings, riding on the sync batch rather than being a fifth cursor
  * entity (FR-REM-03 / FR-REM-09). One row per user: paging it would be absurd, and a cursor
- * for a single row is a third ordering key for every client to get right.
+ * for a single row is another ordering key for every client to get right.
  *
  * Optional, because most pushes are people and events. Carries its own `updatedAt` so the
  * same per-record last-write-wins applies here as everywhere else.
@@ -198,6 +249,7 @@ export const SyncPushSchema = z
     people: z.array(PersonUpsertSchema).max(500).default([]),
     events: z.array(EventUpsertSchema).max(500).default([]),
     traits: z.array(TraitUpsertSchema).max(500).default([]),
+    wishes: z.array(WishUpsertSchema).max(500).default([]),
     settings: SettingsPushSchema.optional(),
   })
   .strict();
@@ -210,4 +262,5 @@ export const SyncPullQuerySchema = z.object({
 export type PersonUpsert = z.infer<typeof PersonUpsertSchema>;
 export type EventUpsert = z.infer<typeof EventUpsertSchema>;
 export type TraitUpsert = z.infer<typeof TraitUpsertSchema>;
+export type WishUpsert = z.infer<typeof WishUpsertSchema>;
 export type SyncPush = z.infer<typeof SyncPushSchema>;

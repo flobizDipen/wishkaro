@@ -6,6 +6,7 @@ describe('sync cursor', () => {
       person: { updatedAt: '2026-11-24T10:00:00.000Z', id: 'aaa' },
       event: { updatedAt: '2026-11-24T11:00:00.000Z', id: 'bbb' },
       trait: { updatedAt: '2026-11-24T12:00:00.000Z', id: 'ccc' },
+      wish: { updatedAt: '2026-11-24T13:00:00.000Z', id: 'ddd' },
     };
     expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor);
   });
@@ -27,6 +28,32 @@ describe('sync cursor', () => {
     expect(decoded.person?.id).toBe('aaa');
     expect(decoded.event?.id).toBe('bbb');
     expect(decoded.trait).toBeNull();
+    expect(decoded.wish).toBeNull();
+  });
+
+  /**
+   * M5 added a fourth, by the same argument. A cursor minted by any client up to M4 has no
+   * `wish` key — including one minted yesterday by the phone in Dipen's pocket — and must
+   * decode to wish null, so that client pulls every wish rather than never seeing one.
+   *
+   * The failure this guards against is silent in the worst way: a cursor that threw would be
+   * noticed, and one that skipped wishes forever would look exactly like "there is no
+   * history yet", which is also what a new install looks like.
+   */
+  it('accepts an M4 cursor that predates wishes', () => {
+    const m4 = Buffer.from(
+      JSON.stringify({
+        person: { updatedAt: '2026-11-24T10:00:00.000Z', id: 'aaa' },
+        event: { updatedAt: '2026-11-24T11:00:00.000Z', id: 'bbb' },
+        trait: { updatedAt: '2026-11-24T12:00:00.000Z', id: 'ccc' },
+      }),
+    ).toString('base64url');
+
+    const decoded = decodeCursor(m4);
+    expect(decoded.person?.id).toBe('aaa');
+    expect(decoded.event?.id).toBe('bbb');
+    expect(decoded.trait?.id).toBe('ccc');
+    expect(decoded.wish).toBeNull();
   });
 
   it('treats a missing cursor as a full resync', () => {
@@ -75,17 +102,20 @@ describe('sync cursor', () => {
     });
   });
 
-  it('advances the three entities independently, so none can starve the others', () => {
-    // People filled a page; events and traits did not. Their cursors must not jump forward.
+  it('advances the four entities independently, so none can starve the others', () => {
+    // People filled a page; events, traits and wishes did not. Their cursors must not jump
+    // forward. This is why the cursor is four independent orderings rather than one.
     const cursor = decodeCursor(
       encodeCursor({
         person: advance(null, [{ id: 'p9', updatedAt: new Date('2026-11-24T12:00:00.000Z') }]),
         event: advance(null, []),
         trait: advance(null, []),
+        wish: advance(null, []),
       }),
     );
     expect(cursor.person?.id).toBe('p9');
     expect(cursor.event).toBeNull();
     expect(cursor.trait).toBeNull();
+    expect(cursor.wish).toBeNull();
   });
 });
