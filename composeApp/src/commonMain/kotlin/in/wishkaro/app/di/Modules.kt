@@ -20,6 +20,7 @@ import `in`.wishkaro.app.platform.PlatformConfig
 import `in`.wishkaro.app.platform.ReminderScheduler
 import `in`.wishkaro.app.platform.ContactsGateway
 import `in`.wishkaro.app.platform.FileGateway
+import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.importing.ImportStore
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +100,11 @@ val appModule = module {
             scope = get(),
         )
     }
+
+    // The one "what is coming up" query, shared by the views and the Glance widget. The
+    // widget resolves THIS from the Koin graph, never AppStore — a widget update runs when
+    // no UI has ever been composed. docs/M4_PLAN.md §3.
+    single { UpcomingRepository(local = get()) }
 
     single {
         AppStore(
