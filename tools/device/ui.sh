@@ -27,6 +27,7 @@
 #   tools/device/ui.sh expect <selector>     assert the node is present (use after every tap)
 #   tools/device/ui.sh absent <selector>     assert the node is NOT present
 #   tools/device/ui.sh type   <selector> <text>   tap the field, confirm it took focus, type
+#   tools/device/ui.sh back                  guarded system back
 #   tools/device/ui.sh dump                  print the resolved tree, for writing selectors
 #   tools/device/ui.sh shot   [name]         screenshot only
 #
@@ -45,7 +46,12 @@
 set -euo pipefail
 
 PKG="${WK_PKG:-in.wishkaro.app}"
-ACT="${WK_ACT:-$PKG/.MainActivity}"
+# MILESTONE_CHECKLIST.md §E says mCurrentFocus should name `in.wishkaro.app/.MainActivity`.
+# It does not: dumpsys prints the fully-qualified form, `in.wishkaro.app/in.wishkaro.app.
+# MainActivity`. Both spellings are accepted here, because a guard that rejects the app it
+# is guarding is a guard nobody keeps.
+ACT_SHORT="${WK_ACT:-$PKG/.MainActivity}"
+ACT_FULL="$PKG/$PKG.${ACT_SHORT##*/.}"
 SHOTS="${WK_SHOTS:-build/device-shots}"
 
 die() { printf '\033[31mFAIL\033[0m  %s\n' "$*" >&2; exit 1; }
@@ -74,14 +80,15 @@ guard() {
       die "the device is LOCKED or the shade is open — unlock it. ($focus)" ;;
   esac
 
-  grep -q "$ACT" <<<"$focus" \
-    || die "focused window is not $ACT — refusing to send input. ($focus)"
+  if ! grep -qE "$ACT_SHORT|$ACT_FULL" <<<"$focus"; then
+    die "focused window is not $ACT_SHORT — refusing to send input. ($focus)"
+  fi
 
   local fatals
   fatals="$(adb logcat -d -t 400 | grep -c 'FATAL EXCEPTION' || true)"
   [ "$fatals" = "0" ] || die "$fatals FATAL EXCEPTION in the last 400 log lines"
 
-  ok "focused on $ACT, 0 fatals"
+  ok "focused on $ACT_SHORT, 0 fatals"
 }
 
 # The accessibility tree, as XML on stdout. Never written to the device's storage.
@@ -241,6 +248,15 @@ else:
   ok "typed into $selector"
 }
 
+# System back. Guarded like a tap, because "press back" sent at the wrong window is how an
+# Activity gets finished out from under a flow — M3's import report, which had no
+# BackHandler at all.
+cmd_back() {
+  guard
+  adb shell input keyevent 4
+  ok "pressed back"
+}
+
 cmd_dump() {
   need_adb
   dump_xml | python3 -c '
@@ -262,6 +278,7 @@ case "${1:-}" in
   expect) [ $# -ge 2 ] || die "expect needs a selector"; cmd_expect "$2" ;;
   absent) [ $# -ge 2 ] || die "absent needs a selector"; cmd_absent "$2" ;;
   type)   [ $# -ge 3 ] || die "type needs a selector and text"; cmd_type "$2" "$3" ;;
+  back)   cmd_back ;;
   dump)   cmd_dump ;;
   shot)   shot "${2:-shot}" ;;
   *)      sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
