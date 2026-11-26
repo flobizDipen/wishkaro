@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.CompletenessField
 import `in`.wishkaro.app.domain.Person
@@ -359,7 +360,7 @@ private fun TraitSection(
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = draft,
-                onValueChange = { draft = it },
+                onValueChange = { draft = it.take(FieldLimits.TRAIT) },
                 label = { Text("Add ${kind.label.lowercase()}") },
                 singleLine = true,
                 modifier = Modifier.weight(1f),

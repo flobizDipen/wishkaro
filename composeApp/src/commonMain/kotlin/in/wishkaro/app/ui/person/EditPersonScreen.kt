@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.ui.components.RelationPicker
 import `in`.wishkaro.app.ui.components.SectionHeader
@@ -82,7 +83,7 @@ fun EditPersonScreen(
         ) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = { name = it.take(FieldLimits.NAME) },
                 label = { Text("Name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -94,29 +95,37 @@ fun EditPersonScreen(
             SectionHeader("Optional")
             OutlinedTextField(
                 value = gender,
-                onValueChange = { gender = it },
+                onValueChange = { gender = it.take(FieldLimits.GENDER) },
                 label = { Text("Gender") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = phone,
-                onValueChange = { phone = it },
+                onValueChange = { phone = it.take(FieldLimits.PHONE) },
                 label = { Text("Phone") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             OutlinedTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = { email = it.take(FieldLimits.EMAIL) },
                 label = { Text("Email") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             OutlinedTextField(
                 value = notes,
-                onValueChange = { notes = it },
+                onValueChange = { notes = it.take(FieldLimits.NOTES) },
                 label = { Text("Notes") },
+                // Shown only near the limit, so it is a warning rather than clutter. The
+                // field stops accepting input at the cap, and a silent stop with nothing on
+                // screen is its own small mystery.
+                supportingText = if (FieldLimits.showCounter(notes.length, FieldLimits.NOTES)) {
+                    { Text("${notes.length} / ${FieldLimits.NOTES}") }
+                } else {
+                    null
+                },
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )

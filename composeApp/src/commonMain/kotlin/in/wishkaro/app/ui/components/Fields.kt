@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.RELATION_CHIPS
 
 /** The editable state of a recurring date, kept as strings so a half-typed year is legal. */
@@ -169,7 +170,7 @@ fun RelationPicker(
         }
         OutlinedTextField(
             value = if (selected != null && selected !in RELATION_CHIPS) selected else "",
-            onValueChange = { onSelect(it.ifBlank { null }) },
+            onValueChange = { onSelect(it.take(FieldLimits.RELATION).ifBlank { null }) },
             label = { Text("Or type your own") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
