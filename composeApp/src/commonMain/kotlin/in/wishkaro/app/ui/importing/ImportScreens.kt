@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,6 +53,7 @@ import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.RelationPicker
 import `in`.wishkaro.app.ui.components.SectionHeader
 import kotlinx.datetime.LocalDate
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 /**
  * Where an import starts: contacts, or a file (FR-IMP-01, FR-IMP-04).
@@ -398,7 +398,7 @@ private fun ContactRow(choice: ContactChoice, onToggle: () -> Unit, onAddDate: (
 @Composable
 private fun BulkRelationDialog(count: Int, onPick: (String) -> Unit, onDismiss: () -> Unit) {
     var custom by rememberSaveable { mutableStateOf<String?>(null) }
-    AlertDialog(
+    AdaptiveDialog(
         onDismissRequest = onDismiss,
         title = { Text("How do you know these $count?") },
         text = {
@@ -430,7 +430,7 @@ private fun AddDateDialog(name: String, onSave: (EventDate) -> Unit, onDismiss: 
         mutableStateOf(DateFieldsState())
     }
     val parsed = fields.toEventDate()
-    AlertDialog(
+    AdaptiveDialog(
         onDismissRequest = onDismiss,
         title = { Text(name) },
         text = {

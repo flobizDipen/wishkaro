@@ -36,6 +36,11 @@ import `in`.wishkaro.app.ui.nav.WishKaroNavigation
 import `in`.wishkaro.app.ui.components.WishKaroTopBar
 import `in`.wishkaro.app.ui.nav.WishKaroNavigationBar
 import `in`.wishkaro.app.ui.nav.rememberWishKaroNavigation
+import `in`.wishkaro.app.ui.adaptive.NavigationKind
+import `in`.wishkaro.app.ui.adaptive.TwoPaneScene
+import `in`.wishkaro.app.ui.adaptive.RailOrNot
+import `in`.wishkaro.app.ui.adaptive.rememberNavigationKind
+import `in`.wishkaro.app.ui.adaptive.rememberTwoPaneSceneStrategy
 import `in`.wishkaro.app.ui.calendar.CalendarScreen
 import `in`.wishkaro.app.ui.timeline.TimelineScreen
 import `in`.wishkaro.app.ui.upcoming.UpcomingListScreen
@@ -58,6 +63,9 @@ fun App(modifier: Modifier = Modifier) {
         val store: AppStore = koinInject()
         val importStore: ImportStore = koinInject()
         val nav = rememberWishKaroNavigation()
+        // FR-VIEW-06: compact gets a bottom bar, medium and expanded get a rail. Read once,
+        // here, so the whole shell agrees about which it is.
+        val navigationKind = rememberNavigationKind()
 
         val authState by store.authState.collectAsState()
         val busy by store.busy.collectAsState()
@@ -112,7 +120,10 @@ fun App(modifier: Modifier = Modifier) {
                 // and they are still there. It goes away only for the flows that are tasks
                 // rather than places (`Screen.showsTabs`).
                 // Medium and expanded widths get a rail instead; that is the next commit.
-                if (authState is AuthState.SignedIn && nav.currentScreen?.showsTabs == true) {
+                if (authState is AuthState.SignedIn &&
+                    nav.currentScreen?.showsTabs == true &&
+                    navigationKind == NavigationKind.BOTTOM_BAR
+                ) {
                     WishKaroNavigationBar(
                         current = nav.topLevelRoute,
                         onSelect = nav::goTo,
@@ -130,7 +141,19 @@ fun App(modifier: Modifier = Modifier) {
                 SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
             } else {
                 val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, nav, inner))
-                NavDisplay(entries = entries, onBack = { nav.back() })
+                val twoPane = rememberTwoPaneSceneStrategy<NavKey>()
+                RailOrNot(
+                    kind = navigationKind,
+                    current = nav.topLevelRoute,
+                    showNavigation = nav.currentScreen?.showsTabs == true,
+                    onSelect = nav::goTo,
+                ) {
+                    NavDisplay(
+                        entries = entries,
+                        sceneStrategies = listOf(twoPane),
+                        onBack = { nav.back() },
+                    )
+                }
             }
         }
     }
@@ -205,7 +228,12 @@ private fun wishKaroEntryProvider(
     inner: Modifier,
 ): (NavKey) -> NavEntry<NavKey> = entryProvider {
 
-    entry<Screen.Upcoming> {
+    // OD-15 names exactly two pairings for two panes: People<->detail and
+    // Events<->detail. The metadata is opt-in, so the calendar, the timeline, the
+    // forms and the import flow stay single-pane by saying nothing — which is also
+    // how FR-VIEW-08 keeps the composer and the generation flows (M5, M6)
+    // single-pane whatever the width, without those screens existing yet.
+    entry<Screen.Upcoming>(metadata = TwoPaneScene.listPane()) {
         // Straight from UpcomingRepository, not through AppStore. The list, the calendar,
         // the timeline and the widget all read the same query, and routing it through a
         // UI store on the Application would put it back where M3 was bitten twice.
@@ -299,7 +327,7 @@ private fun wishKaroEntryProvider(
         }
     }
 
-    entry<Screen.People> {
+    entry<Screen.People>(metadata = TwoPaneScene.listPane()) {
         val cards by store.cards.collectAsState()
         val filter by store.filter.collectAsState()
         val relations by store.knownRelations.collectAsState()
@@ -351,7 +379,7 @@ private fun wishKaroEntryProvider(
         )
     }
 
-    entry<Screen.PersonDetail> { key ->
+    entry<Screen.PersonDetail>(metadata = TwoPaneScene.detailPane()) { key ->
         val person = store.personOf(key.personId)
         PersonDetailScreen(
             person = person,

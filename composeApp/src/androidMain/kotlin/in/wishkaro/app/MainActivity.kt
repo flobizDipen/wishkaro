@@ -157,13 +157,32 @@ class MainActivity : ComponentActivity() {
         handleDeepLink(intent)
     }
 
-    /** `wishkaro://person/<id>` — tapping a reminder opens the app on that person. */
+    /**
+     * `wishkaro://person/<id>` — a reminder, or M4's widget (FR-WID-02), opening the app on
+     * somebody.
+     *
+     * **The intent is consumed, not just read.** This is the one-shot rule again, one layer
+     * down from where M3 found it. `AppStore` emits navigation through a `Channel` so a
+     * returning Activity cannot replay it — but the Intent is itself a persistent value,
+     * held by the Activity and handed to every `onCreate`. So a rotation re-read it and
+     * navigated again, throwing the user back to the person the notification was about,
+     * however far they had moved on.
+     *
+     * Invisible until M4, because the old manifest's `configChanges` meant rotation never
+     * recreated the Activity. Found on the device by rotating after a deep link and landing
+     * on "This person is no longer here".
+     *
+     * Clearing the data is what makes it one-shot: the next `onCreate` finds a plain intent
+     * and does nothing.
+     */
     private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
         if (uri.scheme != "wishkaro") return
         if (uri.host == "person") {
             uri.pathSegments.firstOrNull()?.let(store::focusPerson)
         }
+        intent.data = null
+        setIntent(intent)
     }
 
     /**

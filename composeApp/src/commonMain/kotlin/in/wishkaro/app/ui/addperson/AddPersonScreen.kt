@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +37,7 @@ import `in`.wishkaro.app.ui.components.EventTypePicker
 import `in`.wishkaro.app.ui.components.RelationPicker
 import `in`.wishkaro.app.ui.components.SectionHeader
 import kotlinx.coroutines.launch
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 /**
  * Name, date, relation — the three inputs FR-PPL-01 allows. Everything else is added later
@@ -144,7 +144,7 @@ fun AddPersonScreen(
 
     if (duplicates.isNotEmpty()) {
         val first = duplicates.first()
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = onDismissDuplicates,
             title = { Text("Is this the same person?") },
             text = {

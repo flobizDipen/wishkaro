@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +46,7 @@ import `in`.wishkaro.app.ui.components.SectionHeader
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.todayIn
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 /**
  * The person screen (FR-PPL-07): next event with countdown, age or years when the year is
@@ -193,7 +193,7 @@ fun PersonDetailScreen(
     }
 
     if (confirmDelete) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Remove ${person.displayName}?") },
             // FR-PPL-08: say both halves. Reminders stop now; the record is recoverable.

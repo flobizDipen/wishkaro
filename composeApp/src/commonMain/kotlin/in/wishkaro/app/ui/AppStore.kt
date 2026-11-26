@@ -276,7 +276,12 @@ class AppStore(
      */
     fun start() {
         auth.restore()
-        if (auth.state.value is AuthState.SignedIn) afterSignedIn()
+        if (auth.state.value is AuthState.SignedIn) {
+            afterSignedIn()
+            // A deep link handled in onCreate got here before the session did. Now there is
+            // one, so the person it named can finally be opened.
+            openFocusedPersonIfSignedIn()
+        }
     }
 
     fun signIn() {
@@ -498,9 +503,27 @@ class AppStore(
      */
     fun focusPerson(personId: String?) {
         _focusedPersonId.value = personId
-        if (personId != null && auth.state.value is AuthState.SignedIn) {
-            navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
-        }
+        openFocusedPersonIfSignedIn()
+    }
+
+    /**
+     * Navigate to whoever a deep link named, once there is a session to do it with.
+     *
+     * Called from [focusPerson] AND from the end of [start], and the second call site is the
+     * bug. On a COLD start the Activity handles the intent in `onCreate`, which runs before
+     * composition, which is where `start()` restores the session — so the old code saw
+     * `AuthState.Unknown`, decided there was nobody to show the person to, and dropped the
+     * navigation on the floor. Tapping a reminder with the app not running landed you on the
+     * list. That has been true since M2 shipped notification deep links; it only surfaced
+     * now because M4 is the first milestone to drive a deep link into a cold process.
+     *
+     * Safe to call twice: `_focusedPersonId` only holds a value when a deep link arrived in
+     * THIS process, and the navigation itself is a one-shot channel send.
+     */
+    private fun openFocusedPersonIfSignedIn() {
+        val personId = _focusedPersonId.value ?: return
+        if (auth.state.value !is AuthState.SignedIn) return
+        navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
     }
 
     // -----------------------------------------------------------------------------------

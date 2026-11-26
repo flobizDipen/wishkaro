@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import `in`.wishkaro.app.data.local.BlockedRow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -50,6 +49,7 @@ import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.toneFor
 import `in`.wishkaro.app.ui.PeopleFilter
 import `in`.wishkaro.app.ui.components.WishKaroTopBar
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 private val MONTHS = listOf(
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -391,7 +391,7 @@ private fun BlockedBanner(blocked: List<BlockedRow>) {
     }
 
     if (open) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { open = false },
             title = { Text("Not saved to the server") },
             text = {
