@@ -127,16 +127,17 @@ of the owner's own was deleted.
 | 2 | Every view's empty state leads somewhere | **PARTIAL.** The calendar's two empty states were seen on the device ("Tap a day with a dot…", and the per-day "Nothing on this day"). The Upcoming, People and Timeline empty states were **not** seen, because the only account available has 575 people in it and emptying it is not a tidy-up (§4.2) |
 | 3 | Two-pane list-detail on a tablet or large foldable, with the rail, and dialogs as side sheets | **Pass, on a phone-shaped window.** Verified at 923dp (the Pixel 9a is genuinely expanded in landscape) and again at **1484×928dp** by resizing the running app to tablet geometry with `wm size`. **Not on tablet hardware**: the tablet emulator has no Google account and reaches only the sign-in screen (§4.1) |
 | 4 | Fold, unfold, rotate, and split-screen on a real device: no restart, no lost state, including mid-edit state in a form | **PARTIAL.** Rotation and process death: **pass**, including a half-typed form (§3.1), and the file picker and contacts permission flows now both survive a rotation mid-flight — the second of those was broken and is fixed (§0.6). Fold/unfold: the app survives it on an emulated Pixel Fold with 0 fatal exceptions and the window crossing 411dp↔841dp, but **with no session there is no state to lose**, so the "no lost state" half is unproven on a fold. Split-screen: the app launches and runs in `mWindowingMode=multi`, but a genuine side-by-side resize against a second app was **not driven** |
-| 5 | State restoration has automated tests, not only a device walkthrough | **Pass.** 9 instrumented tests — `StateRestorationTester` for saved state, `ActivityScenario.recreate()` for a real onDestroy/onCreate, and three for the hinge arithmetic. Confirmed by reverting: making the selected tab a plain `remember` turns two red; deleting the hinge gap turns three red. **They do not run in CI** (§5) |
+| 5 | State restoration has automated tests, not only a device walkthrough | **PARTIAL, downgraded.** 9 instrumented tests — `StateRestorationTester` for saved state, `ActivityScenario.recreate()` for a real onDestroy/onCreate, and three for the hinge arithmetic. Confirmed by reverting: making the selected tab a plain `remember` turns two red; deleting the hinge gap turns three red. **They do not run in CI**, and the suite **cannot currently be assembled at all** — a reproducible build defect, not an environmental one (§5.1) |
 | 6 | The widget in all three sizes on a real home screen, showing real data | **PARTIAL.** On the owner's actual home screen with the real account throughout. **Two of the four declared sizes were observed** — the 4×2 default and the taller bucket, which shows three entries and "+5 more" where the default shows two. The 2×2 and the tablet-sized bucket were **not placed** |
 | 7 | Tapping a widget entry opens that person; tapping the header opens the app | **Pass.** An entry opened Aadhya Menon 10, and a second opened Anika Pillai 25; the header brought the app forward from the launcher. Both go down M2's `wishkaro://` route |
 | 8 | The widget updates after a data change, and after midnight | **PARTIAL.** Data change: **pass** — toggling a reminder produces `androidx.glance.session.SessionWorker` and `AppWidgetServiceImpl: Trying to notify widget update for package in.wishkaro.app`. Midnight: **scheduled, not observed.** `#MidnightWidgetWorker#` is in the system scheduler with `Run time: earliest=+7h32m` from 16:27 local — 23:59:51. It cannot fire before this is reviewed |
 | 9 | Unit tests for the grouping boundaries, the calendar's month grid, and the navigation state | **Pass.** 19 on the grouping (every boundary, a month end, a year end, 29 February both ways), 12 on the month grid, 10 on the navigator plus a registration test that asks the sealed hierarchy what it contains. **296 tests** pass in `TZ=UTC` and `TZ=Pacific/Chatham` |
 | 10 | CI green, and this document | CI state is on the PR; this document exists |
 
-**Six of ten pass outright. Four are partial, and the reason in every case is hardware or a
-clock, not a defect** — no tablet, no foldable with a session, no second app driven into
-split-screen, and a midnight that has not arrived.
+**Five of ten pass outright. Five are partial.** For four of them the reason is hardware or a
+clock rather than a defect — no tablet, no foldable with a session, no second app driven into
+split-screen, and a midnight that has not arrived. **The fifth, item 5, is a real defect:**
+the instrumented suite cannot be assembled (§5.1).
 
 ---
 
@@ -281,7 +282,7 @@ not a tidy-up, and it is the only honest test of item 1.
 | Suite | Count | Where it runs |
 |---|---|---|
 | Unit (`commonTest` + `androidUnitTest`) | **296** | CI and locally, in `TZ=UTC` and `TZ=Pacific/Chatham` |
-| Instrumented (`androidInstrumentedTest`) | **9** | **Device only.** CI has no emulator |
+| Instrumented (`androidInstrumentedTest`) | 9 written, 12 with the bridge tests | **Cannot currently be assembled.** See §5.1 |
 
 New in M4: 19 grouping-boundary tests, 12 month-grid tests, 10 navigator tests, a serializer
 registration test that enumerates the sealed hierarchy, 6 repository tests against a real
@@ -290,6 +291,56 @@ in-memory SQLite, 6 state-restoration tests and 3 hinge tests.
 **CI does not cover item 5.** The instrumented suite is a local gate, run with
 `tools/device/instrumented-tests.sh`. Saying "CI green" and leaving it there would imply
 otherwise.
+
+### 5.1 The instrumented suite cannot be assembled — a real defect, not the environment
+
+`./gradlew :composeApp:assembleDebugAndroidTest` fails at
+`processDebugAndroidTestResources`:
+
+```
+ERROR: .../transformed/core-1.16.0/res/drawable-v21/notification_action_background.xml:19:
+AAPT: error: resource color/androidx_core_ripple_material_light
+(aka in.wishkaro.app.test:color/androidx_core_ripple_material_light) not found.
+```
+
+`androidx.core`'s own drawables reference `androidx.core`'s own colours, dimens and styles,
+and AAPT cannot resolve them **in the test package**, `in.wishkaro.app.test`.
+
+**This document first recorded it as a consequence of an external process clearing
+`~/.gradle/caches` mid-session. That attribution was wrong**, and the correction matters more
+than the bug: it was reproduced from a fully repopulated cache, on a clean build directory,
+with the inputs verified intact — that transform has all ninety-odd `values-*` folders and
+`values/values.xml` does define `androidx_core_ripple_material_light`. The inputs are fine;
+the link step is not. It is reproducible on any clean checkout, which means on CI too.
+
+A verify document that blames the environment for a defect the project actually has is the
+same failure as §11 of `REQUIREMENTS.md` once claiming "Nothing in M3".
+
+**What has been ruled out**, each by building with it removed:
+
+| Suspect | Result |
+|---|---|
+| The widget preview layout and `previewLayout` attribute (M4's first `res/layout`) | Not it |
+| Glance entirely — dependencies, source, manifest receiver and provider XML all removed | Not it |
+| `android.nonTransitiveRClass=true` flipped to false | Not it |
+| `ActivityBridgesTest`, the newest test file | Not it |
+| A corrupt or half-written cache entry | Not it — inputs verified present |
+
+**Not yet established:** when it started. The instrumented APK demonstrably built during the
+hinge work — `TwoPaneHingeTest` only exists in that commit and it ran — so it broke after
+that, and **the greps used in later build commands matched only `^e:` while AAPT prints
+`ERROR:`, so failures were invisible and `instrumented-tests.sh`, which installs rather than
+assembles, kept reusing a stale test APK.** The 9 green runs recorded above were real runs of
+a real APK; what is not established is whether that APK was current at the time.
+
+**CI will not catch this.** The android job builds the app and runs unit tests; nothing
+assembles the androidTest APK. So it stays invisible until somebody tries to run the
+instrumented suite — which is exactly the suite M4 added to close the device-verification
+gap.
+
+**The honest line: a UI test harness that cannot be assembled is not a harness yet.** Item 5
+should be read as "the tests exist and have been seen to pass and to fail correctly, and the
+suite cannot currently be built" rather than as a plain pass.
 
 Every fix in this milestone was confirmed by reverting it and watching a test go red:
 sign-out clearing every tab, the serializer registration, the deleted-event filter, the
