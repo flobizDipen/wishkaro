@@ -98,6 +98,32 @@ string `upcoming_send_${entry.event.id}` and none could be addressed. M4's rule 
 anything a device sequence touches must be addressable **as it is written**; this was written
 and never read back until the tree was dumped.
 
+### 0.6 The plan never cited REQUIREMENTS §10, and three hard rules were missed
+
+Raised by a review after PR #7 went up, and verified against the branch rather than taken on
+trust.
+
+`REQUIREMENTS.md` §10 "AI pipeline and cost control" carries **seven hard rules** governing
+exactly what M5 built. `M5_PLAN.md` never cited it — a grep of §§1–11 for "§10", "hard rule"
+or "versioned" returned nothing.
+
+Three consequences, all real:
+
+- **Two of the three questions §6 of the plan "raised" were already answered.** §10 rule 2
+  mandates the cost ledger cross-feature, so FR-POS-10's filing under posters was never a
+  conflict; and FR-PPL-09's own words are "beyond age band", so the minor narrowing was
+  required rather than a judgement call. Both are withdrawn in the plan.
+- **Rules 4 and 6 were genuinely missing**, and rule 6's missing third is a spend cap on a
+  personal card behind a public repository.
+- **Rule 3 was missing too — and the review did not catch that one.** Checking the branch
+  against §10 myself turned it up: §3.3 of the plan promised structured outputs, and the
+  adapter sent plain text with no schema and no retry.
+
+**The lesson is not "read §10".** It is that a plan quoting requirements by `FR-` id will
+silently skip every rule that does not have one. §§7.x have ids; §10's hard rules do not. A
+milestone whose subject matter has a prose section in REQUIREMENTS has to be walked as a
+list. `M5_PLAN.md` §12 is that walk, and it belongs in the next build prompt as a step.
+
 ### 0.5 A screenshot that could not be kept
 
 The SMS hand-off screenshot shows Google Messages holding the drafted text — and, behind it,
@@ -234,11 +260,26 @@ yourself, screenshot.
 
 ---
 
+## 4.6 One hard rule is not met, on purpose
+
+`REQUIREMENTS.md` §10 rule 7 — "input and output moderation on every generation, with user
+reporting" — is **not satisfied by M5**. A drafted wish is a generation. There is no input
+moderation, no output moderation and no way for a user to report a draft.
+
+Deferring it to M6 is defensible: M6 needs image moderation anyway and one path built once
+beats two built separately. It was deliberately **not** built here, because the build prompt
+says to build only what it specifies and this is Dipen's call.
+
+If M5 merges before M6, it merges with a hard rule unmet. That should be a decision somebody
+made, not something nobody noticed — which is the whole reason this paragraph exists.
+
+---
+
 ## 5. Tests
 
 | Suite | Count | Notes |
 |---|---|---|
-| Server | 399 | `TZ=UTC`, `TZ=Pacific/Chatham` and local — identical |
+| Server | 420 | `TZ=UTC`, `TZ=Pacific/Chatham` and local — identical |
 | Client | 378 | Plus `verifySqlDelightMigration` and the iOS compile |
 
 Two suites drive **real services** rather than fakes, because a fake agrees with whatever the
@@ -252,6 +293,9 @@ Per §D, and all of them went red:
 
 | Fix | What went red |
 |---|---|
+| The global daily spend cap | 5 of the cap's own tests |
+| `PROMPT_VERSION` on the ledger row | 1 |
+| The JSON schema on the request | 1 — and see below |
 | Solemn tone restriction | 5 tests, across both languages' halves of the shared fixture |
 | `Person.isSolemn` (§0.1) | 4 of `PersonSolemnTest` |
 | Recording a wish must not move `person.updated_at` | 1, in the Postgres suite |
@@ -259,7 +303,21 @@ Per §D, and all of them went red:
 | `Retry-After` on a 429 | 2, through a real request |
 | The provider the DI graph hands out | 1 |
 
-### 5.2 A test that passed by luck
+### 5.2 A revert-check that went green, and what it exposed
+
+Deleting `text: { format: DRAFT_SCHEMA }` from the OpenAI request broke **nothing**. Every
+adapter test drives a fake client that ignores the request and returns a canned response, so
+the suite covered what the adapter does with an answer and not what it ASKS for — which is
+the half that makes the API enforce the schema at all.
+
+Three tests now capture the outgoing request body: the schema and its `strict` flag, the
+`instructions`/`input` split that the cache layout depends on, and the cache key. The
+revert-check bites now.
+
+Worth generalising: a fake that stands in for a remote service tests the response handling
+for free and the request construction not at all, unless it is asked to.
+
+### 5.3 A test that passed by luck
 
 Two composer tests asserted on a history row written on `Dispatchers.Default`, and **one of
 them passed anyway**. That is worse than both failing: a green suite that is not actually
@@ -290,6 +348,10 @@ checking what it claims. They now wait for the row with a named timeout.
 | **D20 amended**: text AI is provider-neutral, both behind one port — Dipen's call | §11, `REQUIREMENTS.md` D20 and §10 |
 | `WISH_PROVIDER` is explicit; a named provider without its key **refuses to boot** | §11 |
 | The local templates are **English only**, and the screen says so | §0.4 |
+| A **global daily spend cap** bounds total AI spend, degrading to the template path | §10 rule 6, `M5_PLAN.md` §12 |
+| **Structured outputs** with one retry on a malformed body, then the template | §10 rule 3 |
+| Every ledger row carries the **prompt version** that produced it | §10 rule 4 |
+| §10 **rule 7 (moderation) is left unmet and recorded**, not quietly skipped | §4.6 |
 
 ---
 

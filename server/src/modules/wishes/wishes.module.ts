@@ -2,6 +2,7 @@ import { Inject, Logger, Module, type OnModuleInit } from '@nestjs/common';
 import { APP_ENV, type AppEnv } from '../../config/env';
 import { DraftingService } from './drafting.service';
 import { AiUsageService } from './ledger/ai-usage.service';
+import { SpendCapService } from './ledger/spend-cap.service';
 import { FakeLlmProvider } from './llm/fake.provider';
 import { LLM_PROVIDER, type LlmProvider } from './llm/llm-provider';
 import { OpenAiProvider } from './llm/openai.provider';
@@ -23,6 +24,7 @@ import { WishesController } from './wishes.controller';
     DraftingService,
     WishHistoryService,
     AiUsageService,
+    SpendCapService,
     DraftRateLimitService,
     FakeLlmProvider,
     {

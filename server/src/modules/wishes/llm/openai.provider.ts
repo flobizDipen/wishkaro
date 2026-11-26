@@ -38,6 +38,36 @@ import type { DraftPrompt, DraftResult, LlmProvider, TokenUsage } from './llm-pr
  * 3. **`input_tokens` is a TOTAL, not a remainder.** See [readUsage]. This is the one that
  *    would quietly corrupt the ledger.
  */
+/**
+ * The one-field schema the draft comes back in (REQUIREMENTS.md §10 rule 3).
+ *
+ * The rule is "structured outputs only — JSON schema enforced and validated server-side; a
+ * malformed response is retried once, then falls back to a template." M5's plan (§3.3)
+ * promised exactly this and the first version of this adapter sent plain text anyway, which
+ * is how a promise in a plan becomes a thing nobody did.
+ *
+ * One field, because a wish is one string. The value of the schema here is not the shape —
+ * it is that `strict: true` leaves no room for "Here's a lovely birthday message:" in front
+ * of the message, which is the preamble every chat model wants to add and which the user
+ * would then have to delete by hand before sending.
+ */
+const DRAFT_SCHEMA = {
+  type: 'json_schema' as const,
+  name: 'wish_draft',
+  strict: true,
+  schema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'The message itself, with no preamble, labels or quotation marks.',
+      },
+    },
+    required: ['message'],
+    additionalProperties: false,
+  },
+};
+
 export class OpenAiProvider implements LlmProvider {
   readonly providerName = 'openai';
   readonly isLive = true;
@@ -66,7 +96,40 @@ export class OpenAiProvider implements LlmProvider {
       });
   }
 
+  /**
+   * One attempt, then one retry if the body came back malformed (§10 rule 3).
+   *
+   * Retried ONLY for a malformed response — not for a refusal, not for a network error, not
+   * for a timeout. Those have their own answers and a blind second attempt at any of them
+   * doubles the cost of the worst case for nothing. A malformed body is the one failure
+   * where the same request is genuinely likely to succeed.
+   *
+   * Both attempts' usage is summed, because both were billed. A ledger that recorded only
+   * the successful one would quietly under-report exactly the calls that cost the most.
+   */
   async draft(prompt: DraftPrompt): Promise<DraftResult> {
+    const first = await this.attempt(prompt);
+    if (first.outcome !== 'MALFORMED') return first.result;
+
+    this.logger.warn('OpenAI returned a body that did not match the schema; retrying once');
+    const second = await this.attempt(prompt);
+    const usage = sumUsage(first.result.usage, second.result.usage);
+
+    if (second.outcome !== 'MALFORMED') return { ...second.result, usage };
+
+    // Twice. The caller turns this into the template path, which is what the rule asks for.
+    return {
+      outcome: 'ERROR',
+      text: '',
+      model: second.result.model,
+      usage,
+      errorMessage: 'response did not match the schema twice',
+    };
+  }
+
+  private async attempt(
+    prompt: DraftPrompt,
+  ): Promise<{ outcome: 'DONE' | 'MALFORMED'; result: DraftResult }> {
     try {
       const response = await this.client.responses.create({
         model: this.modelName,
@@ -89,6 +152,9 @@ export class OpenAiProvider implements LlmProvider {
          */
         prompt_cache_key: `wishkaro-wish-draft-${this.modelName}`,
         reasoning: { effort: this.effort },
+        // §10 rule 3: structured outputs only, enforced server-side by the schema rather
+        // than by trusting the model to omit a preamble.
+        text: { format: DRAFT_SCHEMA },
         // A greeting. Generous enough for a Devanagari draft, which runs to far more tokens
         // than the same message in English, and far short of anything that could run away.
         max_output_tokens: 1200,
@@ -113,13 +179,18 @@ export class OpenAiProvider implements LlmProvider {
 
       this.logger.warn(`OpenAI draft failed: ${describe(cause)}`);
       return {
-        outcome: timedOut ? 'TIMEOUT' : 'ERROR',
-        text: '',
-        model: this.modelName,
-        // Nothing came back, so nothing is known about what it cost. Zeros that are visibly
-        // a gap, not a guess.
-        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-        errorMessage: describe(cause),
+        // Not retried: a network failure and a timeout have their own answers, and a blind
+        // second attempt doubles the worst case for nothing.
+        outcome: 'DONE',
+        result: {
+          outcome: timedOut ? 'TIMEOUT' : 'ERROR',
+          text: '',
+          model: this.modelName,
+          // Nothing came back, so nothing is known about what it cost. Zeros that are
+          // visibly a gap, not a guess.
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          errorMessage: describe(cause),
+        },
       };
     }
   }
@@ -134,13 +205,19 @@ export class OpenAiProvider implements LlmProvider {
    * remembrance prompt about a dead relative is exactly the shape that can trip a
    * classifier, so this is the path the solemn composer is most likely to meet.
    */
-  private interpret(response: OpenAIResponse): DraftResult {
+  private interpret(response: OpenAIResponse): {
+    outcome: 'DONE' | 'MALFORMED';
+    result: DraftResult;
+  } {
     const usage = readUsage(response, this.logger, this.modelName);
     const base = { model: response.model ?? this.modelName, usage };
+    const done = (result: DraftResult) => ({ outcome: 'DONE' as const, result });
 
     const refusal = firstRefusal(response);
     if (refusal !== null) {
-      return { ...base, outcome: 'REFUSED', text: '', refusalCategory: refusal || null };
+      // Not malformed and not retried: the model declined, and asking again produces
+      // another decline at another cost.
+      return done({ ...base, outcome: 'REFUSED', text: '', refusalCategory: refusal || null });
     }
 
     /**
@@ -151,32 +228,83 @@ export class OpenAiProvider implements LlmProvider {
      * mid-word to somebody they care about, and nothing on the screen would tell them.
      */
     if (response.status === 'incomplete') {
-      return {
+      // Cut off mid-message, which with a JSON schema also means the body is unparseable.
+      // Not retried as malformed: the cause is max_output_tokens, and the same request
+      // produces the same truncation.
+      return done({
         ...base,
         outcome: 'ERROR',
         text: '',
         errorMessage: `incomplete: ${response.incomplete_details?.reason ?? 'unknown'}`,
-      };
+      });
     }
 
     if (response.status === 'failed') {
-      return {
+      return done({
         ...base,
         outcome: 'ERROR',
         text: '',
         errorMessage: response.error?.message ?? 'failed',
+      });
+    }
+
+    /**
+     * Validated SERVER-SIDE, which is the half of §10 rule 3 that is about trust.
+     *
+     * `strict: true` is the API's promise; this is ours. A body that does not parse, or that
+     * parses to something without a non-empty `message` string, is MALFORMED and earns the
+     * one retry — not an empty composer, which is the single outcome worth never shipping.
+     */
+    const parsed = parseDraft(response.output_text);
+    if (parsed === null) {
+      return {
+        outcome: 'MALFORMED',
+        result: {
+          ...base,
+          outcome: 'ERROR',
+          text: '',
+          errorMessage: 'response did not match the schema',
+        },
       };
     }
 
-    const text = (response.output_text ?? '').trim();
-    if (text === '') {
-      // Belt and braces. A completed response with no text is not something this code
-      // understands, and serving an empty composer is the one outcome worth never shipping.
-      return { ...base, outcome: 'ERROR', text: '', errorMessage: 'no text in response' };
-    }
-
-    return { ...base, outcome: 'OK', text };
+    return done({ ...base, outcome: 'OK', text: parsed });
   }
+}
+
+/**
+ * The message out of a schema-shaped body, or null when it is not one.
+ *
+ * Exported so the validation is testable without a network — it is the part that decides
+ * whether the user gets words or a template.
+ */
+export function parseDraft(outputText: string | null | undefined): string | null {
+  const raw = (outputText ?? '').trim();
+  if (raw === '') return null;
+
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const message = (body as { message?: unknown }).message;
+  if (typeof message !== 'string') return null;
+
+  const trimmed = message.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/** Both attempts were billed, so the ledger sees both. */
+function sumUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+  };
 }
 
 /**

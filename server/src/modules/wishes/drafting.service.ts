@@ -10,6 +10,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { milestoneLabelFor } from '../events/derived';
 import { AiUsageService, FEATURE_WISH_DRAFT } from './ledger/ai-usage.service';
+import { SpendCapService } from './ledger/spend-cap.service';
 import { LLM_PROVIDER, NO_TOKENS, type DraftResult, type LlmProvider } from './llm/llm-provider';
 import { buildPrompt, type DraftContext } from './prompt-builder';
 import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
@@ -44,12 +45,31 @@ export class DraftingService {
     private readonly prisma: PrismaService,
     private readonly history: WishHistoryService,
     private readonly ledger: AiUsageService,
+    private readonly spendCap: SpendCapService,
     private readonly rateLimit: DraftRateLimitService,
     @Inject(LLM_PROVIDER) private readonly provider: LlmProvider,
   ) {}
 
   async draft(userId: string, request: DraftWishRequest): Promise<DraftWishResponse> {
     const context = await this.contextFor(userId, request);
+
+    /**
+     * The GLOBAL cap, checked before the per-user one (§10 rule 6).
+     *
+     * Before, because a user who is nowhere near their own limit must still not be the one
+     * who spends the last rupee of the day, and because being capped should not also cost
+     * them one of their fifteen — the budget ran out, which is not their doing.
+     *
+     * Degradation is what the composer already does with a 503: it shows the phone's own
+     * template and editable words. M5 has no theme library to fall back to; that is M6's
+     * half of the same rule. The user is not told a budget was hit — it is our budget.
+     */
+    if (await this.spendCap.isCapped()) {
+      throw new HttpException(
+        { code: 'DRAFT_UNAVAILABLE', message: "We couldn't write this one." },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
 
     const verdict = await this.rateLimit.consume(userId);
     if (!verdict.allowed) {

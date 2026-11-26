@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import type { Response as OpenAIResponse } from 'openai/resources/responses/responses';
-import { OpenAiProvider, readUsage } from './openai.provider';
+import { OpenAiProvider, parseDraft, readUsage } from './openai.provider';
 import { costOf } from './pricing';
 
 /**
@@ -35,7 +35,9 @@ function response(over: Partial<OpenAIResponse> = {}): OpenAIResponse {
     model: 'gpt-6-luna',
     status: 'completed',
     output: [],
-    output_text: 'Many happy returns.',
+    // Schema-shaped, per §10 rule 3. Plain text here is what the adapter used to send and
+    // what `parseDraft` now rejects — these fixtures asserted the old behaviour.
+    output_text: '{"message":"Many happy returns."}',
     error: null,
     incomplete_details: null,
     instructions: null,
@@ -278,5 +280,202 @@ describe('draft — failures never throw', () => {
     const result = await provider(clientReturning(err)).draft(PROMPT);
     expect(result.errorMessage).not.toContain('Anika');
     expect(result.errorMessage).not.toContain('ECONNREFUSED');
+  });
+});
+
+/**
+ * Structured outputs, and the one retry (REQUIREMENTS.md §10 rule 3).
+ *
+ * "Structured outputs only — JSON schema enforced and validated server-side; a malformed
+ * response is retried once, then falls back to a template." M5's own plan (§3.3) promised
+ * this and the first version of the adapter sent plain text anyway, which is how a promise
+ * in a plan becomes a thing nobody did. Found by checking the branch against §10, not by
+ * reading the plan.
+ */
+describe('parseDraft — validated server-side', () => {
+  it('takes the message out of a schema-shaped body', () => {
+    expect(parseDraft('{"message":"Many happy returns, Anika."}')).toBe(
+      'Many happy returns, Anika.',
+    );
+  });
+
+  it('refuses anything that is not that shape', () => {
+    // `strict: true` is the API's promise. This is ours — the half of the rule that is
+    // about not trusting the other side.
+    for (const body of [
+      'Many happy returns.', // plain text: the old behaviour
+      '{"message":123}',
+      '{"message":""}',
+      '{"message":"   "}',
+      '{"wish":"wrong key"}',
+      '["message"]',
+      '{',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(parseDraft(body as string | null | undefined)).toBeNull();
+    }
+  });
+
+  it('trims, because a schema does not stop a model padding a string', () => {
+    expect(parseDraft('{"message":"  Happy birthday.  "}')).toBe('Happy birthday.');
+  });
+});
+
+describe('draft — the one retry', () => {
+  /** Returns each response in turn, so a retry gets a different answer from the first call. */
+  function clientReturningEach(values: OpenAIResponse[]): { client: OpenAI; calls: () => number } {
+    let i = 0;
+    return {
+      client: {
+        responses: {
+          create: async () => {
+            const value = values[Math.min(i, values.length - 1)];
+            i += 1;
+            return value;
+          },
+        },
+      } as unknown as OpenAI,
+      calls: () => i,
+    };
+  }
+
+  const good = (text = '{"message":"Many happy returns."}') =>
+    response({
+      output_text: text,
+      usage: { ...EMPTY_USAGE, input_tokens: 100, output_tokens: 20 },
+    });
+
+  it('retries ONCE when the body does not match the schema, and succeeds', async () => {
+    const { client, calls } = clientReturningEach([good('not json at all'), good()]);
+    const result = await provider(client).draft(PROMPT);
+
+    expect(result.outcome).toBe('OK');
+    expect(result.text).toBe('Many happy returns.');
+    expect(calls()).toBe(2);
+  });
+
+  it('bills BOTH attempts, because both were charged', async () => {
+    // A ledger that recorded only the successful attempt would quietly under-report exactly
+    // the calls that cost the most.
+    const { client } = clientReturningEach([good('not json'), good()]);
+    const result = await provider(client).draft(PROMPT);
+
+    expect(result.usage.inputTokens).toBe(200);
+    expect(result.usage.outputTokens).toBe(40);
+  });
+
+  it('gives up after the second malformed body, which the caller turns into a template', async () => {
+    const { client, calls } = clientReturningEach([good('not json'), good('still not json')]);
+    const result = await provider(client).draft(PROMPT);
+
+    expect(result.outcome).toBe('ERROR');
+    expect(result.text).toBe('');
+    expect(calls()).toBe(2);
+    expect(result.usage.inputTokens).toBe(200);
+  });
+
+  it('does NOT retry a refusal', async () => {
+    // The model declined. Asking again produces another decline at another cost.
+    const refused = response({
+      output_text: '',
+      output: [
+        {
+          type: 'message',
+          id: 'msg_1',
+          status: 'completed',
+          role: 'assistant',
+          content: [{ type: 'refusal', refusal: 'declined' }],
+        },
+      ],
+    } as Partial<OpenAIResponse>);
+    const { client, calls } = clientReturningEach([refused, good()]);
+
+    expect((await provider(client).draft(PROMPT)).outcome).toBe('REFUSED');
+    expect(calls()).toBe(1);
+  });
+
+  it('does NOT retry a thrown error or a timeout', async () => {
+    // Both have their own answers, and a blind second attempt doubles the worst case.
+    const result = await provider(clientReturning(new Error('Request timed out.'))).draft(PROMPT);
+    expect(result.outcome).toBe('TIMEOUT');
+  });
+
+  it('does NOT retry a truncated response', async () => {
+    // With a JSON schema a cut-off body is also unparseable — but the cause is
+    // max_output_tokens, and the same request produces the same truncation.
+    const cut = response({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_text: '{"message":"Many happy ret',
+    } as Partial<OpenAIResponse>);
+    const { client, calls } = clientReturningEach([cut, good()]);
+
+    const result = await provider(client).draft(PROMPT);
+    expect(result.outcome).toBe('ERROR');
+    expect(result.errorMessage).toContain('max_output_tokens');
+    expect(calls()).toBe(1);
+  });
+});
+
+/**
+ * What the adapter actually ASKS for.
+ *
+ * Added after a revert-check went green: deleting `text: { format: DRAFT_SCHEMA }` from the
+ * request broke nothing, because every test above drives a fake client that ignores the
+ * request and returns a canned response. `parseDraft` tests our half of §10 rule 3; this
+ * tests the half that makes the API enforce anything at all.
+ */
+describe('the request the adapter sends', () => {
+  function capturingClient(): { client: OpenAI; body: () => Record<string, unknown> } {
+    let seen: Record<string, unknown> = {};
+    return {
+      client: {
+        responses: {
+          create: async (body: Record<string, unknown>) => {
+            seen = body;
+            return response({ output_text: '{"message":"Many happy returns."}' });
+          },
+        },
+      } as unknown as OpenAI,
+      body: () => seen,
+    };
+  }
+
+  it('asks for the JSON schema, strictly (§10 rule 3)', async () => {
+    const { client, body } = capturingClient();
+    await provider(client).draft(PROMPT);
+
+    const format = (body().text as { format?: Record<string, unknown> })?.format;
+    expect(format?.type).toBe('json_schema');
+    expect(format?.strict).toBe(true);
+    expect((format?.schema as { required?: string[] })?.required).toEqual(['message']);
+    // additionalProperties:false is what stops the model adding a "notes" field beside the
+    // message and the parse silently ignoring it.
+    expect((format?.schema as { additionalProperties?: boolean })?.additionalProperties).toBe(
+      false,
+    );
+  });
+
+  it('sends the system prompt as instructions and the volatile half as input', async () => {
+    // The cache layout from prompt-builder.ts expressed in this API's terms: `instructions`
+    // is the frozen prefix, of which there are exactly two in the whole app.
+    const { client, body } = capturingClient();
+    await provider(client).draft({ system: 'SYSTEM HALF', user: 'VOLATILE HALF' });
+
+    expect(body().instructions).toBe('SYSTEM HALF');
+    expect(body().input).toBe('VOLATILE HALF');
+  });
+
+  it('pins the cache key to the prompt family and carries nothing about anybody', async () => {
+    const { client, body } = capturingClient();
+    await provider(client).draft(PROMPT);
+
+    // Not per user and not per person: a key that varied per request would give every user
+    // their own entry for a prefix identical to everyone's, which is the same miss as
+    // having no key at all.
+    expect(body().prompt_cache_key).toBe('wishkaro-wish-draft-gpt-6-luna');
+    expect(body().reasoning).toEqual({ effort: 'low' });
   });
 });

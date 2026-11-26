@@ -106,6 +106,20 @@ const EnvSchema = z
     WISH_DRAFT_LIMIT_HOUR: z.coerce.number().int().positive().default(15),
     WISH_DRAFT_LIMIT_DAY: z.coerce.number().int().positive().default(50),
 
+    /**
+     * The GLOBAL daily spend cap, in INR (REQUIREMENTS.md §10 rule 6).
+     *
+     * The two limits above bound what ONE user can spend. This bounds the total. The
+     * distinction matters because this repository is public, the endpoint is behind a token
+     * anybody can mint by signing in with Google, and every call bills a personal card —
+     * fifteen drafts an hour each is fair use and no limit at all across a thousand accounts.
+     *
+     * ₹200/day ≈ 13,000 drafts on the cheap tier or ~320 on Opus: generous for one person's
+     * real use and a hard stop on anything that is not. Raise it deliberately, after reading
+     * what the ledger says the day actually cost.
+     */
+    AI_DAILY_SPEND_CAP_INR: z.coerce.number().positive().default(200),
+
     // ---- OpenAI, added 2026-11-26 ------------------------------------------------------
     //
     // D20 in REQUIREMENTS.md said "Text AI = Claude". Dipen amended it after being shown the

@@ -107,3 +107,20 @@ describe('M5 — choosing a wish provider', () => {
     expect(() => parseEnv({ ...BASE, WISH_PROVIDER: 'gemini' })).toThrow();
   });
 });
+
+describe('M5 — the global daily spend cap (§10 rule 6)', () => {
+  it('has one by default, because a public repo with a personal card behind it needs one', () => {
+    // The per-user limits bound what ONE user spends. This bounds the total.
+    expect(parseEnv(BASE).AI_DAILY_SPEND_CAP_INR).toBe(200);
+  });
+
+  it('refuses a cap of zero or a negative one', () => {
+    // Zero would be "AI is off", expressed as a budget nobody would read that way.
+    expect(() => parseEnv({ ...BASE, AI_DAILY_SPEND_CAP_INR: '0' })).toThrow();
+    expect(() => parseEnv({ ...BASE, AI_DAILY_SPEND_CAP_INR: '-5' })).toThrow();
+  });
+
+  it('takes a fractional cap, since INR costs per draft are fractions of a rupee', () => {
+    expect(parseEnv({ ...BASE, AI_DAILY_SPEND_CAP_INR: '12.5' }).AI_DAILY_SPEND_CAP_INR).toBe(12.5);
+  });
+});

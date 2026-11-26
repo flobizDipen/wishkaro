@@ -593,6 +593,20 @@ model AiUsage {
   costInr        Decimal @map("cost_inr") @db.Decimal(12, 4)
   pricingVersion String  @map("pricing_version")
 
+  /// WHICH PROMPT produced this (REQUIREMENTS.md §10 rule 4).
+  ///
+  /// The rule is "prompts are versioned files in the repo, not string literals scattered
+  /// through services". One file was the harder half and M5 had it; the version was missing,
+  /// and without it a ledger row cannot be tied back to the words that produced it.
+  ///
+  /// That is not bookkeeping. FR-WSH-09 and TBD-4 have Dipen hand-reviewing solemn copy, and
+  /// a review of output nobody can trace to a prompt revision cannot be re-run after the
+  /// prompt changes — so the review silently stops meaning anything the first time somebody
+  /// edits a line of it.
+  ///
+  /// Rows written before this column default to "unversioned", which is true of them.
+  promptVersion String @default("unversioned") @map("prompt_version")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -26,6 +26,20 @@ import type { PreviousWish } from './wish-history.service';
  */
 
 /**
+ * Which revision of the words below produced a draft (REQUIREMENTS.md §10 rule 4).
+ *
+ * **Bump this whenever either system prompt, the tone rules or the language rules change.**
+ * It goes on every ledger row, and the reason is not bookkeeping: FR-WSH-09 and TBD-4 have
+ * Dipen hand-reviewing solemn copy, and a review of output that cannot be traced back to a
+ * prompt revision stops meaning anything the moment somebody edits a line. "I approved this
+ * remembrance wording" is only a fact if you can say which wording.
+ *
+ * Dated rather than numbered, so a reader can tell at a glance whether a row predates a
+ * change they remember making.
+ */
+export const PROMPT_VERSION = 'wish-2026-11-26';
+
+/**
  * What the server knows, assembled from its own tables.
  *
  * Note what is NOT here: nothing the client said about the person. The client sends ids and
@@ -208,13 +222,14 @@ function personBlock(c: DraftContext): string[] {
   /**
    * THE MINOR NARROWING (docs/M5_PLAN.md §6.2).
    *
-   * REQUIREMENTS.md §12 says the minor flag suppresses profiling and personalisation;
-   * FR-WSH-02 says condition the draft on hobbies. For a person flagged as a minor those
-   * point in opposite directions, and this is the narrowing: relation, occasion and age band
-   * only. The draft still knows it is your ten-year-old niece's birthday. It is not profiled.
+   * **FR-PPL-09's own words**: a flagged minor is "excluded from any profiling,
+   * recommendation personalisation **beyond age band**". Relation, occasion, milestone and
+   * age band is literally that, so this is the requirement rather than a judgement call.
    *
-   * Raised rather than silently chosen, because a narrowing of a requirement is the kind of
-   * thing that gets quietly lost.
+   * docs/M5_PLAN.md §6.2 raised it as an open question against §12's shorter wording. It was
+   * not one — FR-PPL-09 already mandated it, and that plan section is corrected.
+   *
+   * The draft still knows it is your ten-year-old niece's birthday. It is not profiled.
    */
   if (!c.isMinor) {
     if (c.hobbies.length > 0) lines.push(`- Hobbies: ${c.hobbies.join(', ')}`);

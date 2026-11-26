@@ -3,8 +3,10 @@ import { PrismaClient } from '@prisma/client';
 import IORedis from 'ioredis';
 import { DraftingService } from './drafting.service';
 import { AiUsageService } from './ledger/ai-usage.service';
+import { SpendCapService } from './ledger/spend-cap.service';
 import { FakeLlmProvider } from './llm/fake.provider';
 import { PRICING_VERSION } from './llm/pricing';
+import { PROMPT_VERSION } from './prompt-builder';
 import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
 import { WishHistoryService } from './wish-history.service';
 import type { AppEnv } from '../../config/env';
@@ -45,6 +47,8 @@ const env = {
   USD_INR_RATE: 89,
   WISH_DRAFT_LIMIT_HOUR: 3,
   WISH_DRAFT_LIMIT_DAY: 5,
+  // High enough that the ordinary tests never trip it; the cap's own tests set their own.
+  AI_DAILY_SPEND_CAP_INR: 1_000_000,
 } as unknown as AppEnv;
 
 let userId: string;
@@ -125,6 +129,7 @@ beforeEach(async () => {
     db,
     new WishHistoryService(db),
     new AiUsageService(db, env),
+    new SpendCapService(db, env),
     new DraftRateLimitService(redis, env),
     provider,
   );
@@ -196,6 +201,9 @@ describe('drafting — the happy path and what it records', () => {
     // whenever a rate does, and a test that pinned the literal would go red on a price
     // change — which is a thing that SHOULD be a one-line edit, not a failing suite.
     expect(row.pricingVersion).toBe(PRICING_VERSION);
+    // §10 rule 4. Which words produced it, so a hand-review of solemn copy can be tied to a
+    // revision and re-run after the prompt changes.
+    expect(row.promptVersion).toBe(PROMPT_VERSION);
   });
 
   it('never logs or stores the drafted text on the ledger row', async () => {
@@ -470,5 +478,115 @@ describe('drafting — what the prompt is allowed to know', () => {
     // And the celebratory prompt must not have quietly acquired the solemn rules, which is
     // what a single merged template drifts into.
     expect(systems[0]).not.toContain('grieving');
+  });
+});
+
+/**
+ * The global daily spend cap (REQUIREMENTS.md §10 rule 6).
+ *
+ * The per-user limits above bound what ONE user can spend. This bounds the total, and the
+ * distinction is not academic: the repository is public, anybody can mint a token by signing
+ * in with Google, and every call bills a personal card.
+ */
+describe('drafting — the global spend cap', () => {
+  function cappedService(capInr: number) {
+    const capEnv = { ...env, AI_DAILY_SPEND_CAP_INR: capInr } as unknown as AppEnv;
+    return new DraftingService(
+      db,
+      new WishHistoryService(db),
+      new AiUsageService(db, capEnv),
+      new SpendCapService(db, capEnv),
+      new DraftRateLimitService(redis, capEnv),
+      provider,
+    );
+  }
+
+  /** A ledger row for today, at a given INR cost — somebody else's spend, not this user's. */
+  async function spend(inr: number) {
+    const other = await prisma.user.create({
+      data: { googleSub: `spender-${randomUUID()}`, email: 'spender@example.invalid' },
+    });
+    await prisma.aiUsage.create({
+      data: {
+        userId: other.id,
+        feature: 'wish_draft',
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        outcome: 'OK',
+        inputTokens: 1000,
+        outputTokens: 150,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: inr / 89,
+        usdInrRate: 89,
+        costInr: inr,
+        pricingVersion: 'test',
+      },
+    });
+    return other.id;
+  }
+
+  const spenders: string[] = [];
+  afterEach(async () => {
+    await prisma.user.deleteMany({ where: { id: { in: spenders.splice(0) } } });
+  });
+
+  it('degrades to the template path once the day is spent', async () => {
+    spenders.push(await spend(250));
+
+    // The same 503 a refusal produces, which the composer already answers with the phone's
+    // own template. Degradation is a behaviour the app has; the cap is what triggers it.
+    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+      response: { code: 'DRAFT_UNAVAILABLE' },
+      status: 503,
+    });
+  });
+
+  it('does not tell the user a budget was hit', async () => {
+    spenders.push(await spend(250));
+
+    // It is our budget, not theirs. "We couldn't write this one" is true and is the right
+    // amount of detail — and it is the identical string a refusal produces, so a user
+    // cannot tell our spending apart from a classifier's opinion of their request.
+    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+      response: { message: "We couldn't write this one." },
+    });
+  });
+
+  it('counts EVERY user, not just this one', async () => {
+    // The whole point. This user has spent nothing.
+    spenders.push(await spend(150));
+    spenders.push(await spend(150));
+    expect(await prisma.aiUsage.count({ where: { userId } })).toBe(0);
+
+    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+      status: 503,
+    });
+  });
+
+  it('is checked BEFORE the rate limit, so being capped costs the user no slot', async () => {
+    spenders.push(await spend(250));
+    const service = cappedService(200);
+
+    for (let i = 0; i < env.WISH_DRAFT_LIMIT_HOUR + 1; i += 1) {
+      await expect(service.draft(userId, request())).rejects.toMatchObject({ status: 503 });
+    }
+
+    // Still 503 rather than 429: the budget ran out, which is not this user's doing, and
+    // they must not also lose their own allowance over it.
+    await expect(service.draft(userId, request())).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('writes no ledger row when capped — nothing was called', async () => {
+    spenders.push(await spend(250));
+    await expect(cappedService(200).draft(userId, request())).rejects.toBeDefined();
+    expect(await prisma.aiUsage.count({ where: { userId } })).toBe(0);
+  });
+
+  it('lets a draft through while there is budget left', async () => {
+    spenders.push(await spend(10));
+    // The assertion that stops this being a cap that is always on, which would be a quieter
+    // bug of the same size as no cap at all.
+    await expect(cappedService(200).draft(userId, request())).resolves.toBeDefined();
   });
 });

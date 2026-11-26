@@ -3,16 +3,23 @@ import { Prisma } from '@prisma/client';
 import { APP_ENV, type AppEnv } from '../../../config/env';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PRICING_VERSION, costOf, isPriced } from '../llm/pricing';
+import { PROMPT_VERSION } from '../prompt-builder';
 import type { DraftOutcome, TokenUsage } from '../llm/llm-provider';
 
 /**
- * The cost ledger. FR-POS-10 calls it non-negotiable: without it you cannot answer "what
- * does a user cost per year", which is the question M7's pricing is built on.
+ * The cost ledger.
  *
- * It lives under wishes because M5 is where it starts, and it is deliberately feature-tagged
- * rather than wish-shaped: M6 writes posters to this table and M8 writes gift ideas.
- * docs/M5_PLAN.md §6.3 raises that FR-POS-10 files the requirement under posters while this
- * is where it actually begins.
+ * **REQUIREMENTS.md §10 rule 2** is the mandate: "every call is wrapped in a `generation`
+ * record with measured INR cost." That rule is in the AI section and is cross-feature, so
+ * a ledger under `wishes/` that is feature-TAGGED rather than wish-shaped is exactly what it
+ * asks for — M6 writes posters to this table and M8 writes gift ideas.
+ *
+ * docs/M5_PLAN.md §6.3 raised FR-POS-10 filing a ledger requirement under posters as an open
+ * question. It was not one: §10 rule 2 already required this, cross-feature, and M5's plan
+ * simply never cited §10. FR-POS-10 is the poster-specific restatement, not the origin.
+ *
+ * Without it you cannot answer "what does a user cost per year", which is the question M7's
+ * pricing is built on.
  */
 
 export const FEATURE_WISH_DRAFT = 'wish_draft';
@@ -84,6 +91,9 @@ export class AiUsageService {
           usdInrRate: new Prisma.Decimal(rate),
           costInr: new Prisma.Decimal(cost.inr),
           pricingVersion: PRICING_VERSION,
+          // §10 rule 4. Which words produced this, so a hand-review of the output can be
+          // tied to a revision and re-run when the prompt changes.
+          promptVersion: PROMPT_VERSION,
         },
       });
     } catch (cause) {

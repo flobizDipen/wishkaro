@@ -502,6 +502,13 @@ submission. Full input/output moderation is genuinely M6's, alongside image mode
 **Decision needed:** add the report affordance to M5, or carry both boxes to M6 with M6's
 prompt naming them. Either is fine; silently doing neither is not.
 
+> **CORRECTED 2026-11-26, after §10 was pointed out.** This is not only a §12 checkbox.
+> `REQUIREMENTS.md` §10 **hard rule 7** says "input and output moderation on every
+> generation, with user reporting", in the AI section, and a drafted wish is a generation.
+> So the deferral is a hard rule not met in M5, not a checklist item deferred. Recorded as
+> such in `M5_VERIFY.md` §7 rather than built — deferring it to M6 is defensible and it is
+> Dipen's call, which he has not yet made.
+
 ### 6.2 §12 says the minor flag suppresses personalisation. FR-WSH-02 says condition the draft on hobbies.
 
 `FR-PPL-09` derives `isMinor` server-side and §12 says "Minor flag suppresses profiling,
@@ -515,7 +522,13 @@ collectable.
 
 **My recommendation, and I will build this unless told otherwise:** for a person with
 `isMinor = true` the prompt carries relation, event type, milestone and age band only — no
-traits, no notes, no free text about them. The draft is still personal (it knows this is your
+traits, no notes, no free text about them.
+
+> **CORRECTED 2026-11-26.** This was not an open question. FR-PPL-09's own words are
+> "excluded from any profiling, recommendation personalisation **beyond age band**", which is
+> literally relation, occasion, milestone and age band and nothing else. The narrowing was
+> already required; I asked permission for something the requirement mandates. Built, and
+> `prompt-builder.ts` now cites FR-PPL-09 rather than presenting it as a judgement call. The draft is still personal (it knows this is your
 ten-year-old niece's birthday) and it is not profiled. One test, asserting the prompt builder
 omits traits for a minor.
 
@@ -528,11 +541,16 @@ The requirement that mandates the ledger lives in `FR-POS` (§7.7, posters) and 
 generation writes a cost ledger row". M5 writes rows for text, which is not a generation in
 that section's sense. The build prompt is explicit that M5 is where it starts and why.
 
-This is paperwork, not a design question, and it has a precedent: M3 amended FR-IMP-04 and M4
-amended FR-VIEW-06 rather than leaving a documented thing that is not what was built. I will
-add the same kind of amendment note against FR-POS-10 saying the ledger is cross-feature and
-begins in M5 — unless Dipen would rather it got its own `FR-AI` id, which is arguably where it
-belongs now that three milestones will write to it.
+> **WITHDRAWN 2026-11-26. This was never an open question, and the reason it looked like one
+> is the real finding: this plan never cites `REQUIREMENTS.md` §10 at all.**
+>
+> §10 "AI pipeline and cost control" **hard rule 2** says "every call is wrapped in a
+> `generation` record with measured INR cost". That is in the AI section, it is
+> cross-feature, and it predates FR-POS-10, which is the poster-specific restatement rather
+> than the origin. Nothing needed amending; a ledger under `wishes/` that is feature-TAGGED
+> is exactly what rule 2 asks for.
+>
+> §12 of this plan is what §10 should have been read against in the first place. See §12.
 
 ---
 
@@ -730,3 +748,42 @@ cache breakpoints and it earns its keep under OpenAI's automatic caching too, be
 prefix is what both of them match on. §5.3's refusal path loses its server-side second attempt
 (§11.3). §8 item 1 is no longer the blocker it was — an **OpenAI** key now unblocks steps 4
 onward, and an Anthropic key is only needed for the comparison D20 was amended to allow.
+
+---
+
+## 12. REQUIREMENTS §10, checked rule by rule
+
+> Added 2026-11-26, after a review pointed out that this plan never cited §10 "AI pipeline and
+> cost control" — seven **hard rules** that govern exactly what M5 built. A grep of §§1–11 for
+> "§10", "hard rule" or "versioned" returned nothing. That omission is the reason §6 raised two
+> questions that §10 and FR-PPL-09 had already answered, and the reason three rules were
+> missed entirely.
+>
+> **The lesson is not "read §10".** It is that a plan which quotes requirements by `FR-` id
+> will silently skip every rule that does not have one. §§7.x have ids; §10's hard rules do
+> not. A milestone whose subject matter has a prose section in REQUIREMENTS has to be checked
+> against that section as a list, not grepped for ids.
+
+| # | Hard rule | M5 |
+|---|---|---|
+| 1 | No model is ever called from the client. No API key ever ships in the app | **Met.** Server-side only, key outside git, `.env*` gitignored. §3.1 |
+| 2 | Every call is wrapped in a `generation` record with measured INR cost | **Met** by `AiUsage`. This is the ledger's actual mandate — see the withdrawal in §6.3 |
+| 3 | Structured outputs only — JSON schema enforced and validated server-side; a malformed response is retried once, then falls back to a template | **Met, after being missed.** §3.3 of this plan promised structured outputs and the first adapter sent plain text; the retry did not exist at all. Now `DRAFT_SCHEMA` with `strict: true`, `parseDraft` validating our side, one retry on a malformed body only, then the template. Found by checking the branch against §10, **not** by the review that prompted this section |
+| 4 | Prompts are versioned files in the repo, not string literals scattered through services | **Met, after being half-met.** One file was already true and is the harder half; the *version* was missing. `PROMPT_VERSION` now goes on every ledger row, because a hand-review of solemn copy that cannot be traced to a revision stops meaning anything the first time the prompt is edited (FR-WSH-09, TBD-4) |
+| 5 | Background artwork is cached by theme key and reused indefinitely | **Not applicable.** M6 |
+| 6 | Per-user rate limits, a global daily spend cap, and automatic degradation | **Met, after one third of it.** M5 shipped per-user limits only. `AI_DAILY_SPEND_CAP_INR` now bounds the TOTAL, checked before the per-user limit, degrading to the composer's existing template path. The gap mattered: public repo, a token anyone can mint by signing in with Google, and a personal card behind it |
+| 7 | Input and output moderation on every generation, with user reporting | **NOT MET.** Deliberately not built — see below |
+
+### 12.1 Rule 7 is not met, and that is Dipen's call rather than mine
+
+A drafted wish is a generation, so rule 7 applies to M5 and M5 does not satisfy it. Neither
+input moderation, nor output moderation, nor a way for a user to report a draft.
+
+Deferring it to M6 is defensible: M6 is where image moderation has to exist anyway, and one
+moderation path built once beats two built separately. But it is a hard rule in the AI
+section, not a checklist item, and the build prompt's "build ONLY what this prompt specifies"
+rules out quietly adding it now.
+
+So it is **recorded as unmet** in `M5_VERIFY.md` §7 rather than built or quietly skipped. If
+M5 ships before M6, it ships with a hard rule unmet, and that should be a decision somebody
+made rather than something nobody noticed.
