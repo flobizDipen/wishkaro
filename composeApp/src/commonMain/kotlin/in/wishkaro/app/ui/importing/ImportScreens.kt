@@ -119,7 +119,12 @@ fun ImportContactsScreen(
     val result by store.result.collectAsState()
 
     LaunchedEffect(Unit) { store.startContacts() }
-    LaunchedEffect(result) { if (result != null) onDone() }
+    // Belt as well as braces: AppStore clears the previous report on the way in, and this
+    // screen additionally ignores any result that was already there when it composed. The
+    // two LaunchedEffects below would otherwise race on first composition, and the losing
+    // order sends the user straight back to a report they have already seen.
+    val resultOnEntry = remember { result }
+    LaunchedEffect(result) { if (result != null && result !== resultOnEntry) onDone() }
 
     when (val current = state) {
         ContactsState.AskingPermission -> PermissionRationale(
@@ -453,7 +458,10 @@ fun ImportFileScreen(
     val busy by store.busy.collectAsState()
     val result by store.result.collectAsState()
 
-    LaunchedEffect(result) { if (result != null) onDone() }
+    // See ImportContactsScreen: a result that predates this screen belongs to a run the user
+    // has already finished with.
+    val resultOnEntry = remember { result }
+    LaunchedEffect(result) { if (result != null && result !== resultOnEntry) onDone() }
 
     when (val current = state) {
         FileState.Choosing -> Column(
@@ -602,7 +610,9 @@ private fun MappingScreen(
 
     if (relationPickerOpen) {
         BulkRelationDialog(
-            count = state.rows.size,
+            // The rows this will actually touch, not every row in the file. It sets a
+            // default for rows with no relation of their own and leaves the rest alone.
+            count = store.rowsNeedingADefaultRelation(),
             onPick = {
                 store.setDefaultRelation(it)
                 relationPickerOpen = false

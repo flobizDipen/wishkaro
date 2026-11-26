@@ -369,6 +369,48 @@ class SyncChunkingTest {
     }
 
     // ---------------------------------------------------------------------------------
+    // The page cap, and saying so
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * When the run hits its page cap it leaves part of the outbox for next time — and SAYS
+     * so. The review finding was that `planPages` worked this out and `sync()` dropped it on
+     * the floor, which is the shape MILESTONE_CHECKLIST.md names first and the third time
+     * this project has made it.
+     */
+    @Test
+    fun a_run_that_hits_its_page_cap_reports_that_it_did() = runTest {
+        val store = FakeOutbox.withPeopleOnly(PUSH_PAGE_SIZE * 5)
+        val server = FakeServer(serverTime)
+
+        val result = SyncEngine(server, store, maxPushPages = 2).sync().getOrThrow()
+
+        assertTrue(result.outboxTruncated, "the caller has to be able to know it is not empty")
+        assertEquals(2, server.requests.size, "only the pages the cap allows")
+        assertEquals(PUSH_PAGE_SIZE * 3, store.stillPending.size, "the rest waits for the next run")
+    }
+
+    @Test
+    fun a_run_that_drains_everything_does_not_claim_it_was_truncated() = runTest {
+        val store = FakeOutbox.withPeopleOnly(PUSH_PAGE_SIZE * 2)
+        val result = SyncEngine(FakeServer(serverTime), store, maxPushPages = 50).sync().getOrThrow()
+
+        assertFalse(result.outboxTruncated)
+        assertTrue(store.stillPending.isEmpty())
+    }
+
+    @Test
+    fun the_pages_left_behind_go_on_the_next_run() = runTest {
+        val store = FakeOutbox.withPeopleOnly(PUSH_PAGE_SIZE * 3)
+        SyncEngine(FakeServer(serverTime), store, maxPushPages = 1).sync().getOrThrow()
+        SyncEngine(FakeServer(serverTime), store, maxPushPages = 1).sync().getOrThrow()
+        val third = SyncEngine(FakeServer(serverTime), store, maxPushPages = 1).sync().getOrThrow()
+
+        assertTrue(store.stillPending.isEmpty())
+        assertFalse(third.outboxTruncated, "the last run had nothing left over")
+    }
+
+    // ---------------------------------------------------------------------------------
     // Termination
     // ---------------------------------------------------------------------------------
 

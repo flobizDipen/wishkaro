@@ -324,16 +324,27 @@ private fun planRow(
  * That is why FR-IMP-07 and FR-IMP-08 are one feature and not two.
  */
 fun correctedCsv(header: List<String>, failed: List<RowPlan.Failed>): String {
+    // Everything is padded to the WIDEST thing in the file, header included, so the reason
+    // is the last column of every line and the header's last name describes it.
+    //
+    // Padding only the short rows is not enough, and that was the bug: a row with MORE cells
+    // than the header — one stray comma is all it takes, and a file like that is exactly
+    // what import exists to cope with — pushed its reason past the column the header
+    // declared, so the round trip handed the user a file with the explanation in the wrong
+    // place. It also bit every headerless file whose column count was not five, because the
+    // substituted default header is five names long.
+    val width = maxOf(header.size, failed.maxOfOrNull { it.row.cells.size } ?: 0)
+
     val rows = mutableListOf<List<String>>()
-    rows += header + REASON_COLUMN
+    rows += header.padTo(width) + REASON_COLUMN
     for (failure in failed) {
-        // Padded to the header's width so the reason always lands in the same column, even
-        // for a row the file itself left short.
-        val cells = failure.row.cells.toMutableList()
-        while (cells.size < header.size) cells += ""
-        rows += cells + failure.reason
+        rows += failure.row.cells.padTo(width) + failure.reason
     }
     return Csv.write(rows)
 }
+
+/** Trailing empty cells up to [width]. Never truncates: the user's own values all survive. */
+private fun List<String>.padTo(width: Int): List<String> =
+    if (size >= width) this else this + List(width - size) { "" }
 
 const val REASON_COLUMN = "WishKaro: why this row was not imported"

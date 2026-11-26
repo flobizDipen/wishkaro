@@ -303,6 +303,50 @@ class ImportPlanTest {
     }
 
     @Test
+    fun a_row_WIDER_than_the_header_still_puts_its_reason_in_the_reason_column() {
+        // The review finding. One stray comma makes a row wider than the header, and a file
+        // like that is exactly what import exists to cope with. Padding only the SHORT rows
+        // left the reason past the column the header declared, so the user opened the
+        // corrected file and found the explanation in the wrong place.
+        val file = listOf(
+            listOf("Name", "Date", "Relation"),
+            listOf("Diya Menon", "31/04/1990", "Colleague", "oops, a stray comma"),
+        )
+        val plan = planImport(file, mapping, settings, DedupIndex(), today)
+
+        val reparsed = Csv.parse(correctedCsv(file.first(), plan.failed))
+
+        assertEquals(reparsed[0].size, reparsed[1].size, "every line is the same width")
+        assertEquals(REASON_COLUMN, reparsed[0].last())
+        assertTrue("not a real date" in reparsed[1].last(), "and the reason is in that column")
+        assertTrue(
+            "oops, a stray comma" in reparsed[1],
+            "the user's extra value is kept, not truncated away",
+        )
+    }
+
+    @Test
+    fun a_headerless_file_wider_than_the_substituted_header_still_lines_up() {
+        // The other half: with no header row the saved file falls back to a five-name
+        // default, so any headerless file with more than five columns misaligned too.
+        val wide = listOf(List(8) { "cell$it" })
+        val plan = planImport(
+            wide,
+            ColumnMapping(name = 0, date = 1),
+            settings.copy(hasHeaderRow = false, defaultRelation = "Friend"),
+            DedupIndex(),
+            today,
+        )
+
+        val reparsed = Csv.parse(correctedCsv(listOf("Name", "Date", "Relation", "Phone", "Notes"), plan.failed))
+
+        assertEquals(1, plan.failed.size, "cell1 is not a date")
+        assertEquals(reparsed[0].size, reparsed[1].size)
+        assertEquals(REASON_COLUMN, reparsed[0].last())
+        assertTrue("could not read" in reparsed[1].last())
+    }
+
+    @Test
     fun a_short_row_still_puts_its_reason_in_the_reason_column() {
         // A file where some rows have fewer cells than the header is ordinary. Without
         // padding, the reason would land in whichever column the row happened to end at.

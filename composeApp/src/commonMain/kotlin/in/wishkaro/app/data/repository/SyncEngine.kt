@@ -35,6 +35,13 @@ private const val DELIVERY_REPORT_BATCH = 200L
 class SyncEngine(
     private val api: SyncApi,
     private val local: SyncStore,
+    /**
+     * Overridable so a test can reach the truncation case without a 20,000-row outbox.
+     *
+     * Declared BEFORE `now` on purpose: several existing tests construct this with a
+     * trailing lambda, which binds to the last parameter.
+     */
+    private val maxPushPages: Int = MAX_PUSH_PAGES,
     private val now: () -> Instant = Clock.System::now,
 ) {
     private val mutex = Mutex()
@@ -64,6 +71,17 @@ class SyncEngine(
          * not fit in this run's snapshot. They go next run. Zero in every ordinary case.
          */
         val deferred: Int = 0,
+        /**
+         * True when this run hit its page cap and deliberately left part of the outbox for
+         * the next one.
+         *
+         * Surfaced rather than computed and dropped. `planPages` has always worked this out
+         * and the first version of this class threw it away at exactly the point it was
+         * produced — the shape MILESTONE_CHECKLIST.md names as the first thing to look for,
+         * and the third time this project has made it (`PlanDiff.removed`, M1's `skipped`).
+         * A caller that wants the outbox empty has to be able to know it is not.
+         */
+        val outboxTruncated: Boolean = false,
         /** How many delivery reports this run managed to hand over (FR-REM-10). */
         val deliveryReported: Int = 0,
     )
@@ -101,6 +119,7 @@ class SyncEngine(
                 rejected = outcome.rejected,
                 blocked = outcome.blocked,
                 deferred = outcome.deferred,
+                outboxTruncated = outcome.truncated,
                 deliveryReported = reported,
             )
         }
@@ -209,7 +228,7 @@ class SyncEngine(
         val traits = local.pendingTraits(OUTBOX_SNAPSHOT_LIMIT)
         if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) return PushOutcome()
 
-        val plan = planPages(people, events, traits, local.pendingPersonIds())
+        val plan = planPages(people, events, traits, local.pendingPersonIds(), maxPages = maxPushPages)
 
         var counts = Counts()
         val rejected = mutableListOf<SyncSkipped>()

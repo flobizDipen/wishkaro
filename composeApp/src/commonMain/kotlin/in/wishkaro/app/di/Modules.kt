@@ -109,6 +109,7 @@ val appModule = module {
             plan = get(),
             scheduler = get<ReminderScheduler>(),
             oem = get<OemBatteryHelper>(),
+            importing = get(),
             scope = get(),
         )
     }

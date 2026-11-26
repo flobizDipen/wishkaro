@@ -66,9 +66,9 @@ and read before the next tap; `FATAL EXCEPTION` stayed at **0** across the whole
 `MILESTONE_CHECKLIST.md` §D. This machine is `Asia/Kolkata`; CI is UTC.
 
 ```bash
-                   ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
-TZ=UTC             ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
-TZ=Pacific/Chatham ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 219 pass
+                   ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 231 pass
+TZ=UTC             ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 231 pass
+TZ=Pacific/Chatham ./gradlew :composeApp:testDebugUnitTest --rerun-tasks   # 231 pass
 cd server && npx jest                                                      # 279 pass
 ```
 
@@ -555,14 +555,52 @@ deliberately rather than as a tidy-up.
 | 6 | A file with a duplicate inside it produces one person | **Pass**, test and device (§5.4) |
 | 7 | Bad rows produce a report naming each row and reason, and a corrected CSV that re-imports cleanly | **Pass**, the whole round trip on the device including the saved file's bytes (§5.4) |
 | 8 | An import larger than the sync cap reaches the server completely, outbox empty, then a hand-added person syncs too | **Pass**, against the real Railway deployment. The outbox drained **551 → 351 → 151 → 0** — pages of exactly 200 — and a person added by hand afterwards synced on its own (§5.7) |
-| 9 | Unit tests for every date format, the toggle, the pivot, dedup within a file, dedup against existing, the chunking boundary | **Pass** — 219 client, 279 server, three timezones |
+| 9 | Unit tests for every date format, the toggle, the pivot, dedup within a file, dedup against existing, the chunking boundary | **Pass** — 231 client, 279 server, three timezones |
 | 10 | CI green, this document, fixtures committed | Fixtures committed with a README; this document exists; CI on the PR |
 
 **All ten pass.** Three defects found along the way are fixed on this branch; a fourth (§6.2) is a product decision and is recorded rather than changed.
 
 ---
 
-## 10. What is left
+## 10. The review round (`/code-review high 4`)
+
+`MILESTONE_CHECKLIST.md` §G, run on the PR rather than a stale local branch. Six findings,
+all six fixed; the three correctness ones each have a test that goes red when the fix is
+reverted.
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | **A stale report bounced the user out of import.** `_result` was only cleared by tapping Done, but both import screens navigate by observing `result != null`, so a leftover result fired on first composition. Reachable because there is no `BackHandler`: the system back button on the report finishes the Activity while the store, a singleton on the Application, keeps the result. Re-entering import then jumped straight back to a report already read | `AppStore.openImport()` clears it before any import screen composes — every route in goes through there — and each screen additionally ignores a result that predates its own entry, so the two `LaunchedEffect`s cannot race. **Verified on the device**: report → system back → relaunch → Import now reaches "Bring people in" |
+| 2 | **The corrected CSV misaligned its reason column.** `correctedCsv` padded rows SHORTER than the header and did nothing about longer ones, so a row with one stray comma pushed its reason past the column the header declared. Also every headerless file whose column count was not five | Everything is padded to the widest row, header included, so the reason is the last column of every line. Two tests, both red when reverted |
+| 3 | **`planPages`' `truncated` was computed and dropped.** The third time this project has made the shape its own checklist names first (`PlanDiff.removed`, M1's `skipped`) | Surfaced as `Result.outboxTruncated`. The page cap is now injectable, so three tests reach the truncation case without a 20,000-row outbox |
+| 4 | `guessMapping` could offer one column as two fields — `Birthday Notes` matched both, storing every person's raw date as their note | Claims are taken in order of how much a wrong guess costs; one column, one field |
+| 5 | Generated column labels ran past Z into `[`, `\`, `]` | Proper base-26 letters: A..Z, AA, AB |
+| 6 | The default-relation dialog said "Set for all 200" when it only fills rows that have none | It is told how many rows it will actually touch |
+
+### And a seventh, found by using the app during that verification
+
+**The import flow could lock itself shut.** The picker silently stopped opening: every tap on
+"Choose a file" did nothing, there was no error anywhere, and force-stopping the app was the
+only cure.
+
+`_busy` had been left true. The picker and the permission dialog are awaited through a
+`CompletableDeferred` that a *different* Activity completes, so when a result never arrives
+the coroutine stays suspended — and because `ImportStore` is a singleton on the Application,
+the flag outlives the Activity. No `finally` can save that path: nothing is thrown and
+nothing returns.
+
+So the recovery does not live on the hanging path. `clearResult()` releases the flag, which
+means leaving and re-entering import always recovers; every busy section also got a `finally`
+for the ordinary error cases. Two tests drive a gateway that never answers and assert the
+flow comes back; both red when reverted.
+
+Worth saying plainly: **no test would have found this one.** It took tapping a button that
+did nothing and being suspicious about it.
+
+---
+
+## 11. What is left
+
 
 Nothing in M3. Two things carried forward, neither blocking:
 

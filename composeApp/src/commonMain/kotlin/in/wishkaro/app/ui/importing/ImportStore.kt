@@ -67,7 +67,7 @@ sealed interface FileState {
             get() {
                 val width = rows.maxOfOrNull { it.size } ?: 0
                 return (0 until width).map { index ->
-                    header.getOrNull(index)?.takeIf { it.isNotBlank() } ?: "Column ${'A' + index}"
+                    header.getOrNull(index)?.takeIf { it.isNotBlank() } ?: "Column ${columnLetters(index)}"
                 }
             }
     }
@@ -135,19 +135,17 @@ class ImportStore(
         if (_busy.value) return
         scope.launch {
             _busy.value = true
-            when (contacts.requestPermission()) {
-                PermissionOutcome.GRANTED -> {
-                    _busy.value = false
-                    readContacts()
+            try {
+                when (contacts.requestPermission()) {
+                    PermissionOutcome.GRANTED -> readContacts()
+                    PermissionOutcome.DENIED -> _contactsState.value = ContactsState.Denied
+                    PermissionOutcome.DENIED_PERMANENTLY ->
+                        _contactsState.value = ContactsState.DeniedPermanently
                 }
-                PermissionOutcome.DENIED -> {
-                    _contactsState.value = ContactsState.Denied
-                    _busy.value = false
-                }
-                PermissionOutcome.DENIED_PERMANENTLY -> {
-                    _contactsState.value = ContactsState.DeniedPermanently
-                    _busy.value = false
-                }
+            } finally {
+                // A `finally`, so a thrown or cancelled permission request cannot leave the
+                // screen stuck behind a spinner that never clears.
+                _busy.value = false
             }
         }
     }
@@ -228,8 +226,11 @@ class ImportStore(
         if (_busy.value) return
         scope.launch {
             _busy.value = true
-            val picked = files.pickSpreadsheet()
-            _busy.value = false
+            val picked = try {
+                files.pickSpreadsheet()
+            } finally {
+                _busy.value = false
+            }
             if (picked == null) return@launch
 
             if (picked.bytes.size > MAX_FILE_BYTES) {
@@ -297,6 +298,22 @@ class ImportStore(
         it.copy(settings = it.settings.copy(defaultRelation = relation?.takeIf(String::isNotBlank)))
     }
 
+    /**
+     * How many rows the default relation would actually apply to.
+     *
+     * The dialog used to be told the row COUNT and so offered to "Set for all 200" when it
+     * sets nothing on the 180 rows that already carry a relation of their own. Saying a
+     * number and then not doing it to that number is the kind of small lie this milestone is
+     * meant not to tell.
+     */
+    fun rowsNeedingADefaultRelation(): Int {
+        val state = _fileState.value as? FileState.Mapping ?: return 0
+        val relationColumn = state.mapping.relation
+        return state.rows
+            .drop(if (state.settings.hasHeaderRow) 1 else 0)
+            .count { row -> relationColumn?.let { row.getOrNull(it) }?.isNotBlank() != true }
+    }
+
     fun setHasHeaderRow(hasHeader: Boolean) = updateMapping {
         it.copy(settings = it.settings.copy(hasHeaderRow = hasHeader))
     }
@@ -331,25 +348,28 @@ class ImportStore(
         if (_busy.value) return
         scope.launch {
             _busy.value = true
-            // The index is built ONCE from one read of the database, not per row.
-            val index = DedupIndex(people.dedupCandidates())
-            val plan: ImportPlan = planImport(rows, mapping, settings, index, today())
+            try {
+                // The index is built ONCE from one read of the database, not per row.
+                val index = DedupIndex(people.dedupCandidates())
+                val plan: ImportPlan = planImport(rows, mapping, settings, index, today())
 
-            // Everything was decided before this line. The write is one transaction over
-            // rows that have already passed, so the database cannot end up half-written even
-            // though the FILE is partially imported — docs/M3_PLAN.md §5.
-            val written = people.importPeople(plan.ready)
+                // Everything was decided before this line. The write is one transaction over
+                // rows that have already passed, so the database cannot end up half-written
+                // even though the FILE is partially imported — docs/M3_PLAN.md §5.
+                val written = people.importPeople(plan.ready)
 
-            _result.value = ImportResult(
-                imported = written.size,
-                skipped = plan.duplicates,
-                failed = plan.failed,
-                warnings = plan.ready.flatMap { ready -> ready.warnings.map { ready.name to it } },
-                header = header,
-                sourceName = sourceName,
-            )
-            _savedReport.value = null
-            _busy.value = false
+                _result.value = ImportResult(
+                    imported = written.size,
+                    skipped = plan.duplicates,
+                    failed = plan.failed,
+                    warnings = plan.ready.flatMap { ready -> ready.warnings.map { ready.name to it } },
+                    header = header,
+                    sourceName = sourceName,
+                )
+                _savedReport.value = null
+            } finally {
+                _busy.value = false
+            }
         }
     }
 
@@ -365,43 +385,38 @@ class ImportStore(
         if (result.failed.isEmpty() || _busy.value) return
         scope.launch {
             _busy.value = true
-            val header = result.header.ifEmpty { CONTACTS_HEADER }
-            val csv = correctedCsv(header, result.failed)
-            _savedReport.value = files.saveCsv("wishkaro-rows-to-fix.csv", csv)
-            _busy.value = false
+            try {
+                val header = result.header.ifEmpty { CONTACTS_HEADER }
+                val csv = correctedCsv(header, result.failed)
+                _savedReport.value = files.saveCsv("wishkaro-rows-to-fix.csv", csv)
+            } finally {
+                _busy.value = false
+            }
         }
     }
 
+    /**
+     * Leave the flow, and make sure the next entry starts clean.
+     *
+     * `_busy` is released here too, and that is not tidiness. The file picker and the
+     * permission dialog are awaited through a `CompletableDeferred` that another Activity
+     * completes; if that result never arrives, the coroutine stays suspended and `_busy`
+     * stays true — and because this store is a singleton on the Application, the flag
+     * outlives the Activity. Observed while verifying M3: the picker silently stopped
+     * opening, every tap on "Choose a file" did nothing, and only force-stopping the app
+     * cleared it. A permanent lock-up with no error anywhere is the worst kind.
+     *
+     * Releasing it here means leaving and re-entering import always recovers. An orphaned
+     * coroutine may still be suspended behind it, but it no longer holds the UI shut.
+     */
     fun clearResult() {
         _result.value = null
         _savedReport.value = null
         _fileState.value = FileState.Choosing
+        _busy.value = false
     }
 
     // -----------------------------------------------------------------------------------
-
-    /**
-     * A first guess at the mapping, from the header's own words.
-     *
-     * Only a guess, and visibly one: the mapping screen shows every choice and a five-row
-     * preview before anything is applied, so a wrong guess costs one tap. Guessing nothing
-     * would cost five taps on every import, including the common case where the columns are
-     * called exactly what they are.
-     */
-    internal fun guessMapping(header: List<String>): ColumnMapping {
-        fun find(vararg words: String): Int? = header.indexOfFirst { cell ->
-            val lower = cell.lowercase()
-            words.any { it in lower }
-        }.takeIf { it >= 0 }
-
-        return ColumnMapping(
-            name = find("name", "person", "who"),
-            date = find("birth", "date", "dob", "anniversar"),
-            relation = find("relation", "how i know", "type", "group"),
-            phone = find("phone", "mobile", "number", "contact"),
-            notes = find("note", "comment", "remark"),
-        )
-    }
 
     companion object {
         /**
@@ -453,5 +468,55 @@ internal fun ColumnMapping.clearing(index: Int?): ColumnMapping {
         relation = relation.takeIf { it != index },
         phone = phone.takeIf { it != index },
         notes = notes.takeIf { it != index },
+    )
+}
+
+/**
+ * Spreadsheet column letters for a file with no header row: A..Z, then AA, AB, ...
+ *
+ * `'A' + index` looked right and ran off the end of the alphabet at column 27, labelling
+ * them "Column [", "Column \\", "Column ]". `Xlsx.columnIndex` already reads this base-26
+ * scheme in the other direction.
+ */
+internal fun columnLetters(index: Int): String {
+    var n = index
+    val out = StringBuilder()
+    while (true) {
+        out.append('A' + n % 26)
+        n = n / 26 - 1
+        if (n < 0) break
+    }
+    return out.reverse().toString()
+}
+
+/**
+ * A first guess at the mapping, from the header's own words.
+ *
+ * Only a guess, and visibly one: the mapping screen shows every choice and a five-row
+ * preview before anything is applied, so a wrong guess costs one tap. Guessing nothing
+ * would cost five taps on every import, including the common case where the columns are
+ * called exactly what they are.
+ */
+internal fun guessMapping(header: List<String>): ColumnMapping {
+    fun find(vararg words: String): Int? = header.indexOfFirst { cell ->
+        val lower = cell.lowercase()
+        words.any { it in lower }
+    }.takeIf { it >= 0 }
+
+    // Claimed in order of how much damage a wrong guess does. One column can only mean
+    // one thing — the mapping screen enforces that on every later edit, and the guess
+    // has to start out obeying it too. `Birthday Notes` matches both the date words and
+    // the notes words, and without this it was offered as Date AND Notes at once, which
+    // stores every person's raw date string as their note.
+    val taken = mutableSetOf<Int>()
+    fun claim(vararg words: String): Int? =
+        find(*words)?.takeIf { taken.add(it) }
+
+    return ColumnMapping(
+        name = claim("name", "person", "who"),
+        date = claim("birth", "date", "dob", "anniversar"),
+        relation = claim("relation", "how i know", "type", "group"),
+        phone = claim("phone", "mobile", "number", "contact"),
+        notes = claim("note", "comment", "remark"),
     )
 }

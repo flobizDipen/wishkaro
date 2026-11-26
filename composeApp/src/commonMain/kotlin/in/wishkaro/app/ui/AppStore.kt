@@ -19,6 +19,7 @@ import `in`.wishkaro.app.platform.OemHelperOutcome
 import `in`.wishkaro.app.platform.OemInstructions
 import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.platform.ReminderScheduler
+import `in`.wishkaro.app.ui.importing.ImportStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -109,6 +110,7 @@ class AppStore(
     private val plan: ReminderPlanRepository,
     private val scheduler: ReminderScheduler,
     private val oem: OemBatteryHelper,
+    private val importing: ImportStore,
     private val scope: CoroutineScope,
     private val now: () -> Instant = Clock.System::now,
 ) {
@@ -201,7 +203,22 @@ class AppStore(
     // Import (M3)
     // -----------------------------------------------------------------------------------
 
-    fun openImport() = go(Screen.ImportStart)
+    /**
+     * Every route into import comes through here — the people-list action, the empty state
+     * and the first-run offer — so this is the one place that can guarantee the flow starts
+     * without a previous run's report still sitting in the store.
+     *
+     * It has to happen BEFORE an import screen composes. Those screens navigate to the
+     * report by observing `result != null`, so a leftover result made them bounce straight
+     * back out: the user could not reach the contacts list at all until they had tapped
+     * Done on a report they had already read. Reachable because there is no BackHandler —
+     * the system back button on the report finishes the Activity while the store, a
+     * singleton on the Application, keeps the result.
+     */
+    fun openImport() {
+        importing.clearResult()
+        go(Screen.ImportStart)
+    }
 
     fun openImportContacts() = go(Screen.ImportContacts)
 
