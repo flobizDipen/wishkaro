@@ -24,7 +24,18 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache tini curl
+# tini and curl: process reaping and the healthcheck.
+#
+# The fonts are M6's, and without them posters render as empty boxes rather than failing.
+# `sharp` has no text API — FR-POS-01(c)'s copy is drawn by compositing an SVG, which
+# librsvg rasterises through fontconfig. `node:22-alpine` ships NO fonts at all, so every
+# headline would come out blank and nothing would throw.
+#
+# `font-noto-devanagari` is not optional politeness: FR-WSH-03 allows Hindi and Hinglish and
+# poster copy inherits that, so a headline reading "जन्मदिन मुबारक" needs Devanagari coverage
+# or it renders as tofu. `font-noto` covers Latin, and `fontconfig` is what lets the
+# font-family stack in `compositor.ts` resolve at all.
+RUN apk add --no-cache tini curl fontconfig font-noto font-noto-devanagari
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
