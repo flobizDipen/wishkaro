@@ -46,6 +46,7 @@ import `in`.wishkaro.app.domain.DateOrder
 import `in`.wishkaro.app.domain.DateParse
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.ImportDates
+import `in`.wishkaro.app.domain.importDataRows
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.RelationPicker
@@ -631,7 +632,9 @@ private fun MappingScreen(
  */
 @Composable
 private fun PreviewTable(state: FileState.Mapping, today: LocalDate) {
-    val dataRows = state.rows.drop(if (state.settings.hasHeaderRow) 1 else 0).take(5)
+    // The same definition the importer uses, so the preview cannot show five rows the
+    // import would not have picked — or skip a blank line the importer would have counted.
+    val dataRows = importDataRows(state.rows, state.settings.hasHeaderRow).take(5).map { it.value }
     if (dataRows.isEmpty()) {
         Text("No rows to show.", style = MaterialTheme.typography.bodySmall)
         return

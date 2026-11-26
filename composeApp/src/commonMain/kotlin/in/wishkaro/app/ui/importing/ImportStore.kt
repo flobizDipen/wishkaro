@@ -59,8 +59,17 @@ sealed interface FileState {
         val mapping: ColumnMapping,
         val settings: ImportSettings,
     ) : FileState {
+        /**
+         * The user's own column names. The first NON-BLANK row, not simply the first —
+         * blank lines are kept by the readers now so that positions are line numbers, and a
+         * file with a stray blank line above its headings must still map correctly.
+         */
         val header: List<String>
-            get() = if (settings.hasHeaderRow) rows.firstOrNull().orEmpty() else emptyList()
+            get() = if (settings.hasHeaderRow) {
+                rows.firstOrNull { cells -> cells.any { it.isNotBlank() } }.orEmpty()
+            } else {
+                emptyList()
+            }
 
         /** Column labels for the mapping UI — the user's names, or A/B/C when there are none. */
         val columnLabels: List<String>

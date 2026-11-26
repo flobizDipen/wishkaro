@@ -87,7 +87,12 @@ object Csv {
         // gain an empty one.
         if (cell.isNotEmpty() || row.isNotEmpty()) endRow()
 
-        return rows.filterNot { cells -> cells.all { it.isBlank() } }
+        // Blank lines are KEPT, so an index into this list is a line number in the user's
+        // file. They used to be dropped here, and the report then counted rows in the
+        // filtered list: a spreadsheet with a blank line between households told the user
+        // "Row 13" about row 14, and every further blank widened the drift. Skipping them
+        // is the importer's job, after the numbering — see `importDataRows`.
+        return rows
     }
 
     /**

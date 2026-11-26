@@ -207,9 +207,7 @@ fun planImport(
     val duplicates = mutableListOf<RowPlan.Duplicate>()
     val failed = mutableListOf<RowPlan.Failed>()
 
-    val dataRows = rows.withIndex().drop(if (settings.hasHeaderRow) 1 else 0)
-
-    for ((zeroBased, cells) in dataRows) {
+    for ((zeroBased, cells) in importDataRows(rows, settings.hasHeaderRow)) {
         val row = ImportRow(number = zeroBased + 1, cells = cells)
         when (val plan = planRow(row, mapping, settings, index, today)) {
             is RowPlan.Failed -> failed += plan
@@ -231,6 +229,32 @@ fun planImport(
     }
 
     return ImportPlan(ready, duplicates, failed)
+}
+
+/**
+ * The rows of the file that describe a person, each still carrying its own position.
+ *
+ * ONE definition, used by the importer and by the mapping screen's preview, so the two
+ * cannot disagree about which rows they are talking about or what to call them.
+ *
+ * Blank lines are skipped HERE rather than by the readers. A spreadsheet with a blank line
+ * between households is ordinary, and a blank line is not a person — but dropping it before
+ * the numbering made the failure report name the wrong row, which defeats the entire point
+ * of FR-IMP-07. The index that comes back is the position in the file, so `index + 1` is the
+ * line the user is looking at.
+ *
+ * The header is found rather than assumed to be first, so a file with a stray blank line
+ * above its headings still maps correctly.
+ */
+fun importDataRows(
+    rows: List<List<String>>,
+    hasHeaderRow: Boolean,
+): List<IndexedValue<List<String>>> {
+    val headerIndex = rows.indexOfFirst { cells -> cells.any { it.isNotBlank() } }
+    val firstData = if (hasHeaderRow && headerIndex >= 0) headerIndex + 1 else 0
+    return rows.withIndex()
+        .drop(firstData)
+        .filterNot { (_, cells) -> cells.all { it.isBlank() } }
 }
 
 /** Marks an index entry that came from this file rather than from the database. */
