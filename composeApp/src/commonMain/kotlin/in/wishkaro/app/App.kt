@@ -1,7 +1,9 @@
 package `in`.wishkaro.app
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -10,12 +12,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import `in`.wishkaro.app.data.repository.AuthState
+import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.domain.groupUpcoming
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.addperson.AddPersonScreen
 import `in`.wishkaro.app.ui.importing.ImportContactsScreen
@@ -26,7 +31,10 @@ import `in`.wishkaro.app.ui.importing.ImportStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
 import `in`.wishkaro.app.ui.nav.WishKaroNavigation
+import `in`.wishkaro.app.ui.components.WishKaroTopBar
+import `in`.wishkaro.app.ui.nav.WishKaroNavigationBar
 import `in`.wishkaro.app.ui.nav.rememberWishKaroNavigation
+import `in`.wishkaro.app.ui.upcoming.UpcomingListScreen
 import `in`.wishkaro.app.ui.people.PeopleListScreen
 import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
@@ -81,7 +89,22 @@ fun App(modifier: Modifier = Modifier) {
             }
         }
 
-        Scaffold(modifier = modifier, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+        Scaffold(
+            modifier = modifier,
+            snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                // FR-VIEW-06, compact: single pane with bottom navigation. Only on a
+                // top-level destination — a bar offering to switch tabs while the user is
+                // three screens deep inside one of them invites them to lose their place.
+                // Medium and expanded widths get a rail instead; that is the next commit.
+                if (authState is AuthState.SignedIn && nav.current == nav.topLevelRoute) {
+                    WishKaroNavigationBar(
+                        current = nav.topLevelRoute,
+                        onSelect = nav::goTo,
+                    )
+                }
+            },
+        ) { padding ->
             val inner = Modifier.padding(padding)
 
             // Sign-in is NOT a destination on the back stack. It is what the app shows while
@@ -130,6 +153,58 @@ private fun wishKaroEntryProvider(
     nav: WishKaroNavigation,
     inner: Modifier,
 ): (NavKey) -> NavEntry<NavKey> = entryProvider {
+
+    entry<Screen.Upcoming> {
+        // Straight from UpcomingRepository, not through AppStore. The list, the calendar,
+        // the timeline and the widget all read the same query, and routing it through a
+        // UI store on the Application would put it back where M3 was bitten twice.
+        val repository: UpcomingRepository = koinInject()
+        val entries by repository.observeUpcoming().collectAsState(emptyList())
+        val focused by store.focusedPersonId.collectAsState()
+        val busy by store.busy.collectAsState()
+        val sections = remember(entries) { groupUpcoming(entries) }
+
+        Scaffold(
+            modifier = inner,
+            topBar = {
+                WishKaroTopBar(
+                    title = "Upcoming",
+                    busy = busy,
+                    onRefresh = store::refresh,
+                    onOpenSettings = {
+                        store.prepareSettings()
+                        nav.goTo(Screen.Settings)
+                    },
+                    onOpenImport = store::openImport,
+                    onOpenDeleted = { nav.goTo(Screen.Deleted) },
+                    onSignOut = store::signOut,
+                )
+            },
+            floatingActionButton = {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        store.prepareAddPerson()
+                        nav.goTo(Screen.AddPerson)
+                    },
+                    text = { Text("Add person") },
+                    icon = {},
+                    modifier = Modifier.testTag("add_person_fab"),
+                )
+            },
+        ) { padding ->
+            UpcomingListScreen(
+                sections = sections,
+                focusedPersonId = focused,
+                onOpenPerson = { nav.goTo(Screen.PersonDetail(it)) },
+                onAddPerson = {
+                    store.prepareAddPerson()
+                    nav.goTo(Screen.AddPerson)
+                },
+                onOpenImport = store::openImport,
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
 
     entry<Screen.People> {
         val cards by store.cards.collectAsState()

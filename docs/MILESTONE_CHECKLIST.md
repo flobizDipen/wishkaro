@@ -137,3 +137,14 @@ Each of these was bought the same way the rest were — by something going wrong
 | ☐ | Treat "a value that says what changed is computed and dropped" as a **grep, not a reading**. M3 made the same shape a third time, in the milestone that quoted the rule | M3 §10.3 (`truncated`), after `PlanDiff.removed` and `skipped` |
 | ☐ | A **fake store cannot catch a disagreement between the code and the schema**, because it agrees with whatever the code does to it. `androidUnitTest` runs on the JVM and can hold `LocalStore` to a real in-memory SQLite | M3 §6.3 |
 | ☐ | Guard **every** blind tap on the focused window, not just the first of a sequence — a notification can arrive between the screenshot and the tap | M3 (a typed string landed in a Slack reply box) |
+
+## What M4 added to this list
+
+| ✅ | Item | Bought by |
+|---|---|---|
+| ☐ | **`./gradlew connectedAndroidTest` UNINSTALLS the app when it finishes.** Not `pm clear` — a full uninstall, so the local database and the session in EncryptedSharedPreferences both go and the next launch is a first launch. Never run it against the handset holding the real account; use an emulator, or `tools/device/instrumented-tests.sh`, which installs with `-r` and drives `am instrument` directly | M4 §0.0 — it wiped the 566-person account off the owner's phone mid-milestone |
+| ☐ | A **guard that rejects the app it is guarding** gets switched off. §E says `mCurrentFocus` should name `in.wishkaro.app/.MainActivity`; `dumpsys` prints the fully-qualified form. Accept both, and let focus SETTLE rather than failing on the `mCurrentFocus=null` that follows every `am start` | M4, first use of the device script |
+| ☐ | **Compose hands `uiautomator` a clickable node with no text and no content-description** — the label is a separate child node — so a button with no `testTag` cannot be addressed from the view tree at all. Tag anything a device sequence has to touch, as it is written | M4 (the Add person button was unaddressable) |
+| ☐ | **Assert AFTER the tap, not only before.** Every guard rail §E has bought checks the state beforehand and none can say where the tap landed. `tools/device/ui.sh expect` is the other half | M2 and M3's three blind-tap incidents, closed in M4 |
+| ☐ | `android:configChanges` on the Activity means **the Activity is never recreated**, so "state survives rotation" is true because nothing was ever lost — while process death still loses everything. Check what the manifest actually declares before believing a restoration claim | M4 §2.5 (not one form in the app used `rememberSaveable`) |
+| ☐ | A **redundant filter is worse than none**: it implies the job belongs to a layer it does not. When a revert-check does not go red, find out why before moving on | M4 (a deleted-row filter in the repository that the SQL already did) |

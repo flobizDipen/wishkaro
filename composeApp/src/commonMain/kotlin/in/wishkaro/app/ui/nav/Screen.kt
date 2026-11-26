@@ -28,10 +28,14 @@ sealed interface Screen : NavKey {
     data object SignIn : Screen
 
     /**
-     * The people directory. Still the only top-level route; FR-VIEW-01..04's List, Calendar
-     * and Timeline join it in [TOP_LEVEL_ROUTES] when they are built, and the per-tab stack
-     * machinery in [WishKaroNavigation] already expects them.
+     * FR-VIEW-01. Upcoming events grouped Today / This week / This month / Later, and the
+     * app's default — what a user opening WishKaro wants first is who is next, not an
+     * alphabet.
      */
+    @Serializable
+    data object Upcoming : Screen
+
+    /** FR-VIEW-04. The directory of people, as opposed to the list of events. */
     @Serializable
     data object People : Screen
 
@@ -81,7 +85,7 @@ sealed interface Screen : NavKey {
  * order is also what the selected tab is saved as, so inserting a route in the middle later
  * changes what a saved index means. Append rather than insert.
  */
-val TOP_LEVEL_ROUTES: List<Screen> = listOf(Screen.People)
+val TOP_LEVEL_ROUTES: List<Screen> = listOf(Screen.Upcoming, Screen.People)
 
 /**
  * How the back stack is written into saved state.
@@ -100,6 +104,7 @@ val WISHKARO_SAVED_STATE: SavedStateConfiguration = SavedStateConfiguration {
     serializersModule = SerializersModule {
         polymorphic(NavKey::class) {
             subclass(Screen.SignIn::class)
+            subclass(Screen.Upcoming::class)
             subclass(Screen.People::class)
             subclass(Screen.AddPerson::class)
             subclass(Screen.PersonDetail::class)

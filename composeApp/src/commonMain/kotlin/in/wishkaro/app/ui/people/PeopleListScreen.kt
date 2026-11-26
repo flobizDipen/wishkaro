@@ -48,6 +48,7 @@ import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.toneFor
 import `in`.wishkaro.app.ui.PeopleFilter
+import `in`.wishkaro.app.ui.components.WishKaroTopBar
 
 private val MONTHS = listOf(
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -78,12 +79,16 @@ fun PeopleListScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("People") },
-                actions = {
-                    TextButton(onClick = onRefresh, enabled = !busy) { Text("Sync") }
-                    TextButton(onClick = onSignOut) { Text("Sign out") }
-                },
+            // Shared with every other top-level view, so Import, Settings, Recently removed
+            // and Sign out are one tap from all four rather than from this one.
+            WishKaroTopBar(
+                title = "People",
+                busy = busy,
+                onRefresh = onRefresh,
+                onOpenSettings = onOpenSettings,
+                onOpenImport = onOpenImport,
+                onOpenDeleted = onOpenDeleted,
+                onSignOut = onSignOut,
             )
         },
         floatingActionButton = {
@@ -143,31 +148,21 @@ fun PeopleListScreen(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (filter.isActive) {
-                    TextButton(onClick = onClearFilter) { Text("Clear filters") }
-                } else {
-                    // The self-test moved to Settings in M2, where it belongs — it now
-                    // reports whether the reminder actually arrived rather than firing and
-                    // forgetting, and it sits next to the battery helper that fixes the case
-                    // where it does not (FR-REM-06, FR-REM-07).
-                    TextButton(onClick = onOpenSettings, enabled = !busy) {
-                        Text("Settings")
-                    }
+            // Clear filters stays on the screen that has the filters. Settings, Import
+            // and Recently removed moved to the shared top bar above — they belong to the
+            // app, not to this list, and M4 gives the app three more top-level views that
+            // would otherwise never show them.
+            if (filter.isActive) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = onClearFilter,
+                        modifier = Modifier.testTag("clear_filters"),
+                    ) { Text("Clear filters") }
                 }
-                // Import has to be reachable from a list that is NOT empty.
-                //
-                // FR-VIEW-05 puts it on the empty state and FR-AUTH-05 offers it at first
-                // run, and both are built — but between them they only ever reach somebody
-                // with nobody. A user who added three people by hand last week and now
-                // wants the other three hundred off their phone had no route at all, which
-                // makes import a feature you can use once, by accident, on your first day.
-                TextButton(onClick = onOpenImport) { Text("Import") }
-                TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
             }
 
             // Records the server refused and this device has set aside. Shown here, above
