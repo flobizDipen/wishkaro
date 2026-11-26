@@ -3,5 +3,25 @@
     xmlns:tools="http://schemas.android.com/tools">
     <application
         android:networkSecurityConfig="@xml/network_security_config"
-        tools:replace="android:networkSecurityConfig" />
+        tools:replace="android:networkSecurityConfig">
+
+        <!--
+            Instrumented tests only, debug builds only, never exported.
+
+            It lives HERE rather than in the androidTest manifest because an activity
+            declared there belongs to in.wishkaro.app.test while the instrumentation runs
+            against in.wishkaro.app, and ActivityScenario refuses to launch across that
+            boundary ("Intent in process ... resolved to different process"). Compose's own
+            ui-test-manifest does exactly this for the same reason.
+
+            Why it is needed at all: ComposeTestRule.setContent attaches content to the
+            Activity instance that exists when the test calls it, so after
+            ActivityScenario.recreate() the new instance has none. An Activity that sets its
+            own content in onCreate — like MainActivity does — is the only way to tell a
+            real restoration failure from an empty screen.
+        -->
+        <activity
+            android:name="in.wishkaro.app.ui.nav.RestorationHostActivity"
+            android:exported="false" />
+    </application>
 </manifest>

@@ -51,6 +51,20 @@ adaptive = "1.2.0"
 # Test
 turbine = "1.2.1"
 
+# Instrumented tests. FR-VIEW-07 wants explicit state-restoration tests and definition-of-
+# done item 5 says automated, not only a device walkthrough. These need a real device or
+# emulator, so they are a LOCAL gate: CI has neither and still runs unit tests only.
+# androidx-compose-ui is pinned to what the Compose Multiplatform 1.11.1 plugin already
+# resolves (1.11.2) — a newer ui-test line wants compileSdk 37, which this project cannot
+# take. See docs/M4_PLAN.md §2.4 and §4.
+androidx-compose-ui = "1.11.2"
+androidx-test-junit = "1.3.0"
+androidx-test-runner = "1.7.0"
+# ui-test-junit4 drags in espresso-core 3.5.0, which calls android.hardware.input.
+# InputManager.getInstance — removed in recent Android, so every instrumented test died with
+# NoSuchMethodException on the Pixel 9a before a single assertion ran. 3.7.0 is the fix.
+androidx-espresso = "3.7.0"
+
 [libraries]
 # --- shared ---
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "nav3Core" }
@@ -80,6 +94,12 @@ koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", ver
 # Test-only. Module.verify() checks every constructor dependency against the declared
 # definitions WITHOUT instantiating anything — which is the one class of bug that compiles,
 # passes every unit test, and then throws on the first launch.
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "androidx-compose-ui" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidx-compose-ui" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
+androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-espresso" }
+
 koin-test = { module = "io.insert-koin:koin-test", version.ref = "koin" }
 
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }

@@ -61,6 +61,12 @@ kotlin {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions { jvmTarget.set(JvmTarget.JVM_11) }
+
+        // Deliberately NOT instrumentedTestVariant.sourceSetTree = test. That puts
+        // androidInstrumentedTest in the same tree as commonTest, so every JVM unit test
+        // gets dexed too — and this project writes test names in backticks, with spaces,
+        // which D8 refuses below DEX version 040 (minSdk 26). The instrumented suite needs
+        // the PRODUCTION code, not the unit tests, so it stays its own compilation.
     }
 
     // iOS is kept compiling but is not shipped in v1 (D15). The actuals in iosMain are
@@ -125,6 +131,19 @@ kotlin {
             }
         }
 
+        // Device-only. FR-VIEW-07's state restoration cannot be proved on the JVM: it needs
+        // an Activity that really is destroyed and rebuilt. Run with
+        // `./gradlew :composeApp:connectedDebugAndroidTest` against an attached device.
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(libs.androidx.compose.ui.test.junit4)
+                implementation(libs.androidx.test.ext.junit)
+                implementation(libs.androidx.test.runner)
+                implementation(libs.androidx.test.espresso.core)
+            }
+        }
+
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
@@ -162,6 +181,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -226,4 +246,6 @@ sqldelight {
 
 dependencies {
     debugImplementation(compose.uiTooling)
+    // Supplies the empty Activity createComposeRule() launches into.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
