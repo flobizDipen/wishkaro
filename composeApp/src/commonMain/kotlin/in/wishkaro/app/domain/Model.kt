@@ -99,10 +99,36 @@ data class Person(
     val traits: List<PersonTrait>,
 ) {
     /**
-     * One flag the whole UI branches on. A person is solemn if they are deceased — which is
-     * exactly when the server has already made every one of their events SOLEMN.
+     * One flag the whole UI branches on.
+     *
+     * **Corrected in M5, after the bug reached a real screen.** This read `isDeceased`
+     * alone, on the stated grounds that being deceased "is exactly when the server has
+     * already made every one of their events SOLEMN". That is true of the SERVER's copy and
+     * not of this one: `is_deceased` is derived server-side, so between creating a death
+     * anniversary on the phone and the next sync pull, the local row says false.
+     *
+     * In that window the app treated a dead person as living. Observed on the device while
+     * verifying M5: a death anniversary added on the handset opened the celebratory
+     * composer — Funny and Poetic offered, "Send your wish with", and the words "Happy
+     * birthday, Rohan" in the box — and the person screen headed their history "Wishes
+     * sent". REQUIREMENTS.md §11 and FR-EVT-05 call that the worst failure this product can
+     * have, and it has been reachable since M1.
+     *
+     * The events are the signal that was already right: `addEventLocally` seeds a
+     * DEATH_ANNIVERSARY's `sentiment` SOLEMN at insert time, and the server confirms it on
+     * the next pull, so it is correct on both sides of the round trip.
+     *
+     * OR, never a preference between the two. Every input can only push TOWARDS solemn, so
+     * no combination of a stale value and a fresh one can produce a celebration for someone
+     * who has died — the same direction `Sentiment.from()` falls back in, and for the same
+     * reason: the safe failure is to say too little.
+     *
+     * This still does not DERIVE sentiment on the client, which FR-EVT-01a forbids. It
+     * reads two mirrored values and takes the quieter one.
      */
-    val isSolemn: Boolean get() = isDeceased
+    val isSolemn: Boolean
+        get() = isDeceased ||
+            events.any { it.sentiment == Sentiment.SOLEMN || it.type == EventType.DEATH_ANNIVERSARY }
 
     val traitsByKind: Map<TraitKind, List<PersonTrait>> get() = traits.groupBy { it.kind }
 

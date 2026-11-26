@@ -78,9 +78,35 @@ data class ComposerState(
     val handedToChannel: WishChannel? = null,
     val loaded: Boolean = false,
 ) {
+    /**
+     * Solemn if EITHER the person or the occasion says so.
+     *
+     * **This cost a real bug, found on the device.** The first version read
+     * `person.isSolemn` alone, and `person.is_deceased` is DERIVED SERVER-SIDE — so for a
+     * person created seconds ago the local row still says false until a sync pull lands. A
+     * death anniversary added on the phone therefore opened the CELEBRATORY composer: Funny
+     * and Poetic on offer, "Send your wish with", and the words "Happy birthday, Rohan" in
+     * the box. REQUIREMENTS.md §11 and FR-EVT-05 call that the worst failure this product
+     * can have, and it was on screen.
+     *
+     * The event's own `sentiment` is the signal that was already right. `addEventLocally`
+     * seeds it SOLEMN for a DEATH_ANNIVERSARY at insert time and the server corrects it on
+     * the next pull, so it is correct both before and after the round trip — which the
+     * person flag is not.
+     *
+     * OR rather than a preference between them, deliberately. Both inputs can only ever push
+     * TOWARDS solemn, so no combination of a stale value and a fresh one can produce a
+     * celebration for someone who has died. That is the same direction `Sentiment.from()`
+     * falls back in, and for the same reason: the safe failure is to say too little.
+     */
     val sentiment: Sentiment
-        get() = person?.let { if (it.isSolemn) Sentiment.SOLEMN else Sentiment.CELEBRATORY }
-            ?: Sentiment.SOLEMN
+        get() {
+            val personSolemn = person?.isSolemn == true
+            val occasionSolemn = event?.sentiment == Sentiment.SOLEMN
+            // No person loaded yet is also SOLEMN: it is the quieter of the two guesses.
+            if (person == null) return Sentiment.SOLEMN
+            return if (personSolemn || occasionSolemn) Sentiment.SOLEMN else Sentiment.CELEBRATORY
+        }
 
     /**
      * The tones this occasion offers (FR-WSH-03, FR-WSH-09).
@@ -150,7 +176,11 @@ class WishStore(
             ?: upcomingFor(person, zone(), localToday).minByOrNull { it.daysUntil }?.nextOccurrence?.year
             ?: localToday.year
 
-        val sentiment = if (person.isSolemn) Sentiment.SOLEMN else Sentiment.CELEBRATORY
+        // The same rule as ComposerState.sentiment, and it has to be: this is what picks
+        // the opening template and the opening tone, which is what the user actually sees.
+        val sentiment =
+            if (person.isSolemn || event?.sentiment == Sentiment.SOLEMN) Sentiment.SOLEMN
+            else Sentiment.CELEBRATORY
         val tone = defaultToneFor(sentiment)
 
         _state.value = ComposerState(

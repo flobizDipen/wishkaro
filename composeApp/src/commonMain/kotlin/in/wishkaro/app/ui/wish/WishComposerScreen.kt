@@ -2,6 +2,8 @@ package `in`.wishkaro.app.ui.wish
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -260,6 +262,7 @@ fun WishComposerScreen(
  * is no disabled Funny chip on a solemn occasion — FR-WSH-09 says those options are
  * UNAVAILABLE, and a greyed-out "Funny" on a death anniversary is still the word on screen.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ToneRow(
     tones: List<WishTone>,
@@ -269,7 +272,13 @@ private fun ToneRow(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Tone", style = MaterialTheme.typography.labelMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // FlowRow, not Row. Five chips do not fit across a 1080px phone, and a plain Row
+        // does not wrap them — it squeezes the last one until its LABEL wraps instead, so
+        // "Poetic" rendered as three stacked letters. Seen on the device, not in a preview.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             tones.forEach { tone ->
                 FilterChip(
                     selected = tone == selected,
@@ -283,6 +292,7 @@ private fun ToneRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LanguageRow(
     selected: WishLanguage,
@@ -291,7 +301,13 @@ private fun LanguageRow(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Language", style = MaterialTheme.typography.labelMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Three chips fit today, and Hindi's label is the longest string in the app that is
+        // not a name. Wrapping here for the same reason as the tones rather than waiting for
+        // a fourth language to find it.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             WishLanguage.entries.forEach { language ->
                 FilterChip(
                     selected = language == selected,
@@ -316,8 +332,24 @@ private fun LanguageRow(
  */
 @Composable
 private fun ProvenanceLine(state: ComposerState) {
+    /**
+     * The templates are ENGLISH ONLY, and a user who picked हिन्दी must be told that.
+     *
+     * Found on the device: selecting Hindi changed the request and left English text on
+     * screen with nothing to explain it. Writing Hindi and Hinglish template sets by hand
+     * is not the fix — shipped copy in a language, written by a session and reviewed by
+     * nobody, is the exact risk TBD-4 exists to guard against, and these strings reach a
+     * real recipient. Saying so is the fix; a model is what produces the other two
+     * languages (FR-WSH-03).
+     */
+    val englishOnly = state.origin == DraftOrigin.TEMPLATE &&
+        state.language != WishLanguage.ENGLISH
+
     val message = when {
         state.drafting -> null
+        englishOnly ->
+            "We can only write ${state.language.label} online. This one is in English, from " +
+                "your phone — tap Try again when you are connected."
         state.problem == DraftProblem.OFFLINE ->
             "No connection — written on your phone. Tap Try again when you're back online."
         state.problem == DraftProblem.RATE_LIMITED ->

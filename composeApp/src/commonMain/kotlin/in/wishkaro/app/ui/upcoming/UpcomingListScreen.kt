@@ -193,7 +193,12 @@ private fun UpcomingRow(
             if (entry.daysUntil in 0..7) {
                 TextButton(
                     onClick = onSendWish,
-                    modifier = Modifier.testTag("upcoming_send_${'$'}{entry.event.id}"),
+                    // Per EVENT, not a shared tag. M4: anything a device sequence has to touch
+                    // must be addressable AS IT IS WRITTEN — and the first version of this
+                    // line escaped the template wrongly, so every row carried the literal
+                    // string "upcoming_send_${entry.event.id}" and none could be resolved.
+                    // Found by dumping the tree on the device, not by any test.
+                    modifier = Modifier.testTag("upcoming_send_" + entry.event.id),
                 ) {
                     Text(if (entry.isSolemn) "Message" else "Send")
                 }

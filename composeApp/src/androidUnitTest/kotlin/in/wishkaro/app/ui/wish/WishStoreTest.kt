@@ -176,6 +176,52 @@ class WishStoreTest {
     }
 
     @Test
+    fun a_death_anniversary_added_on_the_phone_is_solemn_before_any_sync() {
+        // THE BUG THIS TEST EXISTS FOR, found on the device and not by any suite.
+        //
+        // `person.is_deceased` is derived SERVER-SIDE. A person created seconds ago has it
+        // false locally until a pull lands — so a death anniversary added on the phone
+        // opened the CELEBRATORY composer, with Funny and Poetic on offer and the words
+        // "Happy birthday" in the box, for somebody who had died. REQUIREMENTS §11 and
+        // FR-EVT-05 call that the worst failure this product can have.
+        //
+        // This is exactly the local shape: the person flag has not caught up, and the
+        // event's own mirrored sentiment — seeded SOLEMN at insert time — has.
+        val notYetSynced = person(deceased = false, type = EventType.DEATH_ANNIVERSARY)
+            .let { p ->
+                p.copy(events = p.events.map { it.copy(sentiment = Sentiment.SOLEMN) })
+            }
+
+        val store = store()
+        store.open(notYetSynced, eventId = "e1")
+
+        val s = store.state.value
+        assertTrue(s.isSolemn, "a death anniversary must be solemn before the server agrees")
+        assertFalse(WishTone.FUNNY in s.tones)
+        assertEquals(WishTone.RESPECTFUL, s.tone)
+        val banned = listOf("happy", "wish", "celebrat", "congrat")
+        assertTrue(
+            banned.none { it in s.text.lowercase() },
+            "the composer opened on: ${s.text}",
+        )
+    }
+
+    @Test
+    fun a_stale_event_sentiment_cannot_un_solemn_a_deceased_person() {
+        // The other direction, and the reason the two signals are OR-ed rather than one of
+        // them being preferred. A remembrance BIRTHDAY whose event row has not caught up
+        // still belongs to somebody who has died.
+        val store = store()
+        store.open(
+            person(deceased = true).let { p ->
+                p.copy(events = p.events.map { it.copy(sentiment = Sentiment.CELEBRATORY) })
+            },
+            eventId = "e1",
+        )
+        assertTrue(store.state.value.isSolemn)
+    }
+
+    @Test
     fun the_solemn_opening_draft_carries_no_celebratory_word() = runTest {
         val store = store()
         store.open(person(deceased = true), eventId = "e1")
