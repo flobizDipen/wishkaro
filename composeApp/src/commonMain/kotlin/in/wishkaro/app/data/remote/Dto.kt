@@ -272,4 +272,27 @@ data class SyncPushResponse(
 data class ApiErrorBody(@SerialName("error") val error: ApiErrorDetail)
 
 @Serializable
-data class ApiErrorDetail(val code: String, val message: String)
+data class ApiErrorDetail(
+    val code: String,
+    val message: String,
+    /**
+     * The per-issue detail a `VALIDATION_FAILED` carries, which the client used to discard.
+     *
+     * `ZodValidationPipe` returns one entry per failed check, and for a sync push the path
+     * names the exact row: `people.37.displayName`. That is what lets a rejected page be
+     * retried without the one row the server refused, instead of the whole page jamming the
+     * outbox for ever (docs/M3_PLAN.md §1.6).
+     *
+     * Absent on most errors, so it is nullable with a default — the client's `Json` has
+     * `ignoreUnknownKeys`, but an absent key still needs somewhere to land.
+     */
+    val details: List<ApiErrorIssue>? = null,
+)
+
+/** One failed check from the server's validation. `path` is dot-joined, as the server sends it. */
+@Serializable
+data class ApiErrorIssue(
+    val path: String,
+    val message: String,
+    val code: String? = null,
+)
