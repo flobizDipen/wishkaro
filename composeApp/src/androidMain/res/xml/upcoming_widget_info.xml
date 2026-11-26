@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FR-WID-01 and FR-VIEW-10. Three sizes, the largest of which is meant for a tablet home
+    screen rather than a phone's.
+
+    minWidth/minHeight are the smallest the launcher will let the user shrink it to, and
+    match UpcomingWidget.SMALL. targetCellWidth/Height are what it is placed at by default
+    on Android 12+, where launchers think in cells rather than dp.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="140dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:maxResizeWidth="320dp"
+    android:maxResizeHeight="320dp"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:description="@string/widget_description"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:previewLayout="@layout/widget_preview" />

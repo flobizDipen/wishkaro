@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -21,19 +20,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.ui.components.enumSaver
+import `in`.wishkaro.app.ui.components.DateFieldsSaver
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.EventTypePicker
 import `in`.wishkaro.app.ui.components.RelationPicker
 import `in`.wishkaro.app.ui.components.SectionHeader
 import kotlinx.coroutines.launch
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 /**
  * Name, date, relation — the three inputs FR-PPL-01 allows. Everything else is added later
@@ -53,11 +57,16 @@ fun AddPersonScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var name by remember { mutableStateOf("") }
-    var relation by remember { mutableStateOf<String?>(null) }
-    var type by remember { mutableStateOf(EventType.BIRTHDAY) }
-    var label by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(DateFieldsState()) }
+    // rememberSaveable throughout: the Activity is recreated on rotate, fold and resize
+    // now (see AndroidManifest.xml), and losing a half-entered person to turning the phone
+    // sideways is the failure FR-VIEW-07 is about.
+    var name by rememberSaveable { mutableStateOf("") }
+    var relation by rememberSaveable { mutableStateOf<String?>(null) }
+    var type by rememberSaveable(stateSaver = enumSaver<EventType>()) {
+        mutableStateOf(EventType.BIRTHDAY)
+    }
+    var label by rememberSaveable { mutableStateOf("") }
+    var date by rememberSaveable(stateSaver = DateFieldsSaver) { mutableStateOf(DateFieldsState()) }
     val scope = rememberCoroutineScope()
 
     val needsLabel = type == EventType.CUSTOM
@@ -93,7 +102,7 @@ fun AddPersonScreen(
                 onValueChange = { name = it.take(FieldLimits.NAME) },
                 label = { Text("Name") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("add_person_name"),
             )
 
             SectionHeader("What are you remembering?")
@@ -135,7 +144,7 @@ fun AddPersonScreen(
 
     if (duplicates.isNotEmpty()) {
         val first = duplicates.first()
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = onDismissDuplicates,
             title = { Text("Is this the same person?") },
             text = {

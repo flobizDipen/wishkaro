@@ -19,11 +19,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.ui.components.DateFieldsSaver
+import `in`.wishkaro.app.ui.components.enumSaver
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.EventTypePicker
@@ -53,11 +56,13 @@ fun EventEditorScreen(
     }
 
     val existing = eventId?.let { id -> person.events.firstOrNull { it.id == id } }
-    var type by remember(eventId) {
+    var type by rememberSaveable(eventId, stateSaver = enumSaver<EventType>()) {
         mutableStateOf(existing?.type?.takeIf { it != EventType.UNKNOWN } ?: EventType.BIRTHDAY)
     }
-    var label by remember(eventId) { mutableStateOf(existing?.label.orEmpty()) }
-    var date by remember(eventId) { mutableStateOf(DateFieldsState.from(existing?.date)) }
+    var label by rememberSaveable(eventId) { mutableStateOf(existing?.label.orEmpty()) }
+    var date by rememberSaveable(eventId, stateSaver = DateFieldsSaver) {
+        mutableStateOf(DateFieldsState.from(existing?.date))
+    }
 
     val needsLabel = type == EventType.CUSTOM
     val canSave = date.isValid && (!needsLabel || label.isNotBlank())

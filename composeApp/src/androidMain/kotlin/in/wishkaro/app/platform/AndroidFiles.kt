@@ -18,14 +18,27 @@ object FilePickerBridge {
     val pendingOpen = CompletableDeferredHolder<Uri?>()
     val pendingCreate = CompletableDeferredHolder<Uri?>()
 
-    class CompletableDeferredHolder<T> {
-        @Volatile
-        var deferred: CompletableDeferred<T>? = null
+}
 
-        fun complete(value: T) {
-            deferred?.complete(value)
-            deferred = null
-        }
+/**
+ * Where a result waits while the Activity that asked for it is being rebuilt.
+ *
+ * This is the piece `FilePickerBridge` had and the two permission bridges did not, and the
+ * asymmetry cost M4 a locked-shut import flow — see `M4_VERIFY.md` §0.6. A deferred held in
+ * a FIELD ON THE ACTIVITY is orphaned the moment that Activity is destroyed: the system
+ * hands the result to the NEW Activity, whose own field is null, and the coroutine awaiting
+ * the old one waits for ever.
+ *
+ * Global, so there is exactly one place the result can arrive and exactly one place the
+ * caller is waiting. Moved out of FilePickerBridge so all three use it.
+ */
+class CompletableDeferredHolder<T> {
+    @Volatile
+    var deferred: CompletableDeferred<T>? = null
+
+    fun complete(value: T) {
+        deferred?.complete(value)
+        deferred = null
     }
 }
 

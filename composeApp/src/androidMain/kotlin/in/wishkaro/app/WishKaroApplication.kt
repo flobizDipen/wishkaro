@@ -9,13 +9,19 @@ import `in`.wishkaro.app.platform.NotificationChannels
 import org.koin.android.ext.koin.androidContext
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.ReminderScheduler
+import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.push.ReminderUpkeepWorker
+import `in`.wishkaro.app.widget.WidgetUpdates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
+
+private const val WIDGET_DEBOUNCE_MS = 1_500L
 
 class WishKaroApplication : Application() {
     override fun onCreate() {
@@ -36,6 +42,42 @@ class WishKaroApplication : Application() {
 
         logPushTokenInDebugBuilds()
         armReminders()
+        keepTheWidgetCurrent()
+    }
+
+    /**
+     * FR-WID-03 — the widget updates on data change and at least daily at midnight.
+     *
+     * The data-change half is done by watching the SAME flow the list watches, rather than
+     * by calling a refresh from every write site. There are a dozen of those — add, edit,
+     * delete, restore, mute, import, and every sync pull — and a rule that has to be
+     * remembered at a dozen call sites is a rule that gets forgotten at the thirteenth.
+     * `MILESTONE_CHECKLIST.md` §C is full of values that were computed and then dropped for
+     * exactly that reason.
+     *
+     * `drop(1)` skips the emission that arrives just for subscribing, and the debounce
+     * matters at this project's real size: importing 566 people emits once per chunk, and
+     * without it the widget would redraw a dozen times during a sync nobody is watching.
+     */
+    private fun keepTheWidgetCurrent() {
+        WidgetUpdates.schedule(this)
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                // Once at process start, before watching for changes. A widget's
+                // PendingIntents are invalidated when the package is replaced, and if
+                // nothing redraws it afterwards every tap on it silently does nothing —
+                // which is exactly what happened on the home screen after an `install -r`,
+                // and looked like a bug in the actions rather than a stale rendering.
+                // It also means a widget placed while the app was not running catches up
+                // the first time anything starts this process.
+                WidgetUpdates.refresh(this@WishKaroApplication)
+
+                GlobalContext.get().get<LocalStore>().observePeople()
+                    .drop(1)
+                    .debounce(WIDGET_DEBOUNCE_MS)
+                    .collect { WidgetUpdates.refresh(this@WishKaroApplication) }
+            }.onFailure { Log.w("WishKaro", "Widget updates stopped", it) }
+        }
     }
 
     /**

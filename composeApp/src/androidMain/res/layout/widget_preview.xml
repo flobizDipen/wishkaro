@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    What the widget picker shows before the widget is placed.
+
+    Without it the picker draws an empty box with the app icon floating in the middle, which
+    tells the user nothing about what they are adding. Static on purpose: a preview renders
+    without the app running, so it cannot show real birthdays — and should not, since the
+    picker is reachable by anyone holding the phone.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/widget_preview_heading"
+        android:textStyle="bold"
+        android:textSize="15sp"
+        android:textColor="?android:attr/colorAccent" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/widget_preview_name"
+        android:textSize="14sp"
+        android:textColor="?android:attr/textColorPrimary" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/widget_preview_detail"
+        android:textSize="11sp"
+        android:textColor="?android:attr/textColorSecondary" />
+</LinearLayout>

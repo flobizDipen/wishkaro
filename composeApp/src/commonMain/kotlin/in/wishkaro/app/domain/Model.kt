@@ -189,26 +189,19 @@ data class PersonCard(
  * a different feature from the one they asked for.
  */
 fun Person.toCard(timeZone: TimeZone, today: LocalDate): PersonCard {
-    val soonest = events
-        .mapNotNull { event ->
-            val days = BirthdayMath.daysUntilNext(event.date.day, event.date.month, timeZone, today)
-            days?.let { event to it }
-        }
-        .minByOrNull { it.second }
+    // M4: this is now a SELECTION from the shared upcoming query rather than a second copy
+    // of it. It used to do its own next-occurrence, days-until and turning-age arithmetic,
+    // which made it the app's second implementation of "what is coming up" the moment the
+    // list and the widget needed a first. `Upcoming.kt` is the only one now.
+    val soonest = upcomingFor(this, timeZone, today).minByOrNull { it.daysUntil }
         ?: return PersonCard(this, null, null, null, null)
 
-    val (event, days) = soonest
     return PersonCard(
         person = this,
-        nextEvent = event,
-        nextOccurrence = BirthdayMath.nextOccurrence(event.date.day, event.date.month, timeZone, today),
-        daysUntil = days,
-        // A deceased person is never "turning" an age, whatever the arithmetic says.
-        turningAge = if (isDeceased) {
-            null
-        } else {
-            BirthdayMath.turningAge(event.date.day, event.date.month, event.date.year, timeZone, today)
-        },
+        nextEvent = soonest.event,
+        nextOccurrence = soonest.nextOccurrence,
+        daysUntil = soonest.daysUntil,
+        turningAge = soonest.turningAge,
     )
 }
 

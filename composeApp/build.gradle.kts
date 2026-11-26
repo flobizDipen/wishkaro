@@ -61,6 +61,12 @@ kotlin {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions { jvmTarget.set(JvmTarget.JVM_11) }
+
+        // Deliberately NOT instrumentedTestVariant.sourceSetTree = test. That puts
+        // androidInstrumentedTest in the same tree as commonTest, so every JVM unit test
+        // gets dexed too — and this project writes test names in backticks, with spaces,
+        // which D8 refuses below DEX version 040 (minSdk 26). The instrumented suite needs
+        // the PRODUCTION code, not the unit tests, so it stays its own compilation.
     }
 
     // iOS is kept compiling but is not shipped in v1 (D15). The actuals in iosMain are
@@ -98,6 +104,12 @@ kotlin {
 
             implementation(libs.sqldelight.runtime)
             implementation(libs.sqldelight.coroutines)
+
+            implementation(libs.androidx.navigation3.runtime)
+            implementation(libs.androidx.navigation3.ui)
+            implementation(libs.compose.adaptive)
+            implementation(libs.compose.adaptive.layout)
+            implementation(libs.compose.adaptive.navigation)
         }
 
         commonTest.dependencies {
@@ -119,6 +131,33 @@ kotlin {
             }
         }
 
+        // Device-only. FR-VIEW-07's state restoration cannot be proved on the JVM: it needs
+        // an Activity that really is destroyed and rebuilt. Run with
+        // `./gradlew :composeApp:connectedDebugAndroidTest` against an attached device.
+        val androidInstrumentedTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                // The exclusion is the whole reason this suite can be assembled.
+                //
+                // ui-test-junit4 drags androidx.core onto the TEST APK's own resource path,
+                // and the app under test already provides it. AAPT then compiles core's
+                // drawables into the in.wishkaro.app.test package without core's values, and
+                // the link fails on every colour and dimen those drawables reference —
+                // `androidx_core_ripple_material_light` and a dozen more. The test APK has no
+                // business packaging core at all.
+                //
+                // Found by bisecting the instrumented dependency list: a variant with only
+                // test-ext-junit and test-runner assembles, and adding this one artifact back
+                // breaks it.
+                implementation(libs.androidx.compose.ui.test.junit4.get().toString()) {
+                    exclude(group = "androidx.core", module = "core")
+                }
+                implementation(libs.androidx.test.ext.junit)
+                implementation(libs.androidx.test.runner)
+                implementation(libs.androidx.test.espresso.core)
+            }
+        }
+
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
@@ -131,6 +170,8 @@ kotlin {
 
             implementation(libs.androidx.security.crypto)
             implementation(libs.androidx.work.runtime)
+            implementation(libs.androidx.glance.appwidget)
+            implementation(libs.androidx.glance.material3)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.googleid)
@@ -156,6 +197,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -220,4 +262,6 @@ sqldelight {
 
 dependencies {
     debugImplementation(compose.uiTooling)
+    // Supplies the empty Activity createComposeRule() launches into.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

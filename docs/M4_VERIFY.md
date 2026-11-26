@@ -1,0 +1,544 @@
+# M4 Verification — Views and the Widget
+
+> Branch `feat/m4-views-widget`, off `0ee4c67`. Written against what was actually observed,
+> in the shape `M3_VERIFY.md` §9 uses.
+>
+> Device: **Pixel 9a** (`4B201JEBF03493`), Android 17, 1080×2424 @ 420dpi.
+> Account: the live Railway account with the **566 invented people** M3 left behind
+> (`M3_VERIFY.md` §8) — **575 local records, 574 events** after the sign-in described in §0.2.
+> No tablet or foldable hardware exists here; §0.3 says exactly what stood in for it.
+>
+> Where something was not proved, the row says **UNCHECKED** or **PARTIAL** and why. Nothing
+> is rounded up.
+
+---
+
+## 0. Incidents
+
+### 0.1 `connectedAndroidTest` uninstalled the app and wiped the device's data
+
+`./gradlew :composeApp:connectedDebugAndroidTest` **uninstalls the app under test when it
+finishes**. Not `pm clear` — a full uninstall. The local SQLite database went, the session
+tokens in EncryptedSharedPreferences went, and the app came up on the sign-in screen.
+
+Noticed because a screenshot showed "Continue with Google" when it should not have.
+Confirmed twice: `adb shell pm list packages | grep wishkaro` returns nothing immediately
+after a green test run, and `firstInstallTime` equalled `lastUpdateTime` on the next install.
+
+**No records were lost** — they are on the server, and signing in pulled all 575 back. But
+the verification approach this milestone adopted destroys the test account's local state
+every time it runs. `tools/device/instrumented-tests.sh` is the fix: it installs both APKs
+with `-r`, drives `am instrument` directly, and asserts afterwards that the app is still
+installed. The Gradle task stays correct on an emulator.
+
+### 0.2 Signing back in
+
+Done by the owner's instruction, by tapping "Continue with Google" and confirming the
+account already on the device. No password was typed. The notification permission dialog
+follows that flow and was granted, restoring the state the device had before §0.1.
+
+The pull restored **575 people and 574 events**, which is the offline-first architecture
+doing the thing it exists for.
+
+### 0.3 Three measurement mistakes, and what they cost
+
+Recorded because each one produced a confident wrong answer, and two of them sent real work
+down a blind alley. All six are now in `MILESTONE_CHECKLIST.md`.
+
+1. **`am force-stop` blocks a package's PendingIntents.** Every widget tap was tested after
+   a force-stop, so working actions appeared completely dead. The widget's click handling was
+   rewritten four times — root versus child element, reified versus Intent action, implicit
+   versus explicit component — to fix something that was never broken. **This was the single
+   largest waste of effort in the milestone.**
+2. **`dumpsys window | grep -oE "pkgA|pkgB"`** returns whichever string appears first
+   anywhere in the dump, not the focused window. It reported the launcher while the app was
+   plainly in the foreground.
+3. **Swiping to scroll while a text field has focus** gesture-types into it. A scroll turned
+   a person's name into `Anika Pillai 25-WIDGETTEST hu by by`. Cancelled without saving;
+   the database was checked afterwards — 575 people, name back to `Anika Pillai 25`, zero
+   rows matching `WIDGETTEST`.
+
+### 0.4 A date was deleted and re-entered by hand
+
+`tools/device/ui.sh tap "text:Remove"` resolved to **exactly one** node, so the script was
+satisfied — and it was the *event's* Remove, not the person's. It deleted Aadhya Bhatt 9's
+birthday. The person-level control reads "Remove Aadhya Bhatt 9"; the selector was mine and
+it was wrong.
+
+Re-entered from a screenshot taken minutes earlier that happened to show the values: Birthday
+2 Jan 1974. The record reads "Birthday 2 Jan · 1974, in 37 days" again, matching the earlier
+screenshot exactly. The original event remains as a tombstone; a new event id now holds the
+date.
+
+**`tap` prints the node it resolved.** It had been piped to `/dev/null`. A unique match is
+not the same as the right match.
+
+### 0.6 The manifest change broke the contacts import, exactly where the plan said it would
+
+`M4_PLAN.md` §2.5 named this risk before the manifest changed: dropping `configChanges`
+means rotation rebuilds the Activity every time, and the `CompletableDeferred` bridges in
+`MainActivity` are the shape that produced M3's seventh finding. The commitment was that the
+picker and the two permission flows under rotation would be the first thing verified, with a
+test rather than a hope. **That verification was not done before the PR was opened.** It was
+done afterwards, when the parent session held me to it, and it found a live bug.
+
+**The file picker survived.** Open "Choose a file", rotate while the system picker is up,
+pick `corrected.csv` — and the app advances to the column mapping, "6 rows". The deferred
+created before the rotation was completed by the rebuilt Activity and the awaiting coroutine
+resumed. End to end.
+
+**The contacts permission did not.** Revoke `READ_CONTACTS`, start the contacts import,
+rotate while the system permission dialog is up, then grant:
+
+- the permission is granted (`granted=true` in `dumpsys package`);
+- the app sits on the "Read your contacts?" rationale screen;
+- **tapping Continue again does nothing.** The flow is locked shut, force-stop the only cure.
+
+That is M3's seventh finding, in a new place, made reachable by turning the phone sideways.
+
+**The cause is an asymmetry between three bridges that look alike.** `FilePickerBridge`
+parks its pending result in a GLOBAL holder, which is why the picker survived. Both
+permission bridges held theirs in a **private field on `MainActivity`** — so the rebuilt
+Activity's launcher completed its own null field, and the coroutine awaiting the old
+Activity's deferred waited for ever.
+
+**Fixed** by giving the permission bridges the same global holder the picker already had,
+and moving `CompletableDeferredHolder` out of `FilePickerBridge` so all three share one.
+
+**There is no automated regression test for it, and an earlier draft of this document
+implied there was.** Two instrumented tests were added and labelled as covering it; reverting
+the fix left them green, because they park a deferred in the global holder themselves and
+never go through the requester `MainActivity` installs — which is the wiring that broke.
+They pin the holder's contract and are kept for that. Catching the real bug needs the system
+permission dialog driven under rotation, which is the manual procedure below and is not
+something the instrumented suite can do here.
+Verified by repeating the exact sequence: after the fix, granting the permission after a
+rotation goes straight to "Choose who comes in · 2 of 515 selected".
+
+This is the whole argument for §2.5 in one incident: with the old `configChanges` the bug
+was there and unreachable, and FR-VIEW-07 would have been written up as passing.
+
+### 0.7 Code review found four real bugs in this PR, and two of them were mine twice
+
+A high-effort review of the branch at `e37030d` found nine issues. Four mattered, and two of
+those were lessons already written down in this very document landing one layer away from
+where I had looked.
+
+**The deep link replayed again.** §6 records "a deep link replayed on every Activity
+recreation" as an M2 bug, fixed by consuming the Intent. It was not fixed. The Intent half
+was; the other half — `_focusedPersonId`, a persistent value on an Application-scoped
+singleton, read on every composition by `start()` — replayed just the same. Tap a reminder,
+back out, switch to Calendar, rotate, and the back stack is reset into that person's detail
+screen again. I had written the comment explaining exactly why a persistent value cannot
+carry a one-shot navigation, and then left one carrying it. The navigation now rides on its
+own field that is cleared the instant it is used, and `onCreate` only reads a deep link when
+`savedInstanceState == null`, which closes the process-death variant too.
+
+**The timeline dropped half of the current month.** §2.2 records the calendar bug — matching
+on next occurrence made November look half empty — and the fix. The timeline, written in the
+same milestone, still matched on next occurrence, and worse: it looked those keys up in a
+twelve-month window that cannot contain them, so the entries did not move, they *vanished*.
+Opened on the 26th, November showed only people born on the 26th or later. §2.3 said this
+view was fine because the months and the counts looked right; a list that silently lists
+fewer things has no way of looking wrong.
+
+The reason both got through is the same: the bucketing lived inline in the composable, so
+there was no seam and no test. It is in `domain/` now beside `eventsByDay`, with
+`TimelineMonthsTest` — 13 tests including the 26th, a December→January roll, and a property
+check over every day of a leap year. Reverting the fix turns 4 of them red.
+
+**The fix is not the calendar's fix.** The reviewer suggested matching on the event's own
+month, as `eventsByDay` does. That would be wrong here. The calendar is a view of a month;
+the timeline is the reminder queue with month headings, ordered by countdown — so the right
+window is **thirteen** slots, this month through the same month next year, which is exactly
+the span an annual occurrence can land in. Same symptom, same root, different right answer.
+
+**Two more.** Restoring onto the import report after process death drew literally nothing —
+no content, no bars — because the stack is saved state now and the report is not; it resets
+to People with a line saying so. And `start()` had quietly become once-per-rotation, so five
+rotations meant five full syncs and five whole-plan alarm re-arms on the user's data
+connection; it is once-per-process again, which is what it was before the manifest changed.
+
+**What I nearly shipped while fixing it.** The import entry's `onDone` cleared the result
+before navigating, which under the new "the report is gone" branch would have shown that
+message to somebody who had just pressed Done and read the report. Caught on the device, not
+in review.
+
+**And one the review did not find.** Exercising the side sheet turned up a crash:
+`AdaptiveDialog` wrapped its text slot in a `verticalScroll`, and two of its three call sites
+pass a scrolling `Column` — nested scroll, infinite constraints, `IllegalStateException`. Any
+scrolling dialog at expanded width killed the app. It was there before this review and is
+fixed here (§5.2).
+
+---
+
+### 0.5 The disk ran out mid-milestone
+
+244 MB free of 460 GB when M4 started — a sixth of the 1.4 GB M1 called a cliff. The
+compiler failed with `No space left on device` partway through the navigation migration.
+Cleared with the owner's explicit approval (`brew cleanup`, Chrome and Arc caches); nothing
+of the owner's own was deleted.
+
+---
+
+## 1. The honest summary
+
+| # | Definition of done | State |
+|---|---|---|
+| 1 | All four views work on a real phone against the 566-person account, and the list is usable at that size — scrolling, searching, filtering without visible jank | **Pass.** All four looked at on the device against 575 records (§2). Jank measured with `gfxinfo` over six hard flings: **4.35% janky frames, p50 9ms, p99 42ms, 0 missed vsyncs** — after the fix in §2.1. Search narrowed 575 to one |
+| 2 | Every view's empty state leads somewhere | **PARTIAL.** The calendar's two empty states were seen on the device ("Tap a day with a dot…", and the per-day "Nothing on this day"). The Upcoming, People and Timeline empty states were **not** seen, because the only account available has 575 people in it and emptying it is not a tidy-up (§4.2). Separately: the Upcoming list and the person detail used to show their *not-found* states for the first frame of a cold start, because "not read yet" and "there is nothing" were the same empty list — fixed, §0.7 |
+| 3 | Two-pane list-detail on a tablet or large foldable, with the rail, and dialogs as side sheets | **Pass, on a phone-shaped window.** Verified at 923dp (the Pixel 9a is genuinely expanded in landscape) and again at **1484×928dp** by resizing the running app to tablet geometry with `wm size`. **Not on tablet hardware**: the tablet emulator has no Google account and reaches only the sign-in screen (§4.1) |
+| 4 | Fold, unfold, rotate, and split-screen on a real device: no restart, no lost state, including mid-edit state in a form | **PARTIAL.** Rotation and process death: **pass**, including a half-typed form (§3.1), and the file picker and contacts permission flows now both survive a rotation mid-flight — the second of those was broken and is fixed (§0.6). Review then found two more things rotation re-ran that should not have — a deep link, and a full sync plus a whole-plan alarm re-arm, both fixed and both re-verified on the device (§0.7, §3.3). Fold/unfold: the app survives it on an emulated Pixel Fold with 0 fatal exceptions and the window crossing 411dp↔841dp, but **with no session there is no state to lose**, so the "no lost state" half is unproven on a fold. Split-screen: the app launches and runs in `mWindowingMode=multi`, but a genuine side-by-side resize against a second app was **not driven** |
+| 5 | State restoration has automated tests, not only a device walkthrough | **Pass.** 13 instrumented tests — `StateRestorationTester` for saved state, `ActivityScenario.recreate()` for a real onDestroy/onCreate, and three for the hinge arithmetic. Confirmed by reverting: making the selected tab a plain `remember` turns two red; deleting the hinge gap turns three red. **They do not run in CI**, and the suite could not be assembled at all for part of this milestone — a real build defect, now fixed (§5.1) |
+| 6 | The widget in all three sizes on a real home screen, showing real data | **PARTIAL.** On the owner's actual home screen with the real account throughout. **Two of the four declared sizes were observed** — the 4×2 default and the taller bucket, which shows three entries where the default shows two. The 2×2 and the tablet-sized bucket were **not placed**. The "+N more" count was also wrong — the query was capped at 8 rows, so it counted the truncation rather than the remainder; it now reads "+8 more" against the 11 events the list shows in the same window (§0.7) |
+| 7 | Tapping a widget entry opens that person; tapping the header opens the app | **Pass.** An entry opened Aadhya Menon 10, and a second opened Anika Pillai 25; the header brought the app forward from the launcher. Both go down M2's `wishkaro://` route |
+| 8 | The widget updates after a data change, and after midnight | **PARTIAL.** Data change: **pass** — toggling a reminder produces `androidx.glance.session.SessionWorker` and `AppWidgetServiceImpl: Trying to notify widget update for package in.wishkaro.app`. Midnight: **scheduled, not observed.** `#MidnightWidgetWorker#` is in the system scheduler with `Run time: earliest=+7h32m` from 16:27 local — 23:59:51. It cannot fire before this is reviewed |
+| 9 | Unit tests for the grouping boundaries, the calendar's month grid, and the navigation state | **Pass.** 19 on the grouping (every boundary, a month end, a year end, 29 February both ways), 12 on the month grid, 10 on the navigator plus a registration test that asks the sealed hierarchy what it contains. 13 more on the timeline's month bucketing, added after review found it dropping entries (§0.7). **309 tests** pass in `TZ=UTC` and `TZ=Pacific/Chatham` |
+| 10 | CI green, and this document | CI state is on the PR; this document exists |
+
+**Six of ten pass outright. Four are partial, and the reason in every case is hardware or a
+clock rather than a defect** — no tablet, no foldable with a session, no second app driven
+into split-screen, and a midnight that has not arrived.
+
+---
+
+## 2. The four views, on the device
+
+### 2.1 FR-VIEW-01, the list — and the bug only 574 events could show
+
+Grouped Today / This week / This month / Later, with countdowns. On the device: **Today (2)**
+— Aadhya Menon 10 and Anika Pillai 25, both "Birthday · 26 Nov" — and **This week (9)**
+beginning with three "Tomorrow" entries.
+
+The groups are **rolling windows** (0, 1–7, 8–30, 31+), not calendar ones. Read as calendar
+months, a birthday four days away falls under "Later" whenever those four days cross a month
+boundary, so on 28 December every birthday in the first week of January would sit at the
+bottom under a heading meaning "not urgent". `UpcomingTest` pins that across a month end and
+a year end.
+
+**The bug:** `collectAsState` collects on the composition's context, so the next-occurrence
+arithmetic for all 574 events and the sort over them ran **on the main thread**, on every
+emission, while the user was scrolling. One `flowOn(Dispatchers.Default)`:
+
+| | before | after |
+|---|---|---|
+| Janky frames | 10.00% | 4.35% |
+| 50th / 99th percentile | 11ms / 77ms | 9ms / 42ms |
+| Missed vsyncs | 2 | 0 |
+
+Invisible with twenty people. This is what the prompt meant by using the 566.
+
+### 2.2 FR-VIEW-02, the calendar — and the bug only a real month could show
+
+A month grid with a dot on every day that holds something, larger for more than one; today
+circled, the selected day filled. Tapping 27 Nov listed Arjun Bose 7, Diya Desai 3 and
+Shaurya Trivedi 1.
+
+The first version matched events on their **next occurrence**, so somebody born on the 10th
+vanished from a calendar opened on the 26th — their next birthday is in the same month a
+year away, and the calendar only reaches eleven months forward. **Twenty-five of November's
+thirty days were blank.** It matches on the event's own month now and places it through
+`BirthdayMath.occursOnIn`, so 29 February still lands on the 28th in a non-leap year. Three
+tests, all red when reverted.
+
+Week starts **Sunday**, as a constant rather than a guess at the system locale — this is an
+India-first app and a grid that reshuffles itself when the user travels is worse than one
+that is consistently the local convention.
+
+### 2.3 FR-VIEW-03, the timeline — and the entries that were not there to be counted
+
+**What this section said before review was wrong, and wrong in the way that is hardest to
+see.** "November 2026 (7), December (41)" was read off the device and the view did show
+that. What it did not show was everybody whose November birthday had already gone by, and on
+the 26th that is most of November. They were not misplaced; they were absent. The bucketing
+looked each entry up by its next occurrence — November 2027 for anyone already past — in a
+window of twelve months that stops at October 2027, so the lookup missed and the entry was
+dropped on the floor. On the last day of a month nearly the whole month disappears.
+
+A view whose job is to list things cannot look wrong by listing fewer of them. That is the
+whole lesson: I verified this screen by reading it, and reading it is exactly the check this
+bug survives. See §0.7 for why the calendar's version of the same bug was caught and this
+one was not, and why the fix is different.
+
+**Now**, on the device, scrolled end to end: **thirteen** headings, November 2026 through
+November 2027. The last one carries 19, 20 and 21 November at "in 358 / 359 / 360 days" —
+the people who were missing — and the countdown rises monotonically from the first row to
+the last, which it could not do under either the old behaviour or the calendar's fix.
+Empty months are still shown; the thirteenth is dropped when nothing falls in it, so a
+timeline opened on the 1st is a plain twelve.
+
+### 2.4 FR-VIEW-04, the People directory
+
+**Alphabetical now**, not sorted by imminence: a directory ordered by whose birthday is
+soonest cannot be scanned for a name. On the device: Aadhya Bhatt 9, Aadhya Bose 23, Aadhya
+Chauhan 10, Aadhya Chauhan 16, Aadhya Chauhan 5, Aadhya Desai 31 — each with a **25%**
+completeness badge, which is the server's score mirrored and shown only below 80%.
+
+---
+
+## 3. Rotation, resize and recreation
+
+### 3.1 What the manifest was hiding
+
+The Activity declared `configChanges` for orientation, screenSize, screenLayout,
+smallestScreenSize, uiMode and density. Every one of those means *do not recreate me*. So
+FR-VIEW-07's "survives rotation without losing state" would have come out **true because
+nothing was ever lost**, while a process death still lost everything.
+
+They are gone except `keyboardHidden`. That immediately found what it was meant to find:
+**not one form in this app used `rememberSaveable`** — Add Person, Edit Person, the event
+editor, the trait drafts, the import date dialog, the bulk-relation dialog. All invisible
+while the Activity was never rebuilt.
+
+Proved on the device, in this order:
+
+1. Typed "Rotation Test Person" into Add Person.
+2. Rotated to landscape — text survived, window id changed (`b24394b` → `d53ae6a`), so the
+   Activity really was rebuilt.
+3. HOME, then `adb shell am kill in.wishkaro.app` — **pid 26456 gone**.
+4. Relaunched — **pid 27137** — and the app came back **on Add Person with the text still in
+   the field**.
+
+The old arrangement could not have done step 4 at all.
+
+### 3.2 Tablet geometry, live
+
+`wm size 2560x1600` + `wm density 276` on the **running** app: 1484×928dp, rail on the left,
+People list and detail side by side, no restart, the open person still open. Reset
+afterwards (`wm size reset`, `wm density reset`, confirmed back to 1080×2424 @ 420).
+
+### 3.3 What else rotation was re-running
+
+Dropping `configChanges` made `LaunchedEffect(Unit) { store.start() }` run on every rotation,
+fold and resize, and `start()` was written for a world where it ran once. Review found both
+halves (§0.7). After the fix, measured on the device rather than argued:
+
+**The sync and the alarms.** `AlarmManager` records for `in.wishkaro.app` were fingerprinted
+from `dumpsys alarm` before and after five rotations:
+
+```
+before 5 rotations: 7d2a25d83b635d5a5b86b26dbe0588cd
+after  5 rotations: 7d2a25d83b635d5a5b86b26dbe0588cd   → untouched
+```
+
+A hash that does not move proves nothing on its own, so the probe was checked against a case
+where the work genuinely does run — a force-stop and relaunch, where `start()` fires for
+real:
+
+```
+before relaunch: 7d2a25d83b635d5a5b86b26dbe0588cd
+after  relaunch: dccc423ae0ff510e7e4dc22ea2313817   → moved
+```
+
+The probe is sensitive and rotation no longer trips it. §0.3 is a list of three measurements
+that were read without a control; this one has one.
+
+**The deep link.** Cold-started on `wishkaro://person/<id>`, backed out, switched to the
+Calendar tab, rotated: still on the Calendar, November 2026. Before the fix this reset the
+stack and reopened the person.
+
+**Process death on the import report.** Backgrounded, `am kill` (confirmed no pid), reopened:
+lands on People with the snackbar *"Your import is saved. The report is no longer
+available."* Pressing **Done** on a live report lands on People with **no** message, which is
+the half I nearly broke while fixing the other (§0.7).
+
+Driven with `tools/device/ui.sh` throughout, including the system file picker — guarded on
+`com.google.android.documentsui` through `WK_ACT` rather than tapped blind. The import used a
+three-row CSV of invented people with deliberately unreadable dates, so the report had
+something to show and nothing was added: **575 people before and after**, confirmed against
+the database. The file was deleted from the device afterwards.
+
+---
+
+## 4. What could not be proved, and why
+
+### 4.1 No tablet, and a foldable with no session
+
+No tablet or foldable hardware exists here. `avdmanager` does not work on this machine — the
+legacy one needs JAXB, which Java 11 removed, and under Java 8 it fails with a bare `null` —
+so both AVDs were written by hand from the existing phone AVD's `config.ini`.
+
+The **tablet** AVD boots. It has no Google account, so the app reaches only the sign-in
+screen, and signing in there is not something to do on the owner's behalf. Item 3 was proved
+by resizing the real device instead (§3.2), and this row says so rather than implying tablet
+hardware.
+
+The **foldable** AVD works as a foldable: the emulator accepts the hinge configuration
+("Configuring second built-in display with width 1080 and height 2092 for pixel_fold
+device") and reports CLOSED, HALF_OPENED, OPENED and REAR_DISPLAY_MODE. Folding and
+unfolding with the app installed takes the window between **411dp and 841dp** — across the
+breakpoint that swaps the bottom bar for the rail — with **0 fatal exceptions**. But with no
+session there is nothing on screen except sign-in, so *"no lost state across a fold"* is
+**unproven**.
+
+The hinge *arithmetic* is proven instead, by three instrumented tests: given a hinge at a
+known place the list pane ends at it, the detail pane starts past it, and nothing is laid out
+across the crease. **The hinge and a real two-pane screen have never been seen in one
+picture.**
+
+### 4.2 Empty states
+
+Three of the four views' empty states were not seen on the device, because the only account
+available has 575 people in it. Emptying it would be a deliberate act (`M3_VERIFY.md` §8),
+not a tidy-up, and it is the only honest test of item 1.
+
+### 4.3 Still carried forward, now for a third and fourth milestone
+
+- **The OEM battery helper has never run on a non-Pixel device.** Unchecked across M2, M3 and
+  now M4. The only phone here is a Pixel.
+- **The mobile-data leg of the Railway deploy is still unproven.** The SIM problem in
+  `M2_PLAN.md` §0.2 is unchanged and was not retried.
+- **The name-token table still never runs against Kotlin/Native.** CI compiles the iOS target
+  and runs no tests on it. M4 did not change this.
+- **The dedup rule's precision at scale** (`M3_VERIFY.md` §6.2) is still open. Raised in
+  `M4_PLAN.md` §1.3 as a product decision; not M4 work and not taken.
+
+---
+
+## 5. Tests
+
+| Suite | Count | Where it runs |
+|---|---|---|
+| Unit (`commonTest` + `androidUnitTest`) | **309** | CI and locally, in `TZ=UTC` and `TZ=Pacific/Chatham` |
+| Instrumented (`androidInstrumentedTest`) | **13** | **Device only.** CI has no emulator and never assembles this APK (§5.1) |
+
+New in M4: 19 grouping-boundary tests, 12 month-grid tests, 10 navigator tests, a serializer
+registration test that enumerates the sealed hierarchy, 6 repository tests against a real
+in-memory SQLite, 6 state-restoration tests and 3 hinge tests. Added after review: 13 on the
+timeline's month bucketing (§0.7), 4 of which turn red if the fix is reverted.
+
+**What has no automated guard.** The `start()` re-entry fixes — the deep link and the
+once-per-process sync — have device evidence (§3.3) and no test. `AppStore` takes nine
+collaborators and seven of them are concrete classes reaching a real database, a real HTTP
+client and real secure storage, so there is no seam to drive it from; a fake harness here
+would pin my own fakes rather than the wiring that broke, which is the mistake §0.6 records
+me making with the permission-bridge tests. Saying so is better than a green test that
+proves nothing. A testable seam for `AppStore` is a real follow-up, not a thing to bolt on
+at the end of a review round.
+
+**CI does not cover item 5.** The instrumented suite is a local gate, run with
+`tools/device/instrumented-tests.sh`. Saying "CI green" and leaving it there would imply
+otherwise.
+
+### 5.1 The instrumented suite could not be assembled — found, and fixed
+
+For part of this milestone `./gradlew :composeApp:assembleDebugAndroidTest` failed at
+`processDebugAndroidTestResources`:
+
+```
+ERROR: .../transformed/core-1.16.0/res/drawable-v21/notification_action_background.xml:19:
+AAPT: error: resource color/androidx_core_ripple_material_light
+(aka in.wishkaro.app.test:color/androidx_core_ripple_material_light) not found.
+```
+
+**This document first blamed an external process clearing `~/.gradle/caches` mid-session.
+That attribution was wrong**, and the correction mattered more than the bug: it reproduced
+from a fully repopulated cache, on a clean build directory, with the inputs verified intact.
+A verify document that blames the environment for a defect the project has is the same
+failure as `REQUIREMENTS.md` §11 once claiming "Nothing in M3".
+
+**The cause.** `androidx.compose.ui:ui-test-junit4` drags `androidx.core` onto the **test
+APK's own** resource path, and the app under test already provides it. AAPT then compiles
+`core`'s drawables into the `in.wishkaro.app.test` package without `core`'s values, and the
+link fails on every colour and dimen those drawables reference. The test APK has no business
+packaging `core` at all.
+
+**Found by bisecting the instrumented dependency list.** A variant with only
+`test-ext-junit` and `test-runner` assembles; adding `ui-test-junit4` back breaks it. Ruled
+out along the way, each by building with it removed: the widget preview layout, Glance in its
+entirety, `android.nonTransitiveRClass`, `espresso-core`, and the newest test file — and a
+corrupt cache entry by inspection.
+
+**Fixed** by excluding `androidx.core:core` from that one test dependency. The suite now
+assembles and **13 instrumented tests pass on the device**, including the two that had never
+been run.
+
+Two things worth carrying forward. **CI never assembles the androidTest APK** — the android
+job builds the app and runs unit tests — so this was invisible to it and a future break will
+be too. And the greps used in several build commands here matched only `^e:` while AAPT
+prints `ERROR:`, so failures were silent while `instrumented-tests.sh`, which installs rather
+than assembles, reused a stale APK. That is a third measurement mistake of the same family as
+the two in §0.3.
+
+### 5.2 A crash the review did not find, and reading could not
+
+Nit 5 of the review said `AdaptiveDialog`'s side sheet could not be dismissed by tapping
+outside it, and that the comment above it claimed the opposite. Both true. Going to the
+device to check the fix opened a different hole: **tapping "Set one for those rows" in the
+import flow at tablet width killed the app.**
+
+```
+java.lang.IllegalStateException: Vertically scrollable component was measured with an
+infinity maximum height constraints
+```
+
+`AdaptiveDialog` wrapped its text slot in a `verticalScroll` of its own. Two of its three
+call sites pass a `Column(Modifier.verticalScroll(...))` as that text. Nested scroll,
+infinite constraints, hard crash — so *any* scrolling dialog at expanded width took the app
+down. It has been on the branch since the side sheet was written; nobody hit it because
+nobody had opened a scrolling dialog at that width, and `ListDetailPaneScaffold` was what
+§3.2 exercised.
+
+The slot is now bounded but not scrolled, which is also what the compact branch does — it
+hands `text` straight to `AlertDialog` and lets the caller scroll. The two branches being
+genuinely interchangeable is the only thing `AdaptiveDialog` promises.
+
+On the device at 1484×928dp afterwards: the sheet opens pinned to the trailing edge, a tap
+on the empty left half dismisses it and returns to the mapping screen, and a tap on the
+sheet itself does not. The dismissal is handled by an explicit scrim rather than by the
+platform, because with `usePlatformDefaultWidth = false` the dialog's decor view is the whole
+window and the platform's "is this outside?" test can never be true.
+
+Found by exercising a nit. The three findings in §0.3 are all measurements taken without a
+control; this is the cheerier version of the same lesson — the check that looked like a
+formality is the one that paid.
+
+---
+
+## 6. Bugs found in earlier milestones' code
+
+§F of the checklist asks for these to be recorded rather than quietly fixed.
+
+| Found | Since | What it was |
+|---|---|---|
+| A dead band of empty purple above every title | **M0** | `App.kt`'s Scaffold and each screen's own Scaffold both inset for the status bar, so it was counted twice. It is in every device screenshot in M1, M2 and M3 and was never named |
+| No form used `rememberSaveable` | **M1** | Invisible while `configChanges` stopped the Activity being rebuilt; loses the user's typing the moment it is |
+| A deep link replayed on every Activity recreation | **M2** | The Intent is a persistent value the Activity hands to each `onCreate`. Rotating after tapping a reminder threw the user back to that person. **This row was premature when first written:** clearing the Intent fixed one of the two persistent values carrying it, and `AppStore._focusedPersonId` carried it just the same until review found it (§0.7) |
+| A deep link into a cold process was dropped entirely | **M2** | `onCreate` handles the intent before the composition restores the session, so `focusPerson` saw `AuthState.Unknown` and did nothing. Tapping a reminder with the app not running landed on the list |
+| `AdaptiveDialog` crashed on any scrolling dialog at expanded width | **M4** | Nested `verticalScroll`, infinite constraints. Pre-dates this review; found while checking one of its nits (§5.2) |
+| `MainActivity.onDestroy` released the permission and file-picker bridges unguarded | **M3** | `ActivityHolder` was guarded and the other four were not. Without the guard a new Activity installs its launchers and the outgoing one nulls them — M3's seventh finding, word for word |
+
+---
+
+## 7. Decisions this milestone took
+
+Full reasoning in `docs/M4_PLAN.md`; what actually shipped:
+
+- **Navigation 3**, not the hand-rolled navigator. The fallback in `M4_PLAN.md` §2.6 was not
+  needed — the decision point at the end of commit 2 passed.
+- **Material 3 Adaptive 1.2.0 plus our own `Scene`**, because `adaptive-navigation3` first
+  appears in the 1.3.0 line and needs AGP 9.1 and compileSdk 37, which M0 ruled out. Raised
+  in `M4_PLAN.md` §2.4a as a conflict with FR-VIEW-06's wording rather than resolved quietly.
+- **One implementation of "what is coming up"**, which meant rewriting `Person.toCard` onto
+  it rather than adding a second one beside it.
+- **Rolling group windows**, for the reason in §2.1.
+- **Dropping `configChanges`**, for the reason in §3.1.
+- Two deep-link entry points through one route, so the widget joins M2's path.
+- **Thirteen month slots in the timeline, not twelve**, and deliberately not the calendar's
+  own fix. A month grid is a view of a month; the timeline is the reminder queue with month
+  headings, so it buckets on the occurrence and needs the window to be closed at both ends
+  (§0.7, §2.3).
+- **The import report is not made to survive process death.** It is the story of one action
+  in one process; persisting it would mean versioning it and deciding when it stops being
+  true. The import itself is already saved, so the restore lands on People and says so
+  (§0.7).
+- **`start()` is once per process**, which is what it was before the manifest changed. A
+  process alive for days therefore does not re-sync on its own; that was true before M4 too,
+  the upkeep worker covers the reminder half, and widening it is a product decision rather
+  than a bug fix (§3.3).
+
+## 8. Test data
+
+Unchanged: **575 people, 574 events**, all invented except the two real contacts M3 imported
+deliberately. One event id was replaced (§0.4). Nothing was added, and nothing was deleted
+that was not put back.

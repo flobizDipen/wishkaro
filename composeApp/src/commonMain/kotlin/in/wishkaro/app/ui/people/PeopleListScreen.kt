@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import `in`.wishkaro.app.data.local.BlockedRow
-import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -36,16 +35,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
+import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.toneFor
 import `in`.wishkaro.app.ui.PeopleFilter
+import `in`.wishkaro.app.ui.components.WishKaroTopBar
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
 private val MONTHS = listOf(
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -76,16 +80,31 @@ fun PeopleListScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("People") },
-                actions = {
-                    TextButton(onClick = onRefresh, enabled = !busy) { Text("Sync") }
-                    TextButton(onClick = onSignOut) { Text("Sign out") }
-                },
+            // Shared with every other top-level view, so Import, Settings, Recently removed
+            // and Sign out are one tap from all four rather than from this one.
+            WishKaroTopBar(
+                title = "People",
+                busy = busy,
+                onRefresh = onRefresh,
+                onOpenSettings = onOpenSettings,
+                onOpenImport = onOpenImport,
+                onOpenDeleted = onOpenDeleted,
+                onSignOut = onSignOut,
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = onAddPerson, text = { Text("Add person") }, icon = {})
+            // testTag, here and below, is not decoration. Compose exposes a clickable node
+            // to uiautomator with NO text and NO content-description — the label sits in a
+            // separate child node — so this button is literally unaddressable from the view
+            // tree without one, and MainActivity's testTagsAsResourceId turns the tag into a
+            // resource-id that tools/device/ui.sh can resolve and tap. Three blind taps
+            // across M2 and M3 went into the wrong app; this is what replaces them.
+            ExtendedFloatingActionButton(
+                onClick = onAddPerson,
+                text = { Text("Add person") },
+                icon = {},
+                modifier = Modifier.testTag("add_person_fab"),
+            )
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -95,7 +114,8 @@ fun PeopleListScreen(
                 onValueChange = onQueryChange,
                 label = { Text("Search by name") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    .testTag("people_search"),
             )
 
             Row(
@@ -129,31 +149,21 @@ fun PeopleListScreen(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (filter.isActive) {
-                    TextButton(onClick = onClearFilter) { Text("Clear filters") }
-                } else {
-                    // The self-test moved to Settings in M2, where it belongs — it now
-                    // reports whether the reminder actually arrived rather than firing and
-                    // forgetting, and it sits next to the battery helper that fixes the case
-                    // where it does not (FR-REM-06, FR-REM-07).
-                    TextButton(onClick = onOpenSettings, enabled = !busy) {
-                        Text("Settings")
-                    }
+            // Clear filters stays on the screen that has the filters. Settings, Import
+            // and Recently removed moved to the shared top bar above — they belong to the
+            // app, not to this list, and M4 gives the app three more top-level views that
+            // would otherwise never show them.
+            if (filter.isActive) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = onClearFilter,
+                        modifier = Modifier.testTag("clear_filters"),
+                    ) { Text("Clear filters") }
                 }
-                // Import has to be reachable from a list that is NOT empty.
-                //
-                // FR-VIEW-05 puts it on the empty state and FR-AUTH-05 offers it at first
-                // run, and both are built — but between them they only ever reach somebody
-                // with nobody. A user who added three people by hand last week and now
-                // wants the other three hundred off their phone had no route at all, which
-                // makes import a feature you can use once, by accident, on your first day.
-                TextButton(onClick = onOpenImport) { Text("Import") }
-                TextButton(onClick = onOpenDeleted) { Text("Recently removed") }
             }
 
             // Records the server refused and this device has set aside. Shown here, above
@@ -266,10 +276,40 @@ private fun PersonRow(card: PersonCard, highlighted: Boolean, onClick: () -> Uni
                     // means the local mirror is mid-sync. Show the quiet label, not the loud one.
                     Text("quiet", style = MaterialTheme.typography.labelSmall)
                 }
+                CompletenessIndicator(person)
             }
         }
     }
 }
+
+/**
+ * FR-VIEW-04's completeness indicator.
+ *
+ * The score is the SERVER'S and is only mirrored here — the client never computes it, which
+ * is an engineering rule from M0 and the reason `COMPLETENESS_WEIGHTS` lives in one place.
+ * What is decided locally is only whether to draw anything: a full profile gets no badge,
+ * because a row of green ticks down a directory of three hundred people is decoration, and
+ * the point of the indicator is to show which records are thin.
+ */
+@Composable
+private fun CompletenessIndicator(person: Person) {
+    if (person.completenessScore >= COMPLETE_ENOUGH) return
+
+    Text(
+        "${person.completenessScore}%",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("completeness_${person.id}"),
+    )
+}
+
+/**
+ * Above this, a record is not worth nagging about.
+ *
+ * A threshold rather than a weighting: the weighting is the server's and duplicating it here
+ * is exactly what BUILD_PROMPT_M1 ruled out. This only decides whether the badge is drawn.
+ */
+private const val COMPLETE_ENOUGH = 80
 
 @Composable
 private fun EmptyState(
@@ -325,7 +365,7 @@ private fun EmptyState(
  */
 @Composable
 private fun BlockedBanner(blocked: List<BlockedRow>) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -351,7 +391,7 @@ private fun BlockedBanner(blocked: List<BlockedRow>) {
     }
 
     if (open) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { open = false },
             title = { Text("Not saved to the server") },
             text = {

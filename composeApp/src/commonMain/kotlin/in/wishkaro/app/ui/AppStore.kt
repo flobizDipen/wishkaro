@@ -1,19 +1,19 @@
 package `in`.wishkaro.app.ui
 
+import `in`.wishkaro.app.data.local.BlockedRow
+import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.repository.AuthRepository
 import `in`.wishkaro.app.data.repository.AuthState
 import `in`.wishkaro.app.data.repository.PeopleRepository
+import `in`.wishkaro.app.data.repository.ReminderPlanRepository
 import `in`.wishkaro.app.data.repository.SignInCancelled
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
+import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
-import `in`.wishkaro.app.data.local.BlockedRow
-import `in`.wishkaro.app.data.local.LocalStore
-import `in`.wishkaro.app.data.repository.ReminderPlanRepository
-import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
 import `in`.wishkaro.app.platform.OemHelperOutcome
@@ -21,45 +21,26 @@ import `in`.wishkaro.app.platform.OemInstructions
 import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.platform.ReminderScheduler
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.nav.NavEvent
+import `in`.wishkaro.app.ui.nav.Screen
+import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
-import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.todayIn
-
-sealed interface Screen {
-    data object SignIn : Screen
-    data object People : Screen
-    data object AddPerson : Screen
-    data class PersonDetail(val personId: String) : Screen
-    data class EditPerson(val personId: String) : Screen
-
-    /** `eventId == null` means a new event on that person. */
-    data class EventEditor(val personId: String, val eventId: String?) : Screen
-    data object Deleted : Screen
-
-    /** M2 creates this screen; the app had no settings at all before now (FR-SET-01). */
-    data object Settings : Screen
-
-    // ---- M3: import (FR-IMP-01..08, FR-VIEW-05, FR-AUTH-05) ----
-
-    /** Contacts or a file. */
-    data object ImportStart : Screen
-    data object ImportContacts : Screen
-    data object ImportFile : Screen
-
-    /** What happened, with a reason for every row that did not come in (FR-IMP-07). */
-    data object ImportResult : Screen
-}
 
 /**
  * What the Settings screen knows about this device's ability to actually deliver a reminder
@@ -97,11 +78,19 @@ data class PeopleFilter(
 }
 
 /**
- * The whole app's state, in one place.
+ * The app's data and the actions that change it.
  *
- * M1 has seven screens, so there is now a real back stack — a list rather than a navigation
- * library, because seven screens and one linear history is not yet an argument for a
- * dependency. The moment it needs deep links into a nested graph, it gets one.
+ * M1's comment here said the hand-rolled back stack would get a navigation library "the
+ * moment it needs deep links into a nested graph". M4 is that moment, and the back stack has
+ * left: it is now a Navigation 3 stack in Compose saved state, built in `App.kt` (see
+ * `in.wishkaro.app.ui.nav` and `docs/M4_PLAN.md` §2).
+ *
+ * The rule that came with the move, and the reason for it: **nothing that drives navigation
+ * lives on this object.** It is a Koin `single` on the Application, so anything kept here
+ * outlives the Activity — which is exactly how M3 produced a stale import report that
+ * bounced the user out of the flow, and a busy flag that locked the file picker shut. What
+ * is left is data, the actions that write it, and [navEvents], which is a one-shot channel
+ * rather than a value anybody can read twice.
  */
 class AppStore(
     private val auth: AuthRepository,
@@ -115,10 +104,25 @@ class AppStore(
     private val scope: CoroutineScope,
     private val now: () -> Instant = Clock.System::now,
 ) {
-    private val backStack = ArrayDeque<Screen>()
+    /**
+     * Navigations asked for by something FINISHING, delivered exactly once.
+     *
+     * A `Channel`, not a `StateFlow`, and that is the whole design. A value on this object
+     * can be read again by the next Activity; a channel element cannot. `MILESTONE_
+     * CHECKLIST.md` carries this rule because M3 paid for it twice in one milestone.
+     *
+     * Buffered rather than rendezvous because the deep-link handler runs in
+     * `MainActivity.onCreate`, before `setContent`, so the event has to wait for a collector
+     * that does not exist yet. Buffered rather than conflated because two of these can
+     * legitimately be in flight — a sign-in that offers import, say — and dropping one
+     * silently is the failure this whole mechanism exists to avoid.
+     */
+    private val _navEvents = Channel<NavEvent>(Channel.BUFFERED)
+    val navEvents: Flow<NavEvent> = _navEvents.receiveAsFlow()
 
-    private val _screen = MutableStateFlow<Screen>(Screen.SignIn)
-    val screen: StateFlow<Screen> = _screen.asStateFlow()
+    private fun navigate(event: NavEvent) {
+        _navEvents.trySend(event)
+    }
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -149,15 +153,50 @@ class AppStore(
     private val _focusedPersonId = MutableStateFlow<String?>(null)
     val focusedPersonId: StateFlow<String?> = _focusedPersonId.asStateFlow()
 
+    /**
+     * A deep link that arrived before there was a session to act on it. One-shot: see
+     * [consumePendingDeepLink].
+     */
+    private var pendingDeepLinkPersonId: String? = null
+
+    /** Guards [start] against re-entry from a recomposed root. See the comment there. */
+    private val started = MutableStateFlow(false)
+
+    /**
+     * True once the database has emitted at least once in this process.
+     *
+     * Without it, "we have not read yet" and "there is nobody" are the same empty list, and
+     * every view that branches on emptiness shows its not-found state for the first frame —
+     * a 575-person account briefly claiming it has nobody, and a widget deep link into a cold
+     * process opening on "This person is no longer here". That message was blamed on the
+     * Intent replay (`MainActivity`); the replay was one cause of it and this was another.
+     */
+    private val _peopleLoaded = MutableStateFlow(false)
+    val peopleLoaded: StateFlow<Boolean> = _peopleLoaded.asStateFlow()
+
     val authState: StateFlow<AuthState> = auth.state
 
-    private val allCards: StateFlow<List<PersonCard>> = people.observePeople()
+    /**
+     * Every person, unfiltered, sorted by how soon their next event is.
+     *
+     * Public because a detail screen has to be able to show somebody the filter is currently
+     * hiding — a deep link from a notification or the widget does not care what the user
+     * last typed into the search box.
+     */
+    val allCards: StateFlow<List<PersonCard>> = people.observePeople()
         .map { list ->
             val zone = TimeZone.currentSystemDefault()
             val today = Clock.System.todayIn(zone)
+            // ALPHABETICAL, for FR-VIEW-04: this is the directory, and a directory sorted
+            // by how soon somebody's birthday is cannot be scanned for a name. Sorting by
+            // imminence is what the Upcoming view (FR-VIEW-01) is for, and it has its own
+            // query now. Case-insensitive, or "aarav" files after "Zoya".
             list.map { it.toCard(zone, today) }
-                .sortedWith(compareBy({ it.daysUntil ?: Int.MAX_VALUE }, { it.person.displayName }))
+                .sortedWith(
+                    compareBy(String.CASE_INSENSITIVE_ORDER) { it.person.displayName },
+                )
         }
+        .onEach { _peopleLoaded.value = true }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -202,16 +241,10 @@ class AppStore(
         .map { count -> if (count == 0L) emptyList() else local.blockedRows() }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** The person behind whichever detail-ish screen is open. Null when none is. */
-    val selectedPerson: StateFlow<Person?> = combine(_screen, allCards) { screen, list ->
-        val id = when (screen) {
-            is Screen.PersonDetail -> screen.personId
-            is Screen.EditPerson -> screen.personId
-            is Screen.EventEditor -> screen.personId
-            else -> null
-        }
-        id?.let { pid -> list.firstOrNull { it.person.id == pid }?.person }
-    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+    // `selectedPerson` used to live here, derived from the screen. It has gone: the back
+    // stack is no longer on this object, so the destination is the only thing that knows
+    // which person it is about, and it resolves its own from `allCards` at the call site.
+    // One fewer piece of UI state on an Application-scoped singleton.
 
     // -----------------------------------------------------------------------------------
     // Session
@@ -235,30 +268,7 @@ class AppStore(
      */
     fun openImport() {
         importing.clearResult()
-        go(Screen.ImportStart)
-    }
-
-    fun openImportContacts() = go(Screen.ImportContacts)
-
-    fun openImportFile() = go(Screen.ImportFile)
-
-    /**
-     * The import finished; show the report.
-     *
-     * The result screen REPLACES the flow rather than stacking on it: backing out of a
-     * report onto the review screen that produced it would invite the user to press Import
-     * a second time, which is safe — it is idempotent — but says the opposite of what just
-     * happened.
-     */
-    fun openImportResult() {
-        backStack.clear()
-        backStack.addLast(Screen.People)
-        _screen.value = Screen.ImportResult
-    }
-
-    fun finishImport() {
-        backStack.clear()
-        _screen.value = Screen.People
+        navigate(NavEvent.Go(Screen.ImportStart))
     }
 
     /**
@@ -277,13 +287,45 @@ class AppStore(
      * create an account; it is not tolerable every time you open the app.
      */
     private suspend fun offerImportToANewUser() {
-        if (people.findAnyPerson() == null) _screen.value = Screen.ImportStart
+        if (people.findAnyPerson() == null) navigate(NavEvent.Go(Screen.ImportStart))
     }
 
+    /**
+     * Restore the session, and get everything that needs one going.
+     *
+     * No longer decides what is on screen. `App.kt` branches on [authState] for that, which
+     * is what makes it impossible to press back out of a signed-in app into the sign-in
+     * screen, and impossible for a sign-out to leave the previous user's stack behind.
+     */
     fun start() {
+        // ONCE PER PROCESS, not once per composition.
+        //
+        // The caller is `LaunchedEffect(Unit)` at the composition root, and M4 is the first
+        // milestone where that re-runs: dropping the manifest's `configChanges` list for
+        // FR-VIEW-07 means every rotation, fold, unfold and multi-window resize builds a new
+        // Activity and a new composition. Both halves of this function assumed they ran once
+        // and quietly became once-per-rotation:
+        //
+        //  - [afterSignedIn] requests the notification permission, registers the device,
+        //    runs a FULL sync and re-arms every alarm. Five rotations on the owner's
+        //    575-person account is five push/pull cycles and five whole-plan re-arms, on the
+        //    user's own data connection.
+        //  - the deep link fired again off a value that outlives the Activity, throwing the
+        //    user back into a detail screen they had already left. See [consumePendingDeepLink].
+        //
+        // Once per process is exactly what this did before M4 — the Activity was simply never
+        // recreated — so this restores the intended behaviour rather than inventing one. It
+        // does mean a process alive for days never re-syncs on its own; that was true before
+        // M4 too, the periodic upkeep worker covers the reminder half, and widening it is a
+        // product decision rather than a bug fix.
+        if (!started.compareAndSet(expect = false, update = true)) return
         auth.restore()
-        _screen.value = if (auth.state.value is AuthState.SignedIn) Screen.People else Screen.SignIn
-        if (auth.state.value is AuthState.SignedIn) afterSignedIn()
+        if (auth.state.value is AuthState.SignedIn) {
+            afterSignedIn()
+            // A deep link handled in onCreate got here before the session did. Now there is
+            // one, so the person it named can finally be opened.
+            consumePendingDeepLink()
+        }
     }
 
     fun signIn() {
@@ -292,7 +334,10 @@ class AppStore(
             _busy.value = true
             auth.signIn()
                 .onSuccess {
-                    _screen.value = Screen.People
+                    // Nothing here navigates to People: the auth state flipping is what
+                    // swaps the sign-in screen for the app, so there is no window in which
+                    // a stale back stack and a live session are both on screen.
+                    //
                     // The import offer rides INSIDE afterSignedIn, after its pull. Called
                     // out here it would race the sync, and a returning user on a new phone
                     // would be shoved into an import flow a second before their own people
@@ -424,8 +469,14 @@ class AppStore(
     fun signOut() {
         scope.launch {
             auth.signOut()
-            backStack.clear()
-            _screen.value = Screen.SignIn
+            // Not just the stacks: the deep-linked person belonged to the account that is
+            // leaving. A highlighted row — or worse, a held navigation — carrying one user's
+            // record into the next user's session is the same leak as a back stack.
+            _focusedPersonId.value = null
+            pendingDeepLinkPersonId = null
+            // Every tab, not just this one: the next person to sign in on this handset must
+            // not be able to press back into the last one's data.
+            navigate(NavEvent.ResetAll)
         }
     }
 
@@ -470,47 +521,73 @@ class AppStore(
     }
 
     // -----------------------------------------------------------------------------------
-    // Navigation
+    // Things a screen has to get ready before it is navigated to
     // -----------------------------------------------------------------------------------
+    //
+    // These used to be `openX()` and did two jobs: prepare, then navigate. The navigating
+    // half has moved to the call site; what is left is only the preparing, so the names say
+    // that. Where the two must not be separated — `openImport`, above, whose whole point is
+    // that NO route in can skip the clear — they are still one call.
 
-    private fun go(screen: Screen) {
-        backStack.addLast(_screen.value)
-        _screen.value = screen
-    }
-
-    fun openAddPerson() {
+    fun prepareAddPerson() {
         _duplicates.value = emptyList()
-        go(Screen.AddPerson)
     }
 
-    fun openPerson(personId: String) = go(Screen.PersonDetail(personId))
-    fun openEditPerson(personId: String) = go(Screen.EditPerson(personId))
-    fun openEventEditor(personId: String, eventId: String?) = go(Screen.EventEditor(personId, eventId))
-    fun openDeleted() = go(Screen.Deleted)
-
-    fun openSettings() {
+    fun prepareSettings() {
         scope.launch { _settings.value = local.reminderSettings() }
         refreshReliability()
-        go(Screen.Settings)
     }
 
-    fun back() {
-        val previous = backStack.removeLastOrNull()
-        _screen.value = when {
-            previous != null -> previous
-            auth.state.value is AuthState.SignedIn -> Screen.People
-            else -> Screen.SignIn
-        }
-    }
-
-    /** Called when a notification is tapped (deep link `wishkaro://person/<id>`). */
+    /**
+     * A notification or the widget was tapped: `wishkaro://person/<id>` (FR-WID-02).
+     *
+     * The navigation is a one-shot event, which is the fix for the shape M3 was bitten by
+     * twice. A `Screen` value set here would sit on this Application-scoped object until
+     * something overwrote it, and every later Activity — a rotation, a return from the
+     * launcher, a cold start — would find it still there and navigate again. A channel
+     * element is consumed by the first collector and is then gone.
+     *
+     * `_focusedPersonId` stays a value, deliberately: it is not a navigation, it is "which
+     * row the list should highlight", and that is a thing with a duration.
+     */
     fun focusPerson(personId: String?) {
         _focusedPersonId.value = personId
-        if (personId != null && auth.state.value is AuthState.SignedIn) {
-            backStack.clear()
-            backStack.addLast(Screen.People)
-            _screen.value = Screen.PersonDetail(personId)
+        if (personId == null) return
+        if (auth.state.value is AuthState.SignedIn) {
+            navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
+        } else {
+            // Cold start: the Activity handled the intent in onCreate, which runs before
+            // composition, which is where [start] restores the session. Hold it until there
+            // is somebody to show it to.
+            pendingDeepLinkPersonId = personId
         }
+    }
+
+    /**
+     * Navigate to whoever a deep link named, once there is a session to do it with.
+     *
+     * On a COLD start the Activity handles the intent in `onCreate`, which runs before
+     * composition, which is where [start] restores the session — so [focusPerson] saw
+     * `AuthState.Unknown`, and the old code dropped the navigation on the floor. Tapping a
+     * reminder with the app not running landed you on the list. That has been true since M2
+     * shipped notification deep links; it surfaced in M4, the first milestone to drive a deep
+     * link into a cold process.
+     *
+     * **A pending deep link is consumed, not read.** This is the same one-shot rule as
+     * `MainActivity.handleDeepLink`, one layer further in, and the first fix only moved the
+     * problem here. `_focusedPersonId` is the right shape for what it is for — "which row the
+     * list should highlight" is a thing with a duration — and exactly the wrong shape to
+     * trigger a navigation from, because it is a persistent value on an Application-scoped
+     * singleton and the process outlives the Activity. Re-reading it on the next composition
+     * re-navigated: tap a reminder for X, back out, switch to Calendar, rotate, and the stack
+     * is reset into X's detail screen again. So the navigation rides on its own one-shot
+     * field, which is cleared the instant it is used.
+     */
+    private fun consumePendingDeepLink() {
+        val personId = pendingDeepLinkPersonId ?: return
+        pendingDeepLinkPersonId = null
+        if (auth.state.value !is AuthState.SignedIn) return
+        navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(personId))))
     }
 
     // -----------------------------------------------------------------------------------
@@ -552,9 +629,9 @@ class AppStore(
         scope.launch {
             val id = people.addPerson(displayName, relation, type, label, date)
             _duplicates.value = emptyList()
-            backStack.clear()
-            backStack.addLast(Screen.People)
-            _screen.value = Screen.PersonDetail(id)
+            // The list underneath, the new person on top: back from here goes to the list,
+            // not back into the empty Add form that just succeeded.
+            navigate(NavEvent.ResetTo(listOf(Screen.People, Screen.PersonDetail(id))))
             _message.value = "$displayName saved"
         }
     }
@@ -571,7 +648,7 @@ class AppStore(
     ) {
         scope.launch {
             people.updatePerson(personId, displayName, relation, gender, phone, email, notes, isDeceased)
-            back()
+            navigate(NavEvent.Back)
             _message.value = "Saved"
         }
     }
@@ -579,8 +656,9 @@ class AppStore(
     fun deletePerson(personId: String, displayName: String) {
         scope.launch {
             people.deletePerson(personId)
-            backStack.clear()
-            _screen.value = Screen.People
+            // Not Back: the person behind that entry no longer exists, and an editor for a
+            // deleted record is a screen with nothing to show.
+            navigate(NavEvent.ResetTo(listOf(Screen.People)))
             // FR-PPL-08: the window is the feature, so the confirmation states it.
             _message.value = "$displayName removed. Restorable for 30 days."
         }
@@ -610,7 +688,7 @@ class AppStore(
             } else {
                 people.updateEvent(eventId, type, label, date)
             }
-            back()
+            navigate(NavEvent.Back)
             // The person's tone can change as a result of this write (FR-EVT-04), but the
             // server owns that decision — so the message says what was saved, not what it
             // implies. The screen will show the real answer after the next sync.
@@ -645,6 +723,14 @@ class AppStore(
     fun removeTrait(traitId: String) {
         scope.launch { people.removeTrait(traitId) }
     }
+
+    /**
+     * A one-line note for the snackbar, for callers outside the store.
+     *
+     * Used where the UI knows something the store cannot: `App.kt` restoring onto an import
+     * report whose contents did not survive the process, for one.
+     */
+    fun showMessage(text: String) { _message.value = text }
 
     fun clearMessage() {
         _message.value = null
