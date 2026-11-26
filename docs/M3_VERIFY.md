@@ -6,6 +6,10 @@
 > deployment.** Verifying turned up four things reading the code had not — §6. Three are
 > fixed here, including one that could have made a deceased person's birthday read
 > celebratory. Nothing below is rounded up.
+>
+> **§12 was added after this merged**, from a second review pass: three more defects, two of
+> them in code this document had already called verified. §9's table still stands as written;
+> read §11 and §12 before trusting it as the whole story.
 
 ---
 
@@ -601,8 +605,15 @@ did nothing and being suspicious about it.
 
 ## 11. What is left
 
+This section said *"Nothing in M3"* when M3 merged. §12 is what came of that, and the claim
+is corrected here rather than quietly left to rot: three defects were found afterwards by
+reading the merged diff, two of them in code this document had already called verified.
 
-Nothing in M3. Two things carried forward, neither blocking:
+It was not wrong about any item in §9. It was wrong to treat "the milestone is done" and
+"there is nothing left to find" as the same sentence — and it miscounted its own list, saying
+two where it gave three, which is the smaller version of the same inattention.
+
+Three things carried forward, none blocking:
 
 - **A non-Pixel phone** for M2's definition-of-done item 7, now unchecked across three
   milestones.
@@ -610,6 +621,15 @@ Nothing in M3. Two things carried forward, neither blocking:
 - **19 rows already damaged by §6.3** carry a completeness score of 0. The fix stops it
   happening again; it does not repair them, because their corrected copies sit behind a sync
   cursor that has moved past them. Editing any of those people repairs that one.
+
+And one added by §12.4, for M4 to answer rather than this document:
+
+- **No way to verify UI behaviour on the device.** `adb shell input tap` against a screenshot
+  is guessing, and three attempts in M3 landed somewhere unintended — the last on a real
+  contact's edit screen. Every guard added after those incidents checks the state *before*
+  the tap and none can see where it landed, which makes the failure survivable rather than
+  impossible. A Compose UI test harness, or resolving coordinates from a `uiautomator`
+  view-tree dump, would rule it out instead.
 
 ---
 
