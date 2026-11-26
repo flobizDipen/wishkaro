@@ -46,11 +46,22 @@ export const DraftWishSchema = z
      * not suppress next year's draft and must not appear on the person screen, so this is
      * the one piece of wish text that reaches the server without a row behind it.
      *
-     * Capped at three. Every entry is input tokens on a request that is already paying for
-     * the history block, and a user who has pressed Regenerate eleven times does not want
+     * Capped at three ENTRIES. Every one is input tokens on a request that is already paying
+     * for the history block, and a user who has pressed Regenerate eleven times does not want
      * eleven constraints — they want a different kind of message.
+     *
+     * Each entry is capped at 4000 characters to MATCH `WishUpsertSchema.messageText`, and
+     * the two must not drift. An `avoid` entry is literally the current draft: `regenerate()`
+     * puts the text in the box straight onto this list. At 2000 — which this was — pasting a
+     * long message and pressing Regenerate produced a 400 on `avoid.0`, which the composer
+     * maps to "We couldn't write this one" with nothing to say length caused it, on every
+     * press. The user would see the app break on exactly the message they cared most about.
+     *
+     * The token cost of three 4000-character entries is real and bounded, and it is the
+     * right trade: it is only reachable after three regenerates on a message that long, and
+     * a cap that rejects the user's own words is worse than a long prompt.
      */
-    avoid: z.array(z.string().trim().min(1).max(2000)).max(3).default([]),
+    avoid: z.array(z.string().trim().min(1).max(4000)).max(3).default([]),
   })
   .strict();
 

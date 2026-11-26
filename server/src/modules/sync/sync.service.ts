@@ -310,24 +310,38 @@ export class SyncService {
       } else skipped.push({ id: trait.id, entity: 'trait', reason: outcome });
     }
 
-    // Wishes last of the four, and deliberately NOT added to `touched`.
-    //
-    // A wish is not an input to anything the derivation computes — it does not change a
-    // completeness score, cannot mark anybody deceased, and cannot make somebody a minor.
-    // Putting its person in `touched` would schedule a recompute that can only produce the
-    // same values, and a recompute moves `person.updated_at`, which is the sync cursor's
-    // ordering key. Recording a wish would therefore re-send the person to every device for
-    // no reason. M3 §6.3 bought that rule.
+    // Once, at the end, rather than per record: a batch carrying a person, their death
+    // anniversary and three traits would otherwise recompute the same person five times, and
+    // the first four would each see a half-applied batch.
+    await this.derivation.recomputeMany(touched, this.prisma, contexts);
+
+    /**
+     * Wishes last of the four, and AFTER the recompute. Both halves are load-bearing.
+     *
+     * **After**, because `upsertWish` derives `sentiment` from `person.isDeceased`, and the
+     * recompute above is what SETS that flag. Running before it read a value that had not
+     * caught up: a batch carrying a new death anniversary and a BIRTHDAY wish for the same
+     * person — a remembrance composed offline, before the anniversary had ever synced —
+     * stored the wish CELEBRATORY. Permanently, unlike the identical expression in
+     * `upsertEvent`, because the recompute re-derives every live event and deliberately does
+     * not touch wishes. The client then took that wrong answer as authoritative on its next
+     * pull and overwrote its own correct placeholder with it. Found in review of PR #7.
+     *
+     * **Not added to `touched`**, still. A wish is not an input to anything the derivation
+     * computes — it cannot change a completeness score, mark anybody deceased or make
+     * somebody a minor — so a recompute could only produce the same values, while moving
+     * `person.updated_at`, which is the sync cursor's ordering key. Recording a wish would
+     * re-send the person to every device for no reason. M3 §6.3 bought that rule, and it is
+     * why this loop cannot simply join the others.
+     *
+     * `upsertWish` re-reads the person inside the loop, so moving it here is enough: it sees
+     * the flag the recompute has just written.
+     */
     for (const wish of batch.wishes) {
       const outcome = await this.upsertWish(userId, wish);
       if (outcome === 'APPLIED') wishesApplied += 1;
       else skipped.push({ id: wish.id, entity: 'wish', reason: outcome });
     }
-
-    // Once, at the end, rather than per record: a batch carrying a person, their death
-    // anniversary and three traits would otherwise recompute the same person five times, and
-    // the first four would each see a half-applied batch.
-    await this.derivation.recomputeMany(touched, this.prisma, contexts);
 
     // Settings last. They are one row and they do not interact with the records above, so
     // ordering them after the recompute keeps a settings-only push from paying for anything

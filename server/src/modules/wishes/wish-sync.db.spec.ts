@@ -320,3 +320,79 @@ describe('wish — the no-repeat query (FR-WSH-02)', () => {
     expect((await history.lastYear(userId, personId, 'BIRTHDAY', 2026))?.year).toBe(2025);
   });
 });
+
+/**
+ * Sentiment derived in the SAME BATCH that makes the person deceased.
+ *
+ * Found in review of PR #7. `upsertWish` reads `person.isDeceased`, and the recompute that
+ * SETS that flag runs after all four upsert loops — so a wish applied in the same batch as
+ * the death anniversary that causes the flag read a value that had not caught up yet.
+ *
+ * It is permanent, unlike the identical expression in `upsertEvent`: events are re-derived by
+ * `recomputeMany` afterwards, and wishes are deliberately excluded from `touched` so that
+ * recording one cannot move `person.updated_at`.
+ *
+ * And the client makes it worse rather than better. `applyRemote` takes the server's
+ * `sentiment` as authoritative on the next pull, so a wrong CELEBRATORY here OVERWRITES the
+ * phone's own correct SOLEMN placeholder — the one `454ea75` had just made correct. Same bug
+ * class as that fix, one layer down: that was a client reading a stale derived flag, this is
+ * the server deriving from one.
+ */
+describe('wish — sentiment when the batch itself makes the person deceased', () => {
+  it('is SOLEMN for a BIRTHDAY wish pushed alongside the death anniversary', async () => {
+    // Composed offline: a remembrance sent on their birthday, before the death anniversary
+    // had ever reached the server. Both leave the phone in one batch.
+    const eventId = randomUUID();
+    const wish = wishPush({
+      type: 'BIRTHDAY',
+      messageText: 'Thinking of her today, on the day she was born.',
+      tone: 'HEARTFELT' as const,
+    });
+
+    const result = await sync.push(userId, {
+      ...emptyBatch,
+      events: [
+        {
+          id: eventId,
+          personId,
+          type: 'DEATH_ANNIVERSARY',
+          day: 2,
+          month: 8,
+          year: 2019,
+          updatedAt: iso('2026-03-14T04:00:00Z'),
+        },
+      ],
+      wishes: [wish],
+    } as never);
+
+    expect(result.applied.wishes).toBe(1);
+    // The person IS deceased by the end of this request — the recompute flips them.
+    const after = await prisma.person.findUniqueOrThrow({ where: { id: personId } });
+    expect(after.isDeceased).toBe(true);
+
+    const stored = await prisma.wish.findUniqueOrThrow({ where: { id: wish.id } });
+    expect(stored.sentiment).toBe('SOLEMN');
+  });
+
+  it('is still SOLEMN when the wish is for the death anniversary itself', async () => {
+    // The simpler shape, which already worked: marksPersonDeceased(type) catches it without
+    // needing the flag. Here so that fixing the case above cannot break this one.
+    const wish = wishPush({ type: 'DEATH_ANNIVERSARY', messageText: 'Remembering her.' });
+    await sync.push(userId, { ...emptyBatch, wishes: [wish] } as never);
+
+    expect((await prisma.wish.findUniqueOrThrow({ where: { id: wish.id } })).sentiment).toBe(
+      'SOLEMN',
+    );
+  });
+
+  it('a CELEBRATORY wish for a living person is unaffected', async () => {
+    // The assertion that stops the fix making everything solemn, which would be a quieter
+    // bug of the same size.
+    const wish = wishPush();
+    await sync.push(userId, { ...emptyBatch, wishes: [wish] } as never);
+
+    expect((await prisma.wish.findUniqueOrThrow({ where: { id: wish.id } })).sentiment).toBe(
+      'CELEBRATORY',
+    );
+  });
+});

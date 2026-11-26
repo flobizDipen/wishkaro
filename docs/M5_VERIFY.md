@@ -279,8 +279,8 @@ made, not something nobody noticed — which is the whole reason this paragraph 
 
 | Suite | Count | Notes |
 |---|---|---|
-| Server | 420 | `TZ=UTC`, `TZ=Pacific/Chatham` and local — identical |
-| Client | 378 | Plus `verifySqlDelightMigration` and the iOS compile |
+| Server | 425 | `TZ=UTC`, `TZ=Pacific/Chatham` and local — identical |
+| Client | 380 | Plus `verifySqlDelightMigration` and the iOS compile |
 
 Two suites drive **real services** rather than fakes, because a fake agrees with whatever the
 code does to it and everything they look for is a disagreement between the code and the schema
@@ -295,13 +295,46 @@ Per §D, and all of them went red:
 |---|---|
 | The global daily spend cap | 5 of the cap's own tests |
 | `PROMPT_VERSION` on the ledger row | 1 |
-| The JSON schema on the request | 1 — and see below |
+| The JSON schema on the request | 1 — and see §5.3 |
+| The wish loop running after the recompute | 1, in the Postgres suite |
+| The `avoid` cap matching `messageText` | 1 — after the test was fixed; see below |
 | Solemn tone restriction | 5 tests, across both languages' halves of the shared fixture |
 | `Person.isSolemn` (§0.1) | 4 of `PersonSolemnTest` |
 | Recording a wish must not move `person.updated_at` | 1, in the Postgres suite |
 | The server corrects a client-guessed sentiment | 1, in the SQLite suite |
 | `Retry-After` on a 429 | 2, through a real request |
 | The provider the DI graph hands out | 1 |
+
+### 5.1a Review of PR #7 found two important bugs and a nit
+
+All three verified against the branch before being acted on.
+
+**The sync one is the same bug class as §0.1, one layer down.** `upsertWish` derives a wish's
+`sentiment` from `person.isDeceased`, and `recomputeMany` — which SETS that flag — ran after
+all four upsert loops. So a batch carrying a new death anniversary and a `BIRTHDAY` wish for
+the same person (a remembrance composed offline, before the anniversary had ever synced)
+stored the wish CELEBRATORY. Permanently, because events are re-derived by the recompute and
+wishes are deliberately excluded from `touched`.
+
+And the client made it worse rather than better: `applyRemote` takes the server's `sentiment`
+as authoritative, so the wrong answer **overwrote the phone's own correct SOLEMN placeholder**
+— the one `454ea75` had just made correct. §0.1 was a client reading a stale derived flag;
+this was the server deriving from one. Fixed by moving the wish loop after the recompute;
+`upsertWish` already re-reads the person, so that is the whole change.
+
+**The leak.** `AppStore.wishesOf()` ended in `.stateIn(scope, …)` and was called inline in
+composition with no `remember`. `stateIn` launches a sharing coroutine into the
+Application-scoped `scope`, which is never cancelled, so one coroutine and one SQLDelight
+subscription accumulated **per recomposition** — and `collectAsState` keys on the flow
+instance, so each new one restarted collection from `emptyList()` and the history flashed
+empty whenever anything recomposed that screen. It was the only `stateIn` in the file behind
+a function rather than a property. Now a cold flow, remembered by `personId` at the call site.
+
+**The nit, taken.** `avoid` entries were capped at 2,000 characters while `messageText`
+deliberately allows 4,000 for a pasted poem — and `regenerate()` puts the text in the box
+straight onto that list. Pasting a long message and pressing Regenerate produced a 400 the
+composer renders as "We couldn't write this one", with nothing to say length caused it, on
+every press: the app appearing to break on the message the user cared most about.
 
 ### 5.2 A doc comment that claimed a performance property the schema did not have
 
@@ -340,7 +373,21 @@ revert-check bites now.
 Worth generalising: a fake that stands in for a remote service tests the response handling
 for free and the request construction not at all, unless it is asked to.
 
-### 5.4 A test that passed by luck
+### 5.4 A test that passed by luck — twice
+
+Two composer tests asserted on a history row written on `Dispatchers.Default`, and **one of
+them passed anyway**. That is worse than both failing: a green suite that is not checking
+what it claims. They now wait for the row with a named timeout.
+
+It then happened **again**, in this session, writing the fix for the `avoid` cap: the test
+called `DraftingService.draft()` directly, which never runs the zod pipe, so it passed with
+the old cap still in place and proved nothing. Caught by the revert-check going green rather
+than by reading. The cap lives in the schema, so the schema is what the test now asks.
+
+Three times in one milestone — along with §5.3's green revert-check — is enough to say the
+general thing: **a revert-check is not a formality.** Every test here that turned out to be
+vacuous was green and plausible, and the only thing that distinguished it from a real one
+was deleting the code it claimed to cover.
 
 Two composer tests asserted on a history row written on `Dispatchers.Default`, and **one of
 them passed anyway**. That is worse than both failing: a green suite that is not actually

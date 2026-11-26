@@ -11,7 +11,7 @@ import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
 import { WishHistoryService } from './wish-history.service';
 import type { AppEnv } from '../../config/env';
 import type { PrismaService } from '../../prisma/prisma.service';
-import type { DraftWishRequest } from './wishes.schemas';
+import { DraftWishSchema, type DraftWishRequest } from './wishes.schemas';
 
 /**
  * The drafting endpoint's mechanism, against a real Postgres and a real Redis.
@@ -588,5 +588,35 @@ describe('drafting — the global spend cap', () => {
     // The assertion that stops this being a cap that is always on, which would be a quieter
     // bug of the same size as no cap at all.
     await expect(cappedService(200).draft(userId, request())).resolves.toBeDefined();
+  });
+});
+
+describe('drafting — avoid entries are messages, and messages can be long', () => {
+  it('accepts an avoid entry as long as a message is allowed to be', () => {
+    // Asserted against the SCHEMA, not through `service.draft()`.
+    //
+    // The first version of this test called the service — which never runs the zod pipe, so
+    // it passed with the cap at 2000 and proved nothing. That is the third time this
+    // milestone has produced a test that passes without checking what it claims, and the
+    // second this session (M5_VERIFY §5.4). The cap lives in the schema, so the schema is
+    // what has to be asked.
+    //
+    // 3,500 Devanagari characters: a pasted poem is the case `messageText`'s own 4000 cap
+    // was written for, and `regenerate()` puts the text in the box straight onto this list.
+    const longDraft = 'क'.repeat(3500);
+    expect(DraftWishSchema.safeParse({ ...request(), avoid: [longDraft] }).success).toBe(true);
+    // And the two caps agree: one character past messageText's limit is refused by both.
+    expect(DraftWishSchema.safeParse({ ...request(), avoid: ['क'.repeat(4001)] }).success).toBe(
+      false,
+    );
+  });
+
+  it('still refuses more than three', async () => {
+    // The entry COUNT cap is the one that bounds the prompt, and it stays.
+    const parsed = DraftWishSchema.safeParse({
+      ...request(),
+      avoid: ['a', 'b', 'c', 'd'],
+    });
+    expect(parsed.success).toBe(false);
   });
 });

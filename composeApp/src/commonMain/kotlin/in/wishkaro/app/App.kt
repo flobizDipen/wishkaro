@@ -411,7 +411,11 @@ private fun wishKaroEntryProvider(
             onAddTrait = { kind, value -> store.addTrait(key.personId, kind, value) },
             onRemoveTrait = store::removeTrait,
             onSendWish = { eventId -> nav.goTo(Screen.WishComposer(key.personId, eventId)) },
-            wishes = store.wishesOf(key.personId).collectAsState().value,
+            // `remember` by personId, not inline. Without it a new flow instance is built on
+            // every recomposition and `collectAsState` keys on the instance, so collection
+            // restarts from empty and the history flashes. See AppStore.wishesOf.
+            wishes = remember(key.personId) { store.wishesOf(key.personId) }
+                .collectAsState(emptyList()).value,
             modifier = inner,
         )
     }

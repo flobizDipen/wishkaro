@@ -7,6 +7,7 @@ import `in`.wishkaro.app.domain.WishChannel
 import `in`.wishkaro.app.domain.WishLanguage
 import `in`.wishkaro.app.domain.WishSource
 import `in`.wishkaro.app.domain.WishTone
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import wishkaro.db.WishKaroDb
 import kotlin.test.AfterTest
@@ -95,6 +96,28 @@ class WishStoreTest {
         assertEquals(1, wishes.size)
         assertNull(wishes[0].tone, "an unknown tone is null, not a dropped row")
         assertEquals("Sent anyway.", wishes[0].messageText)
+    }
+
+    @Test
+    fun observe_wishes_is_live_and_scoped_to_one_person() = runTest {
+        // What the person screen actually collects, now that AppStore hands back this cold
+        // flow rather than a StateFlow shared into the app scope (review of PR #7).
+        record("w1", 2026, "For Anika.", personId = "p1")
+        record("w2", 2026, "For somebody else.", personId = "p2")
+
+        assertEquals(listOf("For Anika."), store.observeWishes("p1").first().map { it.messageText })
+
+        // Live: a later write reaches an existing collector. This is the property that makes
+        // the screen update when a sync pull lands another device's send.
+        record("w3", 2025, "Last year, for Anika.", personId = "p1")
+        assertEquals(2, store.observeWishes("p1").first().size)
+    }
+
+    @Test
+    fun observe_wishes_hides_a_withdrawn_row() = runTest {
+        record("w1", 2026, "Deleted afterwards.")
+        store.deleteWishLocally("w1", "2026-06-01T00:00:00Z")
+        assertTrue(store.observeWishes("p1").first().isEmpty())
     }
 
     @Test

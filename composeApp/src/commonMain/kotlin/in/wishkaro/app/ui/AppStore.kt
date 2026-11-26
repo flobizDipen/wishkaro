@@ -788,10 +788,26 @@ class AppStore(
      * person's rows and nothing else, and the 575-person account makes "all wishes, grouped"
      * a query nobody needs. The sync pull writes into the same table, so this updates on its
      * own when another device's send arrives.
+     *
+     * **COLD, and deliberately not a `StateFlow`.** Every other flow on this store is a
+     * property initialised once; this is the only one behind a function, because it takes an
+     * argument — and the first version ended it with the same
+     * `.stateIn(scope, WhileSubscribed, emptyList())` the properties use.
+     *
+     * That was wrong in two ways at once, found in review of PR #7. `stateIn` launches a
+     * sharing coroutine into `scope`, which lives on the Koin Application singleton and is
+     * never cancelled, so **one coroutine and one SQLDelight subscription accumulated per
+     * call** — and the call site was inline in composition with no `remember`, so it ran on
+     * every recomposition. `collectAsState` also keys on the flow INSTANCE, so each new one
+     * restarted collection from `emptyList()` and the history visibly flashed empty whenever
+     * anything recomposed that screen.
+     *
+     * Returning the cold flow fixes the leak at the source: nothing is launched here, and
+     * collection lives and dies with the composition that asks for it. The call site
+     * remembers it by `personId` so the instance is stable. The signature is the guard —
+     * putting `stateIn` back is a deliberate type change rather than a line somebody adds.
      */
-    fun wishesOf(personId: String): StateFlow<List<Wish>> =
-        local.observeWishes(personId)
-            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    fun wishesOf(personId: String): Flow<List<Wish>> = local.observeWishes(personId)
 
     /**
      * A one-line note for the snackbar, for callers outside the store.
