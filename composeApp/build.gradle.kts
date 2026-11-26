@@ -137,7 +137,21 @@ kotlin {
         val androidInstrumentedTest by getting {
             dependencies {
                 implementation(kotlin("test"))
-                implementation(libs.androidx.compose.ui.test.junit4)
+                // The exclusion is the whole reason this suite can be assembled.
+                //
+                // ui-test-junit4 drags androidx.core onto the TEST APK's own resource path,
+                // and the app under test already provides it. AAPT then compiles core's
+                // drawables into the in.wishkaro.app.test package without core's values, and
+                // the link fails on every colour and dimen those drawables reference —
+                // `androidx_core_ripple_material_light` and a dozen more. The test APK has no
+                // business packaging core at all.
+                //
+                // Found by bisecting the instrumented dependency list: a variant with only
+                // test-ext-junit and test-runner assembles, and adding this one artifact back
+                // breaks it.
+                implementation(libs.androidx.compose.ui.test.junit4.get().toString()) {
+                    exclude(group = "androidx.core", module = "core")
+                }
                 implementation(libs.androidx.test.ext.junit)
                 implementation(libs.androidx.test.runner)
                 implementation(libs.androidx.test.espresso.core)

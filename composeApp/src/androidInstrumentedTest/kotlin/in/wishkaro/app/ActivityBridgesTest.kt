@@ -93,4 +93,57 @@ class ActivityBridgesTest {
             assertTrue(pending.isCompleted, "the awaiting coroutine was resumed")
         }
     }
+
+    /**
+     * The bug M4 actually shipped and then fixed, pinned.
+     *
+     * Both permission bridges held their in-flight ask in a PRIVATE FIELD ON THE ACTIVITY.
+     * A rotation while the system permission dialog was up destroyed that Activity, the
+     * rebuilt one completed its own null field, and the coroutine awaiting the original
+     * deferred never resumed — so granting the permission left the contacts import sitting
+     * on its rationale screen with a dead Continue button, force-stop the only cure.
+     *
+     * Found on the device by doing exactly that (`M4_VERIFY.md` §0.6) and fixed by giving
+     * the permission bridges the same global holder the file picker always had.
+     *
+     * **This is NOT a regression test for that bug, and it was briefly labelled as one.**
+     * Putting the deferreds back on the Activity and re-running left it green, because the
+     * test parks its deferred in the global holder itself and never goes through the
+     * requester `MainActivity` installs — which is the wiring that was broken. What it
+     * actually pins is the holder's contract: a result arriving after a recreation reaches a
+     * flow that was waiting before it.
+     *
+     * Catching the real bug needs the system permission dialog driven under rotation, which
+     * is the manual procedure in `M4_VERIFY.md` §0.6 and is not something this suite can do.
+     */
+    @Test
+    fun aPendingPermissionAskSurvivesTheActivityBeingRebuilt() = runTest {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val pending = CompletableDeferred<Boolean>()
+            ContactsPermissionBridge.pending.deferred = pending
+
+            scenario.recreate()
+
+            // The system hands the permission result to whichever Activity is alive now.
+            scenario.onActivity { ContactsPermissionBridge.pending.complete(true) }
+
+            withTimeout(5.seconds) { pending.await() }
+            assertTrue(pending.isCompleted, "the permission result reached the waiting flow")
+        }
+    }
+
+    /** The same holder contract for the notification permission. Same limitation. */
+    @Test
+    fun aPendingNotificationAskSurvivesTheActivityBeingRebuilt() = runTest {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val pending = CompletableDeferred<Boolean>()
+            PermissionBridge.pending.deferred = pending
+
+            scenario.recreate()
+            scenario.onActivity { PermissionBridge.pending.complete(true) }
+
+            withTimeout(5.seconds) { pending.await() }
+            assertTrue(pending.isCompleted, "the permission result reached the waiting flow")
+        }
+    }
 }
