@@ -5,7 +5,9 @@ import `in`.wishkaro.app.platform.ActivityHolder
 import `in`.wishkaro.app.platform.AndroidContactsGateway
 import `in`.wishkaro.app.platform.AndroidFileGateway
 import `in`.wishkaro.app.platform.ContactsGateway
+import `in`.wishkaro.app.platform.AndroidMessageSender
 import `in`.wishkaro.app.platform.FileGateway
+import `in`.wishkaro.app.platform.MessageSender
 import `in`.wishkaro.app.platform.AndroidGoogleSignInClient
 import `in`.wishkaro.app.platform.AndroidNotificationGateway
 import `in`.wishkaro.app.platform.DatabaseDriverFactory
@@ -32,4 +34,5 @@ actual fun platformModule(): Module = module {
     single<OemBatteryHelper> { AndroidOemBatteryHelper(androidContext()) }
     single<ContactsGateway> { AndroidContactsGateway(androidContext()) }
     single<FileGateway> { AndroidFileGateway(androidContext()) }
+    single<MessageSender> { AndroidMessageSender(androidContext()) }
 }

@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -44,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import `in`.wishkaro.app.domain.Wish
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.time.Clock
@@ -75,6 +77,10 @@ fun PersonDetailScreen(
     onDelete: () -> Unit,
     onAddTrait: (TraitKind, String) -> Unit,
     onRemoveTrait: (String) -> Unit,
+    /** FR-WSH-01's third entry point. Null means the next thing coming up for them. */
+    onSendWish: (String?) -> Unit = {},
+    /** FR-PPL-07's wish history, read from the local mirror so it draws offline. */
+    wishes: List<Wish> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     if (person == null) {
@@ -153,6 +159,25 @@ fun PersonDetailScreen(
                 )
             }
 
+            /**
+             * FR-WSH-01, from the person screen.
+             *
+             * The LABEL comes from the tone, not from the feature's name. FR-REM-11 already
+             * makes the solemn notification say "Send message" rather than "Send wish", and
+             * this button is the same action reached another way — the two must not disagree
+             * about what the app calls it on a death anniversary.
+             *
+             * Shown even with no dates recorded: the composer falls back to a birthday, and
+             * somebody who wants to send a message to a person they have stored should not
+             * have to add a date first.
+             */
+            Button(
+                onClick = { onSendWish(card.nextEvent?.id) },
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("person_send_wish"),
+            ) {
+                Text(if (person.isSolemn) "Send a message" else "Send a wish")
+            }
+
             // ---- events (FR-PPL-03) ----
             SectionHeader("Dates")
             person.events.sortedBy { it.type.ordinal }.forEach { event ->
@@ -192,6 +217,8 @@ fun PersonDetailScreen(
                     )
                 }
             }
+
+            WishHistory(person = person, wishes = wishes)
 
             TextButton(
                 onClick = { confirmDelete = true },
@@ -387,3 +414,39 @@ private fun TraitSection(
 }
 
 
+
+/**
+ * FR-PPL-07's wish history, and FR-HIS-01's "what was sent, tone, language, channel".
+ *
+ * **The heading is tone-split.** "Wish history" on somebody who has died is the shape of
+ * failure FR-EVT-04 is about — the record is the same record, and what the app calls it is
+ * not. `SolemnStrings` does this for every other string on this screen; this follows it.
+ *
+ * Reads the local mirror, so it draws with the radio off like everything else here. An empty
+ * history shows nothing at all rather than an empty-state card: most people on most screens
+ * have never been sent anything through this app, and a permanent "no wishes yet" box on
+ * every one of 575 person screens is clutter, not guidance. The button above it is the
+ * affordance.
+ */
+@Composable
+private fun WishHistory(person: Person, wishes: List<Wish>) {
+    if (wishes.isEmpty()) return
+
+    SectionHeader(if (person.isSolemn) "Messages sent" else "Wishes sent")
+    wishes.forEach { wish ->
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Text(
+                // The year and the occasion, which is how a person remembers one of these.
+                buildString {
+                    append(wish.occurrenceYear)
+                    append(" · ")
+                    append(wish.type.label)
+                    wish.channel?.let { append(" · ").append(it.label) }
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(wish.messageText, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}

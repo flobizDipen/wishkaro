@@ -25,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,8 @@ fun UpcomingListScreen(
     sections: List<UpcomingSection>?,
     focusedPersonId: String?,
     onOpenPerson: (String) -> Unit,
+    /** FR-WSH-01's second entry point: straight from the card to the composer. */
+    onSendWish: (String, String) -> Unit = { _, _ -> },
     onAddPerson: () -> Unit,
     onOpenImport: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,6 +93,7 @@ fun UpcomingListScreen(
                     entry = entry,
                     highlighted = entry.personId == focusedPersonId,
                     onClick = { onOpenPerson(entry.personId) },
+                    onSendWish = { onSendWish(entry.personId, entry.event.id) },
                 )
             }
         }
@@ -122,7 +126,12 @@ private fun SectionHeader(section: UpcomingSection) {
 }
 
 @Composable
-private fun UpcomingRow(entry: UpcomingEntry, highlighted: Boolean, onClick: () -> Unit) {
+private fun UpcomingRow(
+    entry: UpcomingEntry,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+    onSendWish: () -> Unit = {},
+) {
     // Tone comes from the PERSON, never from the event type: a deceased person's birthday is
     // a SOLEMN event whose type is still BIRTHDAY (FR-EVT-05).
     val tone = toneFor(entry.person)
@@ -166,6 +175,27 @@ private fun UpcomingRow(entry: UpcomingEntry, highlighted: Boolean, onClick: () 
                 )
                 entry.person.relationToOwner?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            /**
+             * FR-WSH-01 from the event card, and the reason it is only on the near ones.
+             *
+             * The question M3 §6.1 bought: who can reach this a week after they start using
+             * the app? With 575 people the list runs to hundreds of rows, and a send button
+             * on every one of them is a wall of buttons for occasions months away. Within a
+             * week is when somebody actually wants to write something, and the person screen
+             * is the route for everything else.
+             *
+             * The LABEL is tone-split, like the notification action and the person screen:
+             * "Send" on a birthday, "Message" on a remembrance. Short because it sits in a
+             * row beside a countdown.
+             */
+            if (entry.daysUntil in 0..7) {
+                TextButton(
+                    onClick = onSendWish,
+                    modifier = Modifier.testTag("upcoming_send_${'$'}{entry.event.id}"),
+                ) {
+                    Text(if (entry.isSolemn) "Message" else "Send")
                 }
             }
             Text(

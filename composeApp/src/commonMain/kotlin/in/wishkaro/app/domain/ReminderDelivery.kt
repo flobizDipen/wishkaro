@@ -126,3 +126,52 @@ class ReminderDelivery(
         return DeliveryOutcome.SHOWN
     }
 }
+
+/**
+ * Where a notification's **Send wish** / **Send message** action should land (FR-WSH-01).
+ *
+ * M2 shipped both buttons pointing at `wishkaro://person/<id>` — the same link as tapping
+ * the notification body — because the composer did not exist. M5 is what they were waiting
+ * for, and the labels and placement are already decided (FR-REM-04, FR-REM-11): the solemn
+ * ladder says "Send message" and must not regress to "Send wish".
+ *
+ * The event id is recovered from the DEDUPE KEY rather than added to the push payload.
+ * `dedupeKeyFor` is `${eventId}:${occurrenceYear}:${offset}` and both sides already compute
+ * it — see `dedupe-key.ts` and M2's rewrite migration. Taking it from there means no new
+ * field on the wire, no server change, and no second source of truth for which event a
+ * reminder is about. A key that does not parse yields a link with no event, which the
+ * composer resolves to the person's next occasion — the same thing the person screen's own
+ * button does.
+ *
+ * Pure, so the parsing is tested without a device: the Intent around it is three lines.
+ */
+fun composerDeepLink(reminder: DeliverableReminder): String? {
+    val personId = reminder.personId ?: return null
+    // A self-test or a digest is about nobody in particular and offers no action anyway.
+    if (reminder.type == "TEST" || reminder.type == "DIGEST") return null
+
+    val eventId = eventIdFromDedupeKey(reminder.dedupeKey)
+    return if (eventId != null) {
+        "wishkaro://wish/$personId?event=$eventId"
+    } else {
+        "wishkaro://wish/$personId"
+    }
+}
+
+/**
+ * The event id inside a reminder's dedupe key, or null.
+ *
+ * Deliberately strict about the shape. A snooze, a self-test (`test:${user}:${ms}`) and
+ * anything a newer server invents all fail to parse here, and the caller degrades to "the
+ * next occasion" rather than building a link to an event id that is really a timestamp.
+ */
+internal fun eventIdFromDedupeKey(dedupeKey: String): String? {
+    val parts = dedupeKey.split(':')
+    if (parts.size != 3) return null
+    val (eventId, year, _) = parts
+    if (eventId.isBlank() || eventId == "test") return null
+    // The middle segment is an occurrence YEAR. If it is not, this is not the key shape
+    // this function understands, whatever it looks like.
+    if (year.toIntOrNull() == null) return null
+    return eventId
+}

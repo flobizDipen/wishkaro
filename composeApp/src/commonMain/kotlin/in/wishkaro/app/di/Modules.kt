@@ -23,6 +23,7 @@ import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.wish.WishStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +106,17 @@ val appModule = module {
     // widget resolves THIS from the Koin graph, never AppStore — a widget update runs when
     // no UI has ever been composed. docs/M4_PLAN.md §3.
     single { UpcomingRepository(local = get()) }
+
+    // M5. A feature store beside AppStore, the way ImportStore is: composer state is
+    // per-screen and short-lived, and AppStore is already this app's largest file.
+    single {
+        WishStore(
+            api = get<WishKaroApi>(),
+            local = get(),
+            sender = get(),
+            scope = get(),
+        )
+    }
 
     single {
         AppStore(

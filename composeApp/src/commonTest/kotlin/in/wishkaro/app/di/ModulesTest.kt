@@ -3,6 +3,7 @@ package `in`.wishkaro.app.di
 import `in`.wishkaro.app.data.TokenStore
 import `in`.wishkaro.app.platform.ContactsGateway
 import `in`.wishkaro.app.platform.FileGateway
+import `in`.wishkaro.app.platform.MessageSender
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
@@ -50,6 +51,10 @@ class ModulesTest {
                 // runtime permission, files need the Activity's result launchers.
                 ContactsGateway::class,
                 FileGateway::class,
+                // M5's one new platform seam: handing a prepared message to WhatsApp, the
+                // SMS app, the share sheet or the clipboard needs an Android Context, so
+                // `MessageSender` is supplied per platform like the rest of this list.
+                MessageSender::class,
                 // Built inside the module itself from those factories.
                 TokenStore::class,
                 CoroutineScope::class,

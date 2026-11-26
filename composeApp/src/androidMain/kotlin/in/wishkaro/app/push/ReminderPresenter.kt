@@ -17,6 +17,7 @@ import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.domain.DeliverableReminder
 import `in`.wishkaro.app.domain.DeliveryChannel
 import `in`.wishkaro.app.domain.ReminderDelivery
+import `in`.wishkaro.app.domain.composerDeepLink
 import `in`.wishkaro.app.platform.NotificationChannels
 
 /**
@@ -98,10 +99,24 @@ object ReminderPresenter {
         else -> NotificationChannels.MORNING_OF
     }
 
-    private fun openIntent(context: Context, reminder: DeliverableReminder, id: Int): PendingIntent {
+    private fun openIntent(
+        context: Context,
+        reminder: DeliverableReminder,
+        id: Int,
+        /**
+         * Overrides the reminder's own deep link, for an action that lands somewhere other
+         * than the notification body does.
+         *
+         * M5's **Send wish** and **Send message** are the only users: they go to the
+         * composer while the body still opens the person. Before this, both actions reused
+         * `openIntent` unchanged and therefore both went to the person screen — which was
+         * correct in M2, because the composer did not exist.
+         */
+        link: String? = null,
+    ): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            reminder.deepLink?.let { data = Uri.parse(it) }
+            (link ?: reminder.deepLink)?.let { data = Uri.parse(it) }
         }
         return PendingIntent.getActivity(
             context,
@@ -122,8 +137,9 @@ object ReminderPresenter {
      * Three rules, and the third is the one with teeth:
      *
      *  - T-7 leads with **Gift ideas**, morning-of leads with **Send wish** (FR-REM-04).
-     *  - Snooze and Mark done are wired for real. Send wish and Gift ideas belong to M5 and
-     *    M8, so they open the person rather than inventing half a feature.
+     *  - Snooze and Mark done are wired for real. **Send wish and Send message now open the
+     *    COMPOSER** (M5, FR-WSH-01); Gift ideas still opens the person, because M8 does not
+     *    exist and half a feature is worse than a link to the record.
      *  - **A SOLEMN reminder offers only Send message and Mark done** (FR-REM-11). Gift ideas
      *    is ABSENT, not disabled, and so is Snooze — "remind me again in an hour" is not a
      *    thing to offer about a death anniversary. REQUIREMENTS.md §11 files this under
@@ -144,12 +160,18 @@ object ReminderPresenter {
 
         if (reminder.sentiment != "CELEBRATORY") {
             return listOf(
-                Action("Send message") { ctx, r, id -> openIntent(ctx, r, id + ACTION_ID_OFFSET) },
+                // The LABEL does not change in M5 — FR-REM-11 decided it in M2 and this is
+                // the regression the build prompt names by name. Only the destination moves.
+                Action("Send message") { ctx, r, id ->
+                    openIntent(ctx, r, id + ACTION_ID_OFFSET, composerDeepLink(r))
+                },
                 markDone,
             )
         }
 
-        val sendWish = Action("Send wish") { ctx, r, id -> openIntent(ctx, r, id + ACTION_ID_OFFSET) }
+        val sendWish = Action("Send wish") { ctx, r, id ->
+            openIntent(ctx, r, id + ACTION_ID_OFFSET, composerDeepLink(r))
+        }
         val giftIdeas = Action("Gift ideas") { ctx, r, id ->
             openIntent(ctx, r, id + ACTION_ID_OFFSET * 2)
         }

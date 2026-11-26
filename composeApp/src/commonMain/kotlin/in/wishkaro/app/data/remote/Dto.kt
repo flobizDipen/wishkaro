@@ -350,3 +350,43 @@ data class ApiErrorIssue(
     val message: String,
     val code: String? = null,
 )
+
+// ---- M5: wish drafting (FR-WSH-01..04) ----
+
+/**
+ * What the client is allowed to ask for.
+ *
+ * Ids and choices, never meanings. No relation, no hobbies, no `sentiment` — the server looks
+ * those up, and `sentiment` in particular decides which prompt family runs and which tones
+ * are legal, so a client that could assert it could ask for a Funny draft about a death
+ * anniversary. The server's schema is `.strict()` and would reject one anyway; not having a
+ * field to put it in is the half that makes it a compile error here.
+ */
+@Serializable
+data class DraftWishRequest(
+    val personId: String,
+    val eventId: String? = null,
+    val eventType: String,
+    val occurrenceYear: Int,
+    val tone: String,
+    val language: String,
+    /** Drafts turned down in THIS sitting (FR-WSH-04). Ephemeral — nothing is stored. */
+    val avoid: List<String> = emptyList(),
+)
+
+@Serializable
+data class DraftWishResponse(
+    val text: String,
+    val tone: String,
+    val language: String,
+    /**
+     * AI or TEMPLATE, decided by the SERVER.
+     *
+     * The client does not get to say whether a model wrote this. Writing AI into the history
+     * for something a template produced would be the app lying in its own records, and the
+     * server is the only side that knows which provider served the call.
+     */
+    val source: String = "AI",
+    val model: String? = null,
+    val draftedAt: String? = null,
+)

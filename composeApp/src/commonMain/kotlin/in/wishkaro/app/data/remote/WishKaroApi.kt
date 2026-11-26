@@ -116,6 +116,25 @@ class WishKaroApi(
             }
         }.decode()
 
+    /**
+     * FR-WSH-01..04. One drafted message.
+     *
+     * POST although it reads nothing: it costs money, it is rate limited, and it is not
+     * idempotent — Regenerate exists precisely to get a different answer to the same
+     * question.
+     *
+     * Throws [ApiException] like every other call here, and the composer is expected to
+     * catch it: a 429, a 503 and a dead network all mean the same thing to the user, which
+     * is "here is a message this phone wrote, edit it" (docs/M5_PLAN.md §4.2).
+     */
+    suspend fun draftWish(body: DraftWishRequest): DraftWishResponse =
+        authed { token ->
+            client.post("$baseUrl/v1/wishes/draft") {
+                header("Authorization", "Bearer $token")
+                setBody(body)
+            }
+        }.decode()
+
     override suspend fun syncPull(cursor: String?): SyncPullResponse =
         authed { token ->
             client.get("$baseUrl/v1/sync") {
