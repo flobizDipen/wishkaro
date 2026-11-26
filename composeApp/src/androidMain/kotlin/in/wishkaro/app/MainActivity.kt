@@ -27,16 +27,14 @@ class MainActivity : ComponentActivity() {
 
     private val store: AppStore by inject()
 
-    /** One in-flight permission request at a time; completed by the launcher callback. */
-    private var pendingPermission: CompletableDeferred<Boolean>? = null
-
+    // The in-flight asks live on the BRIDGES, not here. A field on the Activity is orphaned
+    // the moment the Activity is destroyed — the rebuilt one completes its own null field
+    // and the coroutine awaiting the old one waits for ever. That is what locked the
+    // contacts import shut after a rotation; see M4_VERIFY.md §0.6.
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            pendingPermission?.complete(granted)
-            pendingPermission = null
+            PermissionBridge.pending.complete(granted)
         }
-
-    private var pendingContactsPermission: CompletableDeferred<Boolean>? = null
 
     /**
      * ACTION_OPEN_DOCUMENT for the spreadsheet, ACTION_CREATE_DOCUMENT for the corrected CSV
@@ -60,8 +58,7 @@ class MainActivity : ComponentActivity() {
 
     private val contactsPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            pendingContactsPermission?.complete(granted)
-            pendingContactsPermission = null
+            ContactsPermissionBridge.pending.complete(granted)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,7 +71,7 @@ class MainActivity : ComponentActivity() {
                 true
             } else {
                 val deferred = CompletableDeferred<Boolean>()
-                pendingPermission = deferred
+                PermissionBridge.pending.deferred = deferred
                 // shouldShowRequestPermissionRationale is true on a second ask; the
                 // rationale itself is the sign-in screen's copy plus this timing — the
                 // dialog appears right after sign-in, when the reason is self-evident
@@ -101,7 +98,7 @@ class MainActivity : ComponentActivity() {
             val askedBefore = prefs.getBoolean(ASKED_FOR_CONTACTS, false)
 
             val deferred = CompletableDeferred<Boolean>()
-            pendingContactsPermission = deferred
+            ContactsPermissionBridge.pending.deferred = deferred
             contactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
             val granted = deferred.await()
 

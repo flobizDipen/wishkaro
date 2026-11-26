@@ -212,8 +212,14 @@ I am not picking. The options:
 | **C** | Drop Nav3, use `rememberListDetailPaneScaffoldNavigator` on its own | Two navigators that do not know about each other — the duplication this project has refused three times |
 
 A keeps the letter of FR-VIEW-06 (it *is* Material 3 Adaptive drawing the two panes) and
-gives up only the convenience wrapper. **Unless you say otherwise, I will take A** — but it
-is a documented requirement and you should see the swap, not discover it in the diff.
+gives up only the convenience wrapper.
+
+> **DECIDED: option A. Dipen's choice, taken after reading this section rather than finding
+> the swap in a diff.** Material 3 Adaptive 1.2.0 directly for `currentWindowAdaptiveInfo()`,
+> `WindowSizeClass`, hinge posture and `ListDetailPaneScaffold`; the Navigation 3 `Scene`
+> written by hand from the documented recipe. `REQUIREMENTS.md` carries an amendment against
+> FR-VIEW-06 saying so with the AGP-8 reason, the same way M3 amended FR-IMP-04 rather than
+> leaving a documented thing that is not what was built.
 
 **(b) The saveable back stack needs an explicit serializer module in common code.**
 
@@ -250,6 +256,13 @@ write into `M4_VERIFY.md` knowing it was hollow.
 
 **Proposal: drop everything except `keyboardHidden`**, so rotation, fold, resize and
 multi-window all recreate the Activity, and then make the state genuinely survive it.
+
+> **DECIDED: do it.** Approved on the grounds set out below — writing a hollow claim into a
+> verification document is the one thing this project's checklist exists to prevent. The
+> condition attached to the approval was that the picker and the two permission flows under
+> rotation are verified rather than assumed, and that anything needing more than a call-site
+> fix is reported rather than quietly reverted. **That condition found a real bug**, which is
+> written up in `M4_VERIFY.md` §0.6 along with its fix.
 
 **This is the riskiest single line in the plan, and here is the risk, named.** Recreation on
 rotate puts new pressure on exactly the seam that produced M3's seventh finding: the

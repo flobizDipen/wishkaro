@@ -73,6 +73,43 @@ date.
 **`tap` prints the node it resolved.** It had been piped to `/dev/null`. A unique match is
 not the same as the right match.
 
+### 0.6 The manifest change broke the contacts import, exactly where the plan said it would
+
+`M4_PLAN.md` §2.5 named this risk before the manifest changed: dropping `configChanges`
+means rotation rebuilds the Activity every time, and the `CompletableDeferred` bridges in
+`MainActivity` are the shape that produced M3's seventh finding. The commitment was that the
+picker and the two permission flows under rotation would be the first thing verified, with a
+test rather than a hope. **That verification was not done before the PR was opened.** It was
+done afterwards, when the parent session held me to it, and it found a live bug.
+
+**The file picker survived.** Open "Choose a file", rotate while the system picker is up,
+pick `corrected.csv` — and the app advances to the column mapping, "6 rows". The deferred
+created before the rotation was completed by the rebuilt Activity and the awaiting coroutine
+resumed. End to end.
+
+**The contacts permission did not.** Revoke `READ_CONTACTS`, start the contacts import,
+rotate while the system permission dialog is up, then grant:
+
+- the permission is granted (`granted=true` in `dumpsys package`);
+- the app sits on the "Read your contacts?" rationale screen;
+- **tapping Continue again does nothing.** The flow is locked shut, force-stop the only cure.
+
+That is M3's seventh finding, in a new place, made reachable by turning the phone sideways.
+
+**The cause is an asymmetry between three bridges that look alike.** `FilePickerBridge`
+parks its pending result in a GLOBAL holder, which is why the picker survived. Both
+permission bridges held theirs in a **private field on `MainActivity`** — so the rebuilt
+Activity's launcher completed its own null field, and the coroutine awaiting the old
+Activity's deferred waited for ever.
+
+**Fixed** by giving the permission bridges the same global holder the picker already had,
+and moving `CompletableDeferredHolder` out of `FilePickerBridge` so all three share one.
+Verified by repeating the exact sequence: after the fix, granting the permission after a
+rotation goes straight to "Choose who comes in · 2 of 515 selected".
+
+This is the whole argument for §2.5 in one incident: with the old `configChanges` the bug
+was there and unreachable, and FR-VIEW-07 would have been written up as passing.
+
 ### 0.5 The disk ran out mid-milestone
 
 244 MB free of 460 GB when M4 started — a sixth of the 1.4 GB M1 called a cliff. The
@@ -89,7 +126,7 @@ of the owner's own was deleted.
 | 1 | All four views work on a real phone against the 566-person account, and the list is usable at that size — scrolling, searching, filtering without visible jank | **Pass.** All four looked at on the device against 575 records (§2). Jank measured with `gfxinfo` over six hard flings: **4.35% janky frames, p50 9ms, p99 42ms, 0 missed vsyncs** — after the fix in §2.1. Search narrowed 575 to one |
 | 2 | Every view's empty state leads somewhere | **PARTIAL.** The calendar's two empty states were seen on the device ("Tap a day with a dot…", and the per-day "Nothing on this day"). The Upcoming, People and Timeline empty states were **not** seen, because the only account available has 575 people in it and emptying it is not a tidy-up (§4.2) |
 | 3 | Two-pane list-detail on a tablet or large foldable, with the rail, and dialogs as side sheets | **Pass, on a phone-shaped window.** Verified at 923dp (the Pixel 9a is genuinely expanded in landscape) and again at **1484×928dp** by resizing the running app to tablet geometry with `wm size`. **Not on tablet hardware**: the tablet emulator has no Google account and reaches only the sign-in screen (§4.1) |
-| 4 | Fold, unfold, rotate, and split-screen on a real device: no restart, no lost state, including mid-edit state in a form | **PARTIAL.** Rotation and process death: **pass**, including a half-typed form (§3.1). Fold/unfold: the app survives it on an emulated Pixel Fold with 0 fatal exceptions and the window crossing 411dp↔841dp, but **with no session there is no state to lose**, so the "no lost state" half is unproven on a fold. Split-screen: the app launches and runs in `mWindowingMode=multi`, but a genuine side-by-side resize against a second app was **not driven** |
+| 4 | Fold, unfold, rotate, and split-screen on a real device: no restart, no lost state, including mid-edit state in a form | **PARTIAL.** Rotation and process death: **pass**, including a half-typed form (§3.1), and the file picker and contacts permission flows now both survive a rotation mid-flight — the second of those was broken and is fixed (§0.6). Fold/unfold: the app survives it on an emulated Pixel Fold with 0 fatal exceptions and the window crossing 411dp↔841dp, but **with no session there is no state to lose**, so the "no lost state" half is unproven on a fold. Split-screen: the app launches and runs in `mWindowingMode=multi`, but a genuine side-by-side resize against a second app was **not driven** |
 | 5 | State restoration has automated tests, not only a device walkthrough | **Pass.** 9 instrumented tests — `StateRestorationTester` for saved state, `ActivityScenario.recreate()` for a real onDestroy/onCreate, and three for the hinge arithmetic. Confirmed by reverting: making the selected tab a plain `remember` turns two red; deleting the hinge gap turns three red. **They do not run in CI** (§5) |
 | 6 | The widget in all three sizes on a real home screen, showing real data | **PARTIAL.** On the owner's actual home screen with the real account throughout. **Two of the four declared sizes were observed** — the 4×2 default and the taller bucket, which shows three entries and "+5 more" where the default shows two. The 2×2 and the tablet-sized bucket were **not placed** |
 | 7 | Tapping a widget entry opens that person; tapping the header opens the app | **Pass.** An entry opened Aadhya Menon 10, and a second opened Anika Pillai 25; the header brought the app forward from the launcher. Both go down M2's `wishkaro://` route |

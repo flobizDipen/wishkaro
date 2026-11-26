@@ -10,7 +10,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import `in`.wishkaro.app.BuildConfig
-import kotlinx.coroutines.CompletableDeferred
+import `in`.wishkaro.app.platform.CompletableDeferredHolder
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -63,10 +63,14 @@ object PermissionBridge {
 
     suspend fun request(): Boolean = requester?.invoke() ?: false
 
-    /** Used by MainActivity to turn a permission callback into a suspending call. */
-    class Pending {
-        val result = CompletableDeferred<Boolean>()
-    }
+    /**
+     * The in-flight ask, held HERE rather than on the Activity.
+     *
+     * It was a private field on MainActivity, which meant a rotation while the system
+     * dialog was up orphaned it: the rebuilt Activity's launcher completed its own null
+     * field and the coroutine awaiting the old one never resumed. `M4_VERIFY.md` §0.6.
+     */
+    val pending = CompletableDeferredHolder<Boolean>()
 }
 
 class AndroidNotificationGateway(private val context: Context) : NotificationGateway {

@@ -90,7 +90,18 @@ guard() {
   esac
 
   if ! grep -qE "$ACT_SHORT|$ACT_FULL" <<<"$focus"; then
-    die "focused window is not $ACT_SHORT — refusing to send input. ($focus)"
+    # A Compose DropdownMenu, and anything else drawn in a popup, focuses a window called
+    # "Pop-up window" that names no package at all. Refusing those made the guard reject the
+    # app's own overflow menu. mFocusedApp still names the Activity behind the popup, so that
+    # is what attributes it — a popup over somebody ELSE's Activity is still refused.
+    local focused_app
+    focused_app="$(adb shell dumpsys window | grep -m1 mFocusedApp || true)"
+    if [[ "$focus" == *"Pop-up window"* ]] &&
+       grep -qE "$ACT_SHORT|$ACT_FULL" <<<"$focused_app"; then
+      note "popup over $ACT_SHORT"
+    else
+      die "focused window is not $ACT_SHORT — refusing to send input. ($focus)"
+    fi
   fi
 
   local fatals

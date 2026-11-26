@@ -21,6 +21,9 @@ object ContactsPermissionBridge {
     var requester: (suspend () -> PermissionOutcome)? = null
 
     suspend fun request(): PermissionOutcome = requester?.invoke() ?: PermissionOutcome.DENIED
+
+    /** Same reason as [PermissionBridge.pending]: a rotation must not orphan the ask. */
+    val pending = CompletableDeferredHolder<Boolean>()
 }
 
 /**
