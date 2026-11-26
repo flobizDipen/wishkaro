@@ -31,6 +31,25 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const payload = exception.getResponse();
+
+      /**
+       * `Retry-After`, when the thrower worked out how long to wait.
+       *
+       * M5's rate limiter (FR-WSH-08) computes the seconds until its window rolls, and
+       * `toErrorBody` keeps only `code`, `message` and `details` — so without this the number
+       * was computed and then dropped on the floor. That is the first shape
+       * MILESTONE_CHECKLIST.md tells you to look for, and this one was found by running a
+       * curl rather than by a test, because the test asserted on the thrown exception and
+       * never saw the wire.
+       *
+       * The header rather than the body: it is what HTTP has for exactly this, a client can
+       * act on it without parsing anything, and `details` already means "which row failed
+       * validation" to the sync client — putting a number there would make it try to
+       * attribute the number to a row.
+       */
+      const retryAfter = retryAfterSecondsOf(payload);
+      if (retryAfter !== null) response.setHeader('Retry-After', String(retryAfter));
+
       response.status(status).json(toErrorBody(status, payload));
       return;
     }
@@ -93,6 +112,14 @@ function asBodyParserError(
   if (typeof type !== 'string') return null;
   const known = BODY_PARSER_ERRORS[type];
   return known ? { ...known, type } : null;
+}
+
+/** A whole, non-negative number of seconds from the thrown payload, or null. */
+function retryAfterSecondsOf(payload: unknown): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = (payload as { retryAfterSeconds?: unknown }).retryAfterSeconds;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return Math.ceil(value);
 }
 
 function toErrorBody(status: number, payload: unknown): ErrorBody {
