@@ -6,6 +6,7 @@ import { REDIS_CONNECTION } from '../../queue/queue.constants';
 import { FakeLlmProvider } from './llm/fake.provider';
 import { LLM_PROVIDER, type LlmProvider } from './llm/llm-provider';
 import { OpenAiProvider } from './llm/openai.provider';
+import { ModerationService } from '../moderation/moderation.service';
 import { WishesModule } from './wishes.module';
 
 /**
@@ -46,8 +47,12 @@ async function providerFor(over: Partial<Record<string, unknown>>): Promise<LlmP
       { provide: APP_ENV, useValue: { ...baseEnv, ...over } },
       { provide: PrismaService, useValue: {} },
       { provide: REDIS_CONNECTION, useValue: {} },
+      // M6: ModerationModule is @Global in the app, so DraftingService resolves it from
+      // outside WishesModule. Stubbed for the same reason the other three are — the thing
+      // under test is which LLM provider the factory returns, and nothing else.
+      { provide: ModerationService, useValue: {} },
     ],
-    exports: [APP_ENV, PrismaService, REDIS_CONNECTION],
+    exports: [APP_ENV, PrismaService, REDIS_CONNECTION, ModerationService],
   })
   class StubGlobals {}
 
