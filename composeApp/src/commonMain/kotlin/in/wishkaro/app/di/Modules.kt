@@ -18,7 +18,10 @@ import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
 import `in`.wishkaro.app.platform.PlatformConfig
 import `in`.wishkaro.app.platform.ReminderScheduler
+import `in`.wishkaro.app.platform.ContactsGateway
+import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.ui.AppStore
+import `in`.wishkaro.app.ui.importing.ImportStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +88,15 @@ val appModule = module {
             local = get(),
             googleSignIn = get<GoogleSignInClient>(),
             notifications = get<NotificationGateway>(),
+        )
+    }
+
+    single {
+        ImportStore(
+            people = get(),
+            contacts = get<ContactsGateway>(),
+            files = get<FileGateway>(),
+            scope = get(),
         )
     }
 

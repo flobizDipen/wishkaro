@@ -13,6 +13,11 @@ import androidx.compose.runtime.collectAsState
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.Screen
 import `in`.wishkaro.app.ui.addperson.AddPersonScreen
+import `in`.wishkaro.app.ui.importing.ImportContactsScreen
+import `in`.wishkaro.app.ui.importing.ImportFileScreen
+import `in`.wishkaro.app.ui.importing.ImportResultScreen
+import `in`.wishkaro.app.ui.importing.ImportStartScreen
+import `in`.wishkaro.app.ui.importing.ImportStore
 import `in`.wishkaro.app.ui.people.PeopleListScreen
 import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
@@ -21,6 +26,9 @@ import `in`.wishkaro.app.ui.person.PersonDetailScreen
 import `in`.wishkaro.app.ui.settings.SettingsScreen
 import `in`.wishkaro.app.ui.signin.SignInScreen
 import `in`.wishkaro.app.ui.theme.WishKaroTheme
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.todayIn
+import kotlin.time.Clock
 import org.koin.compose.koinInject
 
 @Composable
@@ -40,6 +48,9 @@ fun App(modifier: Modifier = Modifier) {
         val settings by store.settings.collectAsState()
         val reliability by store.reliability.collectAsState()
         val selfTest by store.selfTest.collectAsState()
+        val importStore: ImportStore = koinInject()
+        val importResult by importStore.result.collectAsState()
+        val savedReport by importStore.savedReport.collectAsState()
         val snackbar = remember { SnackbarHostState() }
 
         LaunchedEffect(Unit) { store.start() }
@@ -71,6 +82,7 @@ fun App(modifier: Modifier = Modifier) {
                     onOpenDeleted = store::openDeleted,
                     onRefresh = store::refresh,
                     onOpenSettings = store::openSettings,
+                    onOpenImport = store::openImport,
                     onSignOut = store::signOut,
                     modifier = inner,
                 )
@@ -134,6 +146,44 @@ fun App(modifier: Modifier = Modifier) {
                     onRequestExactAlarms = store::requestExactAlarms,
                     modifier = inner,
                 )
+
+                // ---- M3: import ----
+
+                Screen.ImportStart -> ImportStartScreen(
+                    onContacts = store::openImportContacts,
+                    onFile = store::openImportFile,
+                    onBack = store::back,
+                    modifier = inner,
+                )
+
+                Screen.ImportContacts -> ImportContactsScreen(
+                    store = importStore,
+                    onBack = store::back,
+                    onDone = store::openImportResult,
+                    modifier = inner,
+                )
+
+                Screen.ImportFile -> ImportFileScreen(
+                    store = importStore,
+                    today = Clock.System.todayIn(TimeZone.currentSystemDefault()),
+                    onBack = store::back,
+                    onDone = store::openImportResult,
+                    modifier = inner,
+                )
+
+                Screen.ImportResult -> importResult?.let {
+                    ImportResultScreen(
+                        result = it,
+                        savedReport = savedReport,
+                        busy = busy,
+                        onSaveFailures = importStore::saveFailedRows,
+                        onDone = {
+                            importStore.clearResult()
+                            store.finishImport()
+                        },
+                        modifier = inner,
+                    )
+                } ?: Unit
 
                 Screen.Deleted -> DeletedPeopleScreen(
                     people = deleted,

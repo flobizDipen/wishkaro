@@ -1,6 +1,10 @@
 package `in`.wishkaro.app.di
 
+import `in`.wishkaro.app.platform.ContactsGateway
 import `in`.wishkaro.app.platform.DatabaseDriverFactory
+import `in`.wishkaro.app.platform.FileGateway
+import `in`.wishkaro.app.platform.IosContactsGateway
+import `in`.wishkaro.app.platform.IosFileGateway
 import `in`.wishkaro.app.platform.GoogleSignInClient
 import `in`.wishkaro.app.platform.IosGoogleSignInClient
 import `in`.wishkaro.app.platform.IosNotificationGateway
@@ -20,4 +24,9 @@ actual fun platformModule(): Module = module {
     // rather than a half-written UNUserNotificationCenter path nobody has ever run.
     single<ReminderScheduler> { NoopReminderScheduler() }
     single<OemBatteryHelper> { NoopOemBatteryHelper() }
+    // Same for M3's two new seams: compile, report honestly, do nothing. A contacts gateway
+    // that says DENIED_PERMANENTLY is exactly right here — there is no dialog to show and
+    // asking again would do nothing, which is what that outcome means.
+    single<ContactsGateway> { IosContactsGateway() }
+    single<FileGateway> { IosFileGateway() }
 }

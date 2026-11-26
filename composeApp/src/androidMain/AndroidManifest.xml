@@ -7,6 +7,17 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+        Contacts import (FR-IMP-01). A runtime permission, asked for with a rationale BEFORE
+        the system dialog and never at launch: the ask happens when the user has chosen to
+        import, so the reason is on screen when the dialog appears.
+
+        Read-only, and only what the review screen needs — name, phone, birthday, photo for
+        display. Contacts the user does not select are never persisted, never synced, and
+        never written to a log, an analytics event or a crash report.
+    -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!--
         Re-arm alarms after a reboot. AlarmManager clears every alarm in the system on boot,
         so without this the first restart silently disables the whole local fallback.
     -->
