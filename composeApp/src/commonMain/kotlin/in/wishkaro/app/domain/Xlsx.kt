@@ -98,6 +98,13 @@ object Xlsx {
             val tag = cursor.next() ?: break
             when {
                 tag.name == "row" && !tag.isEnd -> {
+                    // `r="14"` is the sheet's own row number, and Excel omits entirely empty
+                    // rows from the XML — so without this, position in the list is not the
+                    // row the user sees, and the failure report names the wrong line. The
+                    // same reasoning as `r="C7"` on a cell a few lines below; this reader
+                    // honoured it for columns and threw it away for rows.
+                    val target = tag.attributes["r"]?.toIntOrNull()?.minus(1)
+                    if (target != null) while (rows.size < target) rows.add(emptyList())
                     row = mutableListOf()
                     column = 0
                 }
@@ -140,7 +147,9 @@ object Xlsx {
             }
         }
 
-        return rows.filterNot { cells -> cells.all { it.isBlank() } }
+        // Blank rows are kept so an index is a sheet row number; the importer skips them
+        // after numbering. See Csv.parse for the same note.
+        return rows
     }
 
     // ---------------------------------------------------------------------------------

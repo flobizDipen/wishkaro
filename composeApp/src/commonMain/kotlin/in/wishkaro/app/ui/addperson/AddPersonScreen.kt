@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
@@ -89,7 +90,7 @@ fun AddPersonScreen(
         ) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = { name = it.take(FieldLimits.NAME) },
                 label = { Text("Name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),

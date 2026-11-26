@@ -280,6 +280,65 @@ class ImportPlanTest {
     }
 
     // ---------------------------------------------------------------------------------
+    // The row number the user is told is the row in THEIR file
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * A blank line between households is ordinary in a family spreadsheet, and FR-IMP-07's
+     * whole purpose is that the user can go and find the row. Numbering after the blank
+     * lines had been filtered out made the report point at a different, perfectly good
+     * record — and each further blank widened the drift.
+     */
+    @Test
+    fun a_blank_line_does_not_shift_the_rows_below_it() {
+        val file = Csv.parse(
+            listOf(
+                "Name,Date,Relation",       // line 1
+                "Aarav Shah,04/01/1990,Cousin",   // line 2
+                "",                         // line 3 — the household separator
+                "Diya Menon,31/04/1990,Colleague", // line 4, and it is broken
+            ).joinToString("\n"),
+        )
+
+        val plan = planImport(file, mapping, settings, DedupIndex(), today)
+
+        assertEquals(4, plan.failed.single().row.number, "the user opens line 4 and finds it")
+    }
+
+    @Test
+    fun several_blank_lines_do_not_accumulate_drift() {
+        val lines = mutableListOf("Name,Date,Relation")
+        repeat(3) {
+            lines += "Person$it,04/01/1990,Friend"
+            lines += ""
+        }
+        lines += "Myra Bhatt,not a date,Friend"
+
+        val plan = planImport(Csv.parse(lines.joinToString("\n")), mapping, settings, DedupIndex(), today)
+
+        assertEquals(lines.size, plan.failed.single().row.number)
+        assertEquals(3, plan.ready.size, "and the blank lines are not people")
+    }
+
+    @Test
+    fun a_blank_line_is_not_reported_as_a_row_that_failed() {
+        val file = Csv.parse("Name,Date,Relation\n\nAarav Shah,04/01/1990,Cousin")
+        val plan = planImport(file, mapping, settings, DedupIndex(), today)
+
+        assertTrue(plan.failed.isEmpty(), "a separator line is not a person with no name")
+        assertEquals(1, plan.ready.size)
+    }
+
+    @Test
+    fun a_stray_blank_line_above_the_headings_does_not_break_the_mapping() {
+        val file = Csv.parse("\nName,Date,Relation\nAarav Shah,04/01/1990,Cousin")
+        val plan = planImport(file, mapping, settings, DedupIndex(), today)
+
+        assertEquals(1, plan.ready.size, "the header is found, not assumed to be line 1")
+        assertEquals(3, plan.ready.single().row.number)
+    }
+
+    // ---------------------------------------------------------------------------------
     // The corrected CSV round trip
     // ---------------------------------------------------------------------------------
 

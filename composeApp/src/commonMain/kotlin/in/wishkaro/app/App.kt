@@ -48,6 +48,7 @@ fun App(modifier: Modifier = Modifier) {
         val settings by store.settings.collectAsState()
         val reliability by store.reliability.collectAsState()
         val selfTest by store.selfTest.collectAsState()
+        val blockedRecords by store.blockedRecords.collectAsState()
         val importStore: ImportStore = koinInject()
         val importResult by importStore.result.collectAsState()
         val savedReport by importStore.savedReport.collectAsState()
@@ -83,6 +84,7 @@ fun App(modifier: Modifier = Modifier) {
                     onRefresh = store::refresh,
                     onOpenSettings = store::openSettings,
                     onOpenImport = store::openImport,
+                    blockedRecords = blockedRecords,
                     onSignOut = store::signOut,
                     modifier = inner,
                 )

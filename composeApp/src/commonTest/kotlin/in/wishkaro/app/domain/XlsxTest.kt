@@ -127,7 +127,7 @@ class XlsxTest {
     }
 
     @Test
-    fun wholly_blank_rows_are_dropped() {
+    fun wholly_blank_rows_are_kept_so_that_an_index_is_a_sheet_row() {
         val sheet = """
             <worksheet><sheetData>
               <row r="1"><c r="A1" t="s"><v>0</v></c></row>
@@ -135,7 +135,29 @@ class XlsxTest {
               <row r="3"><c r="A3" t="s"><v>1</v></c></row>
             </sheetData></worksheet>
         """.trimIndent()
-        assertEquals(2, Xlsx.rows(sheet, listOf("Aarav", "Meera"), emptySet()).size)
+        // Kept, not dropped: position has to stay equal to the sheet's own row number or
+        // the failure report names the wrong line. The importer skips them afterwards.
+        assertEquals(3, Xlsx.rows(sheet, listOf("Aarav", "Meera"), emptySet()).size)
+    }
+
+    @Test
+    fun a_row_excel_left_out_entirely_still_holds_its_place() {
+        // Excel omits a wholly empty row from the XML rather than writing an empty <row>.
+        // Without reading `r`, row 4 would arrive at index 1 and the report would call it
+        // row 2 — and every further gap widens the drift.
+        val sheet = """
+            <worksheet><sheetData>
+              <row r="1"><c r="A1" t="s"><v>0</v></c></row>
+              <row r="4"><c r="A4" t="s"><v>1</v></c></row>
+            </sheetData></worksheet>
+        """.trimIndent()
+
+        val rows = Xlsx.rows(sheet, listOf("Aarav", "Meera"), emptySet())
+
+        assertEquals(4, rows.size)
+        assertEquals(listOf("Aarav"), rows[0])
+        assertTrue(rows[1].isEmpty() || rows[1].all { it.isBlank() })
+        assertEquals(listOf("Meera"), rows[3], "the fourth row is still the fourth row")
     }
 
     // ---------------------------------------------------------------------------------

@@ -2,6 +2,7 @@ package `in`.wishkaro.app.domain
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * The CSV reader, against the shapes real exports actually have.
@@ -79,9 +80,16 @@ class CsvTest {
     }
 
     @Test
-    fun blank_lines_are_dropped_but_blank_cells_are_not() {
-        val rows = Csv.parse("Name,Date\n\nAarav,04/01/1990\n\n")
-        assertEquals(2, rows.size)
+    fun blank_lines_are_KEPT_so_that_an_index_is_a_line_number() {
+        // Changed deliberately. These used to be dropped here, and the importer then
+        // numbered rows by position in the filtered list — so a spreadsheet with a blank
+        // line between households reported "Row 13" about row 14. Skipping them is the
+        // importer's job, after the numbering: see `importDataRows`.
+        val rows = Csv.parse("Name,Date\n\nAarav,04/01/1990")
+
+        assertEquals(3, rows.size)
+        assertTrue(rows[1].all { it.isBlank() }, "line 2 is blank, and is still line 2")
+        assertEquals(listOf("Aarav", "04/01/1990"), rows[2])
     }
 
     @Test

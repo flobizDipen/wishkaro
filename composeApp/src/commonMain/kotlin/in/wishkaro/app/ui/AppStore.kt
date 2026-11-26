@@ -10,6 +10,7 @@ import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
+import `in`.wishkaro.app.data.local.BlockedRow
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.repository.ReminderPlanRepository
 import `in`.wishkaro.app.domain.ReminderSettings
@@ -182,6 +183,23 @@ class AppStore(
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val deletedPeople: StateFlow<List<Person>> = people.observeDeleted()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Records the server refused by name, which this device has set aside (`sync_blocked`).
+     *
+     * This exists because the machinery to produce it already did and NOTHING READ IT. The
+     * chunked push blocks a row so one bad record cannot stop the outbox draining — which is
+     * exactly right — and the row then leaves the drain for ever, taking every event of that
+     * person with it, so no reminder is ever scheduled for them server-side. Until now the
+     * app said nothing at all.
+     *
+     * That is the silent partial success this whole milestone was built to prevent, arriving
+     * through the machinery built to prevent it. A mechanism with no output is not a
+     * mechanism, it is a place the problem goes to be forgotten.
+     */
+    val blockedRecords: StateFlow<List<BlockedRow>> = local.observeBlockedCount()
+        .map { count -> if (count == 0L) emptyList() else local.blockedRows() }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** The person behind whichever detail-ish screen is open. Null when none is. */

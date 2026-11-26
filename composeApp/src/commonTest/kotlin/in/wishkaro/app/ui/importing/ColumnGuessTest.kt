@@ -1,5 +1,6 @@
 package `in`.wishkaro.app.ui.importing
 
+import `in`.wishkaro.app.domain.headerRow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -69,5 +70,52 @@ class ColumnGuessTest {
         assertEquals("AZ", columnLetters(51))
         assertEquals("BA", columnLetters(52))
         assertNotEquals("[", columnLetters(26))
+    }
+
+    /**
+     * The loose end left by keeping blank rows: the guess read row 0 while the mapping
+     * screen read the first NON-blank row.
+     *
+     * On exactly the file this fix exists for — a stray blank line above the headings — the
+     * screen showed the right column names and the guess underneath them was made from an
+     * empty row, so nothing was mapped and the user re-did by hand what used to map itself.
+     * Nothing was silently wrong, which is why only a test catches it.
+     */
+    @Test
+    fun a_file_with_a_blank_line_above_its_headings_still_guesses_its_columns() {
+        val rows = listOf(
+            listOf("", "", ""),
+            listOf("Full Name", "Birthday", "How I know them"),
+            listOf("Aarav Shah", "04/01/1990", "Cousin"),
+        )
+
+        val mapping = guessMapping(headerRow(rows, hasHeaderRow = true))
+
+        assertEquals(0, mapping.name, "guessed from the headings, not from the blank line above them")
+        assertEquals(1, mapping.date)
+        assertEquals(2, mapping.relation)
+    }
+
+    @Test
+    fun the_guess_reads_the_same_row_the_mapping_screen_shows() {
+        // The property this pins is the one that broke: two call sites, one answer. Any
+        // future caller that re-derives the header its own way fails here.
+        val rows = listOf(
+            emptyList(),
+            listOf("", ""),
+            listOf("Name", "DOB"),
+            listOf("Meera Raghunathan", "1990-01-04"),
+        )
+
+        assertEquals(listOf("Name", "DOB"), headerRow(rows, hasHeaderRow = true))
+        assertEquals(0, guessMapping(headerRow(rows, hasHeaderRow = true)).name)
+    }
+
+    @Test
+    fun a_file_the_user_says_has_no_header_offers_no_guess_at_all() {
+        // Otherwise the first person in the file is read as column names and silently lost.
+        val rows = listOf(listOf("Aarav Shah", "04/01/1990"))
+
+        assertEquals(emptyList(), headerRow(rows, hasHeaderRow = false))
     }
 }
