@@ -685,3 +685,27 @@ the banner dead code.
   had changed (`0 pending, 0 blocked`, no stray text in any note). I stopped there rather
   than keep aiming blind taps at real contacts for a one-line `take()`. The banner, which is
   the substantive fix, *is* device-verified.
+
+### 12.5 The loose end in §12.1, found reviewing the fix
+
+Keeping blank rows made the header a thing you have to *find* rather than a row you can
+assume, and one call site was left still assuming it. `ImportStore` built the mapping state
+with `guessMapping(rows.firstOrNull().orEmpty())` while `FileState.Mapping.header` correctly
+took the first non-blank row.
+
+So on exactly the file shape §12.1 exists to support — a stray blank line above the headings
+— the mapping screen showed the right column names and the guess underneath them was made
+from an empty row. Every column came up unmapped, and the user mapped five columns by hand on
+a file that used to map itself.
+
+Nothing was silently wrong and no data was damaged, which is why only a test catches it.
+
+The fix is not to repeat the first-non-blank logic a third time. `headerRowIndex(rows)` and
+`headerRow(rows, hasHeaderRow)` now sit beside `importDataRows` in `ImportPlan.kt`, and all
+three callers — the data rows that begin after the header, the mapping screen that displays
+it, and the guess made from it — go through them. Two tests, both red when `headerRow` is
+reverted to row 0.
+
+This is the same two-places-must-agree drift `importDataRows` was written to end, surviving
+in the one call site that wanted the header for a different purpose. Worth noting as a shape:
+extracting a helper ends the drift only for the callers that adopt it.

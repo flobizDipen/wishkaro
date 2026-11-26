@@ -250,12 +250,32 @@ fun importDataRows(
     rows: List<List<String>>,
     hasHeaderRow: Boolean,
 ): List<IndexedValue<List<String>>> {
-    val headerIndex = rows.indexOfFirst { cells -> cells.any { it.isNotBlank() } }
+    val headerIndex = headerRowIndex(rows)
     val firstData = if (hasHeaderRow && headerIndex >= 0) headerIndex + 1 else 0
     return rows.withIndex()
         .drop(firstData)
         .filterNot { (_, cells) -> cells.all { it.isBlank() } }
 }
+
+/**
+ * Which row carries the user's column names: the first NON-BLANK row, not simply the first.
+ *
+ * The readers keep blank rows now, so that a position in the list is a line number in the
+ * user's file — which means a stray blank line above the headings leaves row 0 empty.
+ *
+ * THREE callers need this answer and must not disagree about it: the data rows begin after
+ * it, the mapping screen displays it, and the initial column guess is made from it. When the
+ * guess alone was still reading row 0, that file mapped correctly on screen and came up
+ * entirely unmapped underneath, so the user re-did by hand what used to map itself.
+ *
+ * -1 when every row is blank.
+ */
+fun headerRowIndex(rows: List<List<String>>): Int =
+    rows.indexOfFirst { cells -> cells.any { it.isNotBlank() } }
+
+/** The user's own column names — empty when they have told us the file has no header. */
+fun headerRow(rows: List<List<String>>, hasHeaderRow: Boolean): List<String> =
+    if (hasHeaderRow) rows.getOrNull(headerRowIndex(rows)).orEmpty() else emptyList()
 
 /** Marks an index entry that came from this file rather than from the database. */
 const val WITHIN_FILE_PREFIX = "row:"
