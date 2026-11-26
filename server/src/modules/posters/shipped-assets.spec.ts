@@ -54,9 +54,7 @@ describe('shipped server code reads nothing from outside the image', () => {
       // `docs/fixtures/` in its doc comment — correctly, since that is where the shared
       // table lives — and a test that could not tell a comment from code would either fail
       // on all of them or be switched off.
-      const code = source
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
       if (/\bdocs\/fixtures\b/.test(code)) {
         offenders.push(`${file}: references docs/fixtures in code`);

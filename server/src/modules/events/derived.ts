@@ -261,3 +261,49 @@ export function completenessSuggestions(input: CompletenessInput): CompletenessF
     .filter((field) => !have.has(field))
     .sort((a, b) => COMPLETENESS_WEIGHTS[b] - COMPLETENESS_WEIGHTS[a]);
 }
+
+// ---------------------------------------------------------------------------------------
+// Is this person deceased, counting the rows that are already written? (M6)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * `is_deceased` as it should be read **before** `recompute` has necessarily caught up.
+ *
+ * This is one expression that was already written down three times — in
+ * `PersonDerivationService.recompute` (`person.isDeceased || hasDeathAnniversary`) and twice
+ * in `SyncService` (`person.isDeceased || marksPersonDeceased(input.type)`). M6 needed it a
+ * fourth time, to pick a theme family, and a fourth copy of the most dangerous predicate in
+ * this product is not a thing to add. So it is a function, and the existing call sites use
+ * it.
+ *
+ * ## Why reading `person.is_deceased` on its own is a bug, twice proved
+ *
+ * `is_deceased` is DERIVED. A death anniversary row can exist while the person row still
+ * says false, because the flag is written by `recompute` and `recompute` runs after the
+ * write that created the event. M5 shipped two bugs in that window in one milestone:
+ *
+ *   - `454ea75` — the composer offered Funny and Poetic, and prefilled "Happy birthday,
+ *     Rohan", for somebody who had died.
+ *   - `cb5919d` — a sync batch carrying a new death anniversary AND a birthday wish stored
+ *     the wish as CELEBRATORY, permanently, and pushed that answer back down over the
+ *     phone's correct one.
+ *
+ * Both are "derived state read one step too early". M6's version of that failure is a
+ * picture of balloons on a remembrance, which is worse than a word because a picture is what
+ * gets sent, seen and screenshotted by a grieving family.
+ *
+ * So the poster pipeline does not wait and hope: it reads the person's LIVE event rows in
+ * the same query and ORs their types in. A death anniversary that exists in any form — the
+ * flag, or a row that implies it — makes the person deceased for every decision taken from
+ * that read.
+ *
+ * `liveEventTypes` must already exclude tombstoned rows. Deleting a death anniversary
+ * deliberately does not clear the flag (see `recompute`), so a person who was ever marked
+ * stays marked; this function only ever adds.
+ */
+export function isDeceasedConsidering(
+  personIsDeceased: boolean,
+  liveEventTypes: readonly EventType[],
+): boolean {
+  return personIsDeceased || liveEventTypes.some(marksPersonDeceased);
+}

@@ -48,10 +48,7 @@ async function quadrants(size: number) {
 }
 
 async function pixelAt(png: Buffer, x: number, y: number): Promise<[number, number, number]> {
-  const { data, info } = await sharp(png)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const offset = (y * info.width + x) * info.channels;
   return [data[offset], data[offset + 1], data[offset + 2]];
 }
@@ -157,11 +154,7 @@ describe('the compositor — FR-POS-01(c), FR-POS-05, FR-POS-06', () => {
         .toBuffer({ resolveWithObject: true });
 
       for (let i = 0; i < region.data.length; i += region.info.channels) {
-        if (
-          region.data[i] !== 123 ||
-          region.data[i + 1] !== 77 ||
-          region.data[i + 2] !== 200
-        ) {
+        if (region.data[i] !== 123 || region.data[i + 1] !== 77 || region.data[i + 2] !== 200) {
           const pixel = Math.floor(i / region.info.channels);
           throw new Error(
             `pixel ${pixel % box.width},${Math.floor(pixel / box.width)} of the photo box is ` +
@@ -333,9 +326,7 @@ describe('the compositor — FR-POS-01(c), FR-POS-05, FR-POS-06', () => {
 
       // The photo region is plain background: no border, no placeholder block, no silhouette.
       expect(await pixelAt(out.png, box.left + 10, box.top + 10)).toEqual([30, 30, 30]);
-      expect(await pixelAt(out.png, box.left + box.width - 10, box.top + 10)).toEqual([
-        30, 30, 30,
-      ]);
+      expect(await pixelAt(out.png, box.left + box.width - 10, box.top + 10)).toEqual([30, 30, 30]);
     });
 
     it('draws more ink than the photo layout does, because the type carries the poster', async () => {
@@ -375,7 +366,10 @@ describe('the compositor — FR-POS-01(c), FR-POS-05, FR-POS-06', () => {
       const off = await composePoster(request({ background, photo, attributed: false }));
 
       const region = async (png: Buffer) =>
-        sharp(png).extract({ ...box }).raw().toBuffer();
+        sharp(png)
+          .extract({ ...box })
+          .raw()
+          .toBuffer();
 
       // Identical inside the photo box; different somewhere outside it.
       expect((await region(on.png)).equals(await region(off.png))).toBe(true);
