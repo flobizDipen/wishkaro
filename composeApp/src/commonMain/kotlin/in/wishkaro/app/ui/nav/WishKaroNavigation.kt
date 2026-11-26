@@ -61,8 +61,11 @@ class WishKaroNavigation(
     private val currentStack: NavBackStack<NavKey>
         get() = stacks[topLevelRoute] ?: error("no stack for $topLevelRoute")
 
-    /** What is on top right now. Used to resolve the person a detail screen is showing. */
+    /** What is on top right now. */
     val current: NavKey get() = currentStack.last()
+
+    /** The same thing as a [Screen], which every key in this app is. */
+    val currentScreen: Screen? get() = current as? Screen
 
     /**
      * Switch tab, or push within the current one.

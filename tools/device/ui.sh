@@ -201,8 +201,41 @@ shot() {
   echo "$SHOTS/$name"
 }
 
+# The soft keyboard is drawn OVER the app, and uiautomator still reports the nodes behind it
+# with their own bounds. So a node can resolve perfectly and the tap can land on a letter
+# key — which is exactly what happened on 2026-11-26: a tap on the Upcoming tab typed a comma
+# into the search box instead, because the keyboard was still up from the previous step. The
+# `expect` afterwards caught it, which is the point of `expect`, but the tap should not have
+# been sent at all.
+#
+# The IME window's frame is reported as the whole screen, so there is nothing to intersect
+# against. Dismissing it is both simpler and what a person would do, and the node is resolved
+# AGAIN afterwards because closing the keyboard moves everything.
+dismiss_keyboard_if_shown() {
+  local shown
+  shown="$(adb shell dumpsys input_method | grep -m1 mInputShown || true)"
+  [[ "$shown" == *"mInputShown=true"* ]] || return 0
+
+  note "the keyboard is up; closing it before tapping"
+  adb shell input keyevent 111   # ESC
+  sleep 0.4
+  shown="$(adb shell dumpsys input_method | grep -m1 mInputShown || true)"
+  if [[ "$shown" == *"mInputShown=true"* ]]; then
+    adb shell input keyevent 4   # back
+    sleep 0.4
+    shown="$(adb shell dumpsys input_method | grep -m1 mInputShown || true)"
+  fi
+  [[ "$shown" == *"mInputShown=true"* ]] &&
+    die "the keyboard will not close — refusing to tap through it"
+  return 0
+}
+
 cmd_tap() {
   local selector="$1"
+  guard
+  dismiss_keyboard_if_shown
+  # Re-guard: `back` to close the keyboard can also pop a screen if the IME was already
+  # gone, and M3's whole seventh finding was about an Activity going away underneath.
   guard
   local line x y desc
   line="$(resolve "$selector")" || die "could not resolve $selector"

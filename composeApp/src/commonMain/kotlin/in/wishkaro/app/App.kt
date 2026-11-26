@@ -1,5 +1,6 @@
 package `in`.wishkaro.app
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Scaffold
@@ -30,6 +31,7 @@ import `in`.wishkaro.app.ui.importing.ImportStartScreen
 import `in`.wishkaro.app.ui.importing.ImportStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
+import `in`.wishkaro.app.ui.nav.showsTabs
 import `in`.wishkaro.app.ui.nav.WishKaroNavigation
 import `in`.wishkaro.app.ui.components.WishKaroTopBar
 import `in`.wishkaro.app.ui.nav.WishKaroNavigationBar
@@ -92,12 +94,23 @@ fun App(modifier: Modifier = Modifier) {
         Scaffold(
             modifier = modifier,
             snackbarHost = { SnackbarHost(snackbar) },
+            // Zero, deliberately. Every screen below has its own Scaffold with its own top
+            // bar, and that one already insets itself for the status bar. Letting this
+            // outer Scaffold inset as well counts the status bar TWICE, which is the dead
+            // band of empty purple that has been sitting above the title since M0 — visible
+            // in every device screenshot in M1, M2 and M3 and never named.
+            //
+            // The bottom bar is not affected: its height still comes through `padding`
+            // below, so a list still stops above the navigation bar rather than under it.
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                // FR-VIEW-06, compact: single pane with bottom navigation. Only on a
-                // top-level destination — a bar offering to switch tabs while the user is
-                // three screens deep inside one of them invites them to lose their place.
+                // FR-VIEW-06, compact: single pane with bottom navigation. It stays
+                // visible on detail screens, because that is what makes per-tab history
+                // worth having — open somebody from People, look at Upcoming, come back,
+                // and they are still there. It goes away only for the flows that are tasks
+                // rather than places (`Screen.showsTabs`).
                 // Medium and expanded widths get a rail instead; that is the next commit.
-                if (authState is AuthState.SignedIn && nav.current == nav.topLevelRoute) {
+                if (authState is AuthState.SignedIn && nav.currentScreen?.showsTabs == true) {
                     WishKaroNavigationBar(
                         current = nav.topLevelRoute,
                         onSelect = nav::goTo,

@@ -88,6 +88,34 @@ sealed interface Screen : NavKey {
 val TOP_LEVEL_ROUTES: List<Screen> = listOf(Screen.Upcoming, Screen.People)
 
 /**
+ * Whether the bottom navigation stays on screen here.
+ *
+ * It does almost everywhere, and that is the point of per-tab back stacks: open somebody
+ * from the People tab, go and look at Upcoming, come back, and they are still there. Hiding
+ * the bar on a detail screen makes that history unreachable, which is a back stack per tab
+ * that nobody can use.
+ *
+ * It goes away for the things that are TASKS rather than places — a form with a Cancel
+ * button, or the import flow. Those have one way out, they own the screen while they are
+ * open, and offering to switch tabs mid-way through typing somebody's birthday is offering
+ * to lose it.
+ */
+val Screen.showsTabs: Boolean
+    get() = when (this) {
+        Screen.SignIn,
+        Screen.AddPerson,
+        is Screen.EditPerson,
+        is Screen.EventEditor,
+        Screen.ImportStart,
+        Screen.ImportContacts,
+        Screen.ImportFile,
+        Screen.ImportResult,
+        -> false
+
+        else -> true
+    }
+
+/**
  * How the back stack is written into saved state.
  *
  * `rememberNavBackStack` supplies a default configuration on Android and **none** on

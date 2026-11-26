@@ -3,7 +3,9 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.domain.UpcomingEntry
 import `in`.wishkaro.app.domain.upcomingEvents
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -40,10 +42,18 @@ class UpcomingRepository(
      * wrong. The widget's own midnight refresh (FR-WID-03) exists for the same reason.
      */
     fun observeUpcoming(withinDays: Int? = null): Flow<List<UpcomingEntry>> =
-        local.observePeople().map { people ->
-            val zone = timeZone()
-            upcomingEvents(people, zone, today(zone), withinDays)
-        }
+        local.observePeople()
+            .map { people ->
+                val zone = timeZone()
+                upcomingEvents(people, zone, today(zone), withinDays)
+            }
+            // flowOn, and it matters at this size. `collectAsState` collects on the
+            // composition's context, which is the main thread, so without this the
+            // next-occurrence arithmetic for every event and the sort over all of them run
+            // there — 574 events on the owner's account, on every emission, while the user
+            // is trying to scroll. Measured on the Pixel 9a against that account: 10% janky
+            // frames and a 77ms worst frame before, and the numbers in M4_VERIFY after.
+            .flowOn(Dispatchers.Default)
 
     /**
      * One shot, for the widget.
