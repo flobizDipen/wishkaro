@@ -1,6 +1,6 @@
 # WishKaro — Product Requirements
 
-> **Status:** v0.8 — M0, M1 and M2 merged; M3 (import) built and in review
+> **Status:** v0.9 — M0, M1, M2 and M3 merged; M4 (views and widget) not yet started
 > **Date:** 2026-11-26
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
@@ -646,7 +646,7 @@ wishkaro/                        (public GitHub repo)
 | **M0** | Walking skeleton | Google sign-in → add one person → syncs to Postgres → server schedules FCM → notification lands on a **real phone**, against a **local** server. CI green. Nothing else. ✅ merged `d8c2aed` 2026-11-25 |
 | **M1** | People & events | **Railway deploy first** (moved here from M0 by decision 1.1 of `M0_PLAN.md`), then full CRUD, relations, multiple events, deceased/solemn handling, year-unknown handling, list view, offline sync. Deployed to `wishkaro-production-0312ab77.up.railway.app`; the aeroplane-mode check was dropped by decision `M1_PLAN.md` §2.5 and the code remains offline-first. ✅ merged `722830d` 2026-11-25 |
 | **M2** | Reminder engine | Ladder, local fallback, de-dup, quiet hours, OEM helper, self-test, digest, delivery reporting, and the first Settings screen. The M0 offline check was **finally run and passed** (`M2_PLAN.md` §0.1). Two things remain unproven rather than done: the **OEM battery helper** was never exercised on a non-Pixel device (definition-of-done item 7, `M2_VERIFY.md` §9), and the **mobile-data leg** of the Railway deploy — the SIM would not register (`M2_PLAN.md` §0.2). ✅ merged `0ed742c` 2026-11-25 |
-| M3 | Import | Contacts + CSV/XLSX, mapping, dedup, result report |
+| **M3** | Import | Contacts and CSV/XLSX, column mapping with a live preview, the dd/MM toggle, dedup and idempotency, the result report with a corrected-CSV round trip, and the **chunked sync push** underneath it all. Four things remain open rather than done: the **OEM battery helper** is still unexercised on a non-Pixel device (now unchecked across three milestones) and the **mobile-data leg** of the Railway deploy is still unproven — both carried from M2; the **dedup rule's precision at scale** is recorded, not changed (600 rows produced 49 skips from one shared name token plus a day/month, with no "import anyway" — `M3_VERIFY.md` §6.2); and the shared **name-token table is never run against Kotlin/Native**, because CI compiles the iOS target but runs no tests on it. M3 also did NOT build a server-side import path: FR-IMP-04 was amended and two documented endpoints removed from §9. 19 rows damaged by the clock-skew defect it found and fixed (§6.3) are not retroactively repaired. ✅ merged `75c3ea2` 2026-11-26 |
 | M4 | Views & widget | Calendar, timeline, Glance widget, notification actions |
 | M5 | Wish sending | AI drafts, tone/language, WhatsApp handoff, wish history |
 | M6 | AI posters | Theme library, cache, `gpt-image-1` backgrounds, `sharp` compositing, cost ledger, moderation |

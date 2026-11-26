@@ -119,3 +119,21 @@ Every bug the reviews caught in M1 and M2 was one of these. When reading a diff,
 
 The pure functions in this codebase are well tested and keep being right. The seams between
 them are where it breaks.
+
+---
+
+## What M3 added to this list
+
+Each of these was bought the same way the rest were — by something going wrong.
+
+| ✅ | Item | Bought by |
+|---|---|---|
+| ☐ | When `mCurrentFocus` names **`NotificationShade`** or a Keyguard window, the device is **locked**, not broken. `am start` on a locked device succeeds — the activity starts behind the keyguard — so the install says Success, the launch prints `Starting: Intent` and the fatal count is 0. Only the screenshot tells you | M3 §0.0 |
+| ☐ | Ask of every feature: **who can reach it a week after they start using the app?** An empty state and a first-run offer between them only ever reach a user with *nobody* | M3 §6.1 (import had no route from a non-empty list) |
+| ☐ | A **one-shot navigation needs a one-shot signal**, not a persistent value — or must be cleared at the entry point. State that outlives the screen outlives the Activity too | M3 §10.1 |
+| ☐ | Any state shared between an **Activity-crossing await** and a singleton needs a recovery path that is NOT on the awaiting coroutine. A `finally` cannot help a coroutine that never resumes | M3 §10, the seventh finding |
+| ☐ | A **client must never arbitrate a server-derived field with a client clock.** It cannot hold a newer version of something it never writes | M3 §6.3 |
+| ☐ | A re-derivation must never move a row's `updated_at` **backwards**: it is the sync cursor's ordering key | M3 §6.3 |
+| ☐ | Treat "a value that says what changed is computed and dropped" as a **grep, not a reading**. M3 made the same shape a third time, in the milestone that quoted the rule | M3 §10.3 (`truncated`), after `PlanDiff.removed` and `skipped` |
+| ☐ | A **fake store cannot catch a disagreement between the code and the schema**, because it agrees with whatever the code does to it. `androidUnitTest` runs on the JVM and can hold `LocalStore` to a real in-memory SQLite | M3 §6.3 |
+| ☐ | Guard **every** blind tap on the focused window, not just the first of a sequence — a notification can arrive between the screenshot and the tap | M3 (a typed string landed in a Slack reply box) |
