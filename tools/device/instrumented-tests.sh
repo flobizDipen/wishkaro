@@ -23,7 +23,7 @@
 #
 # Then:
 #   tools/device/instrumented-tests.sh                     everything
-#   tools/device/instrumented-tests.sh ActivityRecreationTest     one class
+#   tools/device/instrumented-tests.sh ActivityRecreationTest     one class, by bare name
 #
 # The Gradle task is still the right thing to use on an emulator or any device whose data
 # nobody minds losing — it is simpler, and it writes the HTML report.
@@ -54,7 +54,17 @@ ok "both APKs installed over the existing ones; nothing was uninstalled"
 # cases are spelled out rather than expanding a possibly-empty array.
 if [ $# -ge 1 ]; then
   ok "running only $1"
-  output="$(adb shell am instrument -w -r -e class "in.wishkaro.app.ui.nav.$1" "$TEST_PKG/$RUNNER" 2>&1)"
+  # A bare name is looked for under in.wishkaro.app; anything with a dot is taken as given.
+  case "$1" in
+    *.*) klass="$1" ;;
+    *)   klass="$(adb shell pm list instrumentation >/dev/null 2>&1; echo "")"
+         klass="$(find "$ROOT/composeApp/src/androidInstrumentedTest" -name "$1.kt" -exec sh -c '
+             pkg=$(sed -n "s/^package \(.*\)$/\1/p" "$1" | tr -d "\`" | head -1); echo "$pkg.$(basename "$1" .kt)"
+           ' _ {} \; | head -1)"
+         [ -n "$klass" ] || die "no instrumented test class called $1"
+         ;;
+  esac
+  output="$(adb shell am instrument -w -r -e class "$klass" "$TEST_PKG/$RUNNER" 2>&1)"
 else
   output="$(adb shell am instrument -w -r "$TEST_PKG/$RUNNER" 2>&1)"
 fi
