@@ -111,6 +111,19 @@ up" is the duplication this project has refused three times.
     deciding before M4. It is a product decision, not yours to take alone — raise it.
   - **The name-token table never runs against Kotlin/Native**: CI compiles the iOS target but
     runs no tests on it.
+  - **How UI is verified on the device is an OPEN QUESTION, and it lands on you hardest.**
+    Three times across M2 and M3 a blind `adb shell input tap` went somewhere it should not
+    have: into another app entirely, into a Slack reply box, and onto a different real
+    person's record with a text field focused. Each incident added a guard rail to §E of the
+    checklist, and every one of those guard rails checks the state BEFORE the tap — none can
+    tell where the tap actually landed. M3's own conclusion was that this does not converge:
+    tapping coordinates read off a screenshot is guessing, and the fix is to resolve
+    coordinates from the view tree instead, via `uiautomator` dumps or a Compose UI test
+    harness, neither of which this project has.
+    M4 is four views, a widget, two-pane layouts and fold handling — far more UI to drive
+    than M3 had, so the same approach will fail more often. Raise this with me early with a
+    recommendation and a rough cost. Do not quietly spend the milestone building a test
+    harness, and do not quietly spend it tapping blind either.
 
 ## Scope
 
