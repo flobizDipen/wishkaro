@@ -2,8 +2,9 @@
 
 > Branch `feat/m3-import`, off `5704e0b`. Written as the work was done, not reconstructed.
 >
-> **Nine of the ten definition-of-done items pass, verified on the device.** Item 8 is not
-> done and §10 says exactly what it is waiting on. Nothing below is rounded up.
+> **All ten definition-of-done items pass, verified on the device against the real Railway
+> deployment.** Two defects found while verifying are recorded in §6, not fixed here. Nothing
+> below is rounded up.
 
 ---
 
@@ -319,7 +320,44 @@ the Gujarati spellings matching themselves. Re-importing the same two contacts g
 **"Nothing new — 0 imported · 2 already here"** with the line *"You have imported this before.
 Running it again changed nothing, which is what should happen."*
 
-### 5.6 What is actually in the database afterwards
+### 5.6 Item 8 — an import larger than the sync cap, against the real server
+
+`six-hundred-people.csv`, 601 rows, into the owner's live Railway account at his direction.
+The mapping screen read it and guessed every column; **551 imported, 49 already here** (all
+within-file matches — see §6.1).
+
+**The outbox, sampled every four seconds from the device's own SQLite while it drained:**
+
+```
+11:26:57   import tapped
+11:27:01   573 people / 551 pending / 0 blocked
+11:27:05   573 people / 551 pending / 0 blocked
+11:27:10   573 people / 351 pending / 0 blocked     ← page 1 settled
+11:27:18   573 people / 151 pending / 0 blocked     ← page 2 settled
+11:27:26   573 people /   0 pending / 0 blocked     ← page 3 settled
+```
+
+551 → 351 → 151 → 0. **Pages of exactly 200**, settled one at a time, nothing blocked, and
+551 people plus 551 events — both over the server's 500-row cap — reaching the server
+complete. This is the failure the whole floor was built for, and it is the first time it has
+been exercised against a real server rather than a fake one.
+
+Proof the rows are genuinely ON the server rather than merely cleared locally: all 551 came
+back carrying **millisecond-precision** timestamps (`2026-11-26T05:57:01.480Z`), which is
+Postgres `timestamp(3)` via `toISOString()`. A row that had never round-tripped would still
+carry the client's own **microsecond** stamp. 551 of 551 also carry a server-computed
+`completeness_score`, which the client never writes.
+
+**The second half, which is what the bug was really about.** A person added by hand
+afterwards — `HandAddedAfter600`, 7 March 1991, Friend — went from written to
+`0 pending` within four seconds, on its own, with the 600-row import already behind it. The
+shared batch no longer takes unrelated writes down with it.
+
+```
+574 people, 0 pending; hand-added: HandAddedAfter600 / pending 0
+```
+
+### 5.7 What is actually in the database afterwards
 
 ```
 22 people, 0 pending, 0 blocked        FATAL EXCEPTION count across the session: 0
@@ -342,7 +380,9 @@ through zip, UTF-8, XML entities, the parser and SQLite.
 
 ---
 
-## 6. Two things changed because of what the device showed
+## 6. Four things the device showed that reading the code did not
+
+### 6.1 Two fixed here
 
 1. **Import had no entry point from a non-empty list.** FR-VIEW-05 puts it on the empty state
    and FR-AUTH-05 offers it at first run, and both were built — but between them they only
@@ -351,7 +391,86 @@ through zip, UTF-8, XML entities, the parser and SQLite.
    *I* could not reach the feature to test it. Added to the people list's action row.
 2. **"I've turned it on"** on the permanently-denied screen (§5.1).
 
----
+### 6.2 The dedup rule's precision at 600 rows — recorded, not changed
+
+49 of 600 rows came back as *"appears twice in this import"*. They are not duplicates in any
+ordinary sense: they are pairs like `Anika Gupta 21` and `Anika Pillai 22` that share **one**
+name token and happen to fall on the same day and month.
+
+That is the rule behaving exactly as specified — FR-IMP-08's "fuzzy name match + same date",
+one shared token plus a day/month — and it is the same rule `findDuplicates` has used on the
+create path since M1. What 600 random rows show is that **at scale, one shared token plus a
+day/month is a weak signal**: with 20 first names, 20 surnames and 336 day/month combinations,
+collisions are routine rather than exceptional.
+
+Nothing was merged and nothing was lost: each of the 49 is named on the report, with its row
+number. But they were **skipped by default and there is no way to say "no, import it anyway"**
+from the result screen — the only route is to edit the file. For a real family spreadsheet of
+50 rows this is almost certainly fine; for 600 it quietly left 49 people out.
+
+Not changed in M3, because the rule is the requirement and changing it is a product decision,
+not a bug fix. Worth deciding before M4: either require **two** shared tokens when a row has
+no other corroboration, or give the result screen an "import anyway" action per skipped row.
+
+### 6.3 Freshly pushed records never receive their server-derived values — M1-era, recorded not fixed
+
+**What was observed.** After the 600-row import, 551 people carried a server-computed
+`completeness_score` and the server's "what to add next" list. The 18 people imported *earlier
+in the same session*, and the one person added by hand afterwards, carried **score 0 and an
+empty list**, and three further syncs did not change that.
+
+**The tell is the timestamp precision.**
+
+```
+imported 05:42 batch  n=15   2026-11-26T05:42:53.445949Z   scored: 0     ← microseconds: the CLIENT's clock
+imported 600 batch    n=551  2026-11-26T05:57:01.480Z      scored: 551   ← milliseconds: Postgres timestamp(3)
+hand-added 06:04      n=1    2026-11-26T06:04:02.406092Z   scored: 0     ← microseconds
+```
+
+A row that has round-tripped through the server carries the server's millisecond stamp. These
+never did.
+
+**The mechanism, confirmed rather than guessed.**
+
+```
+device: 2026-11-26T06:04:52Z      ← adb shell date -u
+server: 2026-11-26T06:04:50Z      ← Date header from the deployment
+```
+
+**The device clock is about two seconds ahead of the server's.** So for an ordinary single
+write: the client stamps the row `T_client`; the server stores that value, re-derives, and
+stamps its own copy `T_server ≈ T_client − 2s`; the pull returns the corrected row; and
+`LocalStore.applyRemote` discards it —
+
+```kotlin
+if (local != null && (local.pending_sync != 0L || localIsNotOlder(local.updated_at, remote.updatedAt)))
+    return@forEach
+```
+
+— because the local copy's timestamp is *newer*. The server's derivation is thrown away by
+last-write-wins.
+
+The 551 escaped it by accident of scale: their push took about 17 seconds across three pages,
+so each page's server-side recompute landed well past the single client timestamp the whole
+import shared, and the server's copies won.
+
+**What it costs.** `completeness_score` and the completeness suggestions (FR-PPL-05) stay at 0
+and empty for every record created on this device, until something re-derives that person with
+a large enough time gap. `is_minor` is in the same write and so has the same exposure. It is
+not data loss — the person, date and relation are all correct and on the server — but a
+feature of M1's is silently inert.
+
+**Not fixed here**, per `MILESTONE_CHECKLIST.md` §F: it is M0/M1-era code
+(`LocalStore.applyRemote`'s LWW plus `PersonDerivationService`), M3's definition of done does
+not rest on it, and the fix is a sync-semantics change that deserves its own slice rather than
+a corner of an import PR. The name-token rule was fixed inside M3 only because FR-IMP-08
+depends on it.
+
+The shape of the fix, for whoever takes it: the client should not arbitrate a *server-derived*
+field with a client clock at all. Either the server's re-derivation must carry a timestamp
+that is by construction newer than the client's (it already knows what the client sent), or
+the derived columns should be applied from a pull unconditionally, since the client never
+writes them and so can never have a newer version worth keeping.
 
 ## 7. Carried forward from M2, still open
 
@@ -366,15 +485,23 @@ through zip, UTF-8, XML entities, the parser and SQLite.
 
 ## 8. Test data left in the owner's account
 
-**15 invented people** are now in the live Railway account from §5: 10 from
-`messy-birthdays.csv` and 5 from the corrected file. They are listed in
-`docs/fixtures/messy-birthdays.csv` and every one of them is made up.
+**566 invented people** are now in the live Railway account, at the owner's direction:
 
-They were left rather than deleted so the result can be looked at; soft-deleting them is a
-tap each and leaves tombstones until M9's purge job exists. **Two real contacts** were also
-imported, which is the feature working as intended on the owner's own data.
+| From | Count |
+|---|---|
+| `messy-birthdays.csv` | 10 |
+| the corrected file | 5 |
+| `six-hundred-people.csv` | 551 |
+| `HandAddedAfter600`, added by hand for item 8 | 1 |
 
----
+Every one of them is made up and every one is listed in `docs/fixtures/`. **Two real
+contacts** were also imported, which is the feature working as intended on the owner's own
+data.
+
+They were left rather than deleted so the result can be looked at. Removing them is a bulk
+soft delete, which would itself be a second run at the chunked push — 566 tombstones is three
+more pages — and would leave those tombstones until M9's purge job exists. Worth doing
+deliberately rather than as a tidy-up.
 
 ## 9. The honest summary
 
@@ -387,25 +514,19 @@ imported, which is the feature working as intended on the owner's own data.
 | 5 | The same file twice produces zero new people, proven by a test | **Pass** — the test runs the planner over the file three times; also watched on the device (§5.5) |
 | 6 | A file with a duplicate inside it produces one person | **Pass**, test and device (§5.4) |
 | 7 | Bad rows produce a report naming each row and reason, and a corrected CSV that re-imports cleanly | **Pass**, the whole round trip on the device including the saved file's bytes (§5.4) |
-| 8 | An import larger than the sync cap reaches the server completely, outbox empty, then a hand-added person syncs too | **NOT DONE.** Passes as a test against a fake server enforcing the real 500-row cap and 2 MB body. **Never run against Railway**, because it puts 600 invented people in a real database and §10 is still unanswered |
+| 8 | An import larger than the sync cap reaches the server completely, outbox empty, then a hand-added person syncs too | **Pass**, against the real Railway deployment. The outbox drained **551 → 351 → 151 → 0** — pages of exactly 200 — and a person added by hand afterwards synced on its own (§5.7) |
 | 9 | Unit tests for every date format, the toggle, the pivot, dedup within a file, dedup against existing, the chunking boundary | **Pass** — 211 client, 275 server, three timezones |
 | 10 | CI green, this document, fixtures committed | Fixtures committed with a README; this document exists; CI on the PR |
 
-**Nine of ten pass. Item 8 is not done**, and it is not blocked on code.
+**All ten pass.** Two defects found along the way are recorded in §6 rather than fixed here.
 
 ---
 
-## 10. The one thing still needed
+## 10. What is left
 
-**Where may 600 invented people land?** `docs/fixtures/six-hundred-people.csv` exists and the
-chunked push is tested against a fake server that enforces the real limits — but item 8 asks
-for it to reach *the* server, and that means 600 people, 600 events and the reminders the
-materialiser builds from them, in a real Railway database.
+Nothing in M3. Two things carried forward, neither blocking:
 
-| | |
-|---|---|
-| **A second Google account** *(recommended)* | Real Railway, real hobby tier, and none of it touches the owner's data. Two other Google accounts are already signed in on this handset, so this costs one sign-out and one sign-in |
-| The owner's account, then soft-delete all 600 | Honest and reversible, but leaves 600 tombstones until M9's purge job exists, and the delete is another 600 pending rows — which is, admittedly, a second test of the chunking |
-| A local server | Clean, but proves nothing about Railway's hobby tier materialising 600 events, which the build prompt specifically raises |
-
-Also still open, and not blocked on this: **a non-Pixel phone** for M2's item 7.
+- **A non-Pixel phone** for M2's definition-of-done item 7, now unchecked across three
+  milestones.
+- **The two defects in §6**, which are M0/M1-era code and are recorded rather than fixed here,
+  per `MILESTONE_CHECKLIST.md` §F.
