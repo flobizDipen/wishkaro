@@ -14,6 +14,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -22,6 +24,36 @@ import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.RELATION_CHIPS
+
+/**
+ * Everything a form field needs to survive the Activity being destroyed and rebuilt.
+ *
+ * Until M4 the manifest declared `configChanges` for orientation, screen size and the rest,
+ * so the Activity was never recreated and no form in this app had ever been asked to
+ * restore itself. Not one of them used `rememberSaveable`. Removing that declaration —
+ * which is what makes FR-VIEW-07 a real claim rather than a tautology — means every half
+ * typed name, date and note now has to be written into saved state by hand.
+ *
+ * Savers rather than `rememberSaveable`'s automatic one: the automatic saver can only
+ * handle what the platform's own state bundle understands, and these are a data class and
+ * an enum. Storing them as a list of strings and a name works the same on Android and on
+ * Kotlin/Native.
+ */
+val DateFieldsSaver: Saver<DateFieldsState, Any> = listSaver(
+    save = { listOf(it.day, it.month, it.year, it.yearUnknown) },
+    restore = {
+        DateFieldsState(
+            day = it[0] as String,
+            month = it[1] as String,
+            year = it[2] as String,
+            yearUnknown = it[3] as Boolean,
+        )
+    },
+)
+
+/** An enum by name, so the saved form is readable and survives a reordering of the enum. */
+inline fun <reified T : Enum<T>> enumSaver(): Saver<T, String> =
+    Saver(save = { it.name }, restore = { enumValueOf<T>(it) })
 
 /** The editable state of a recurring date, kept as strings so a half-typed year is legal. */
 data class DateFieldsState(

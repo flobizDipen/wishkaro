@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -58,13 +59,17 @@ fun EditPersonScreen(
         return
     }
 
-    var name by remember(person.id) { mutableStateOf(person.displayName) }
-    var relation by remember(person.id) { mutableStateOf(person.relationToOwner) }
-    var gender by remember(person.id) { mutableStateOf(person.gender.orEmpty()) }
-    var phone by remember(person.id) { mutableStateOf(person.phone.orEmpty()) }
-    var email by remember(person.id) { mutableStateOf(person.email.orEmpty()) }
-    var notes by remember(person.id) { mutableStateOf(person.notes.orEmpty()) }
-    var deceased by remember(person.id) { mutableStateOf(person.isDeceased) }
+    // Keyed on the person AND saveable. The key resets the form when a different person is
+    // edited; saveable keeps the user's unsaved edits when the Activity is rebuilt under
+    // them. Before M4 only the first of those was true, because the Activity was never
+    // rebuilt — see AndroidManifest.xml.
+    var name by rememberSaveable(person.id) { mutableStateOf(person.displayName) }
+    var relation by rememberSaveable(person.id) { mutableStateOf(person.relationToOwner) }
+    var gender by rememberSaveable(person.id) { mutableStateOf(person.gender.orEmpty()) }
+    var phone by rememberSaveable(person.id) { mutableStateOf(person.phone.orEmpty()) }
+    var email by rememberSaveable(person.id) { mutableStateOf(person.email.orEmpty()) }
+    var notes by rememberSaveable(person.id) { mutableStateOf(person.notes.orEmpty()) }
+    var deceased by rememberSaveable(person.id) { mutableStateOf(person.isDeceased) }
 
     val hasDeathAnniversary = person.events.any { it.type == EventType.DEATH_ANNIVERSARY }
 

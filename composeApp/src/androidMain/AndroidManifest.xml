@@ -43,10 +43,36 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.WishKaro">
 
+        <!--
+            FR-VIEW-07 says the app must survive fold, unfold, rotation and resize without
+            losing state, and calls that the part that actually breaks.
+
+            Until M4 this activity declared:
+
+                configChanges="orientation|screenSize|screenLayout|keyboardHidden
+                               |smallestScreenSize|uiMode|density"
+
+            Every one of those means "do not recreate me when this changes". So rotating or
+            folding the phone destroyed nothing, no state was restored because none was ever
+            lost, and FR-VIEW-07 would have come out TRUE FOR THE WRONG REASON — while a
+            process death still lost everything, which is the case the requirement is
+            actually about.
+
+            They are gone, except keyboardHidden, which only saves a pointless recreation
+            when the soft keyboard appears. Rotation, folding, resizing and multi-window all
+            recreate the Activity now, and the state genuinely survives it (see
+            MainActivity's bridges and the Navigation 3 back stack in
+            in.wishkaro.app.ui.nav). docs/M4_PLAN.md §2.5.
+
+            resizeableActivity is stated rather than left to default: FR-VIEW-09 names it,
+            and an implicit default is not a decision anyone can read. There is no
+            screenOrientation anywhere in this file, which is the other half of FR-VIEW-09.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode|density"
+            android:configChanges="keyboardHidden"
+            android:resizeableActivity="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.WishKaro">

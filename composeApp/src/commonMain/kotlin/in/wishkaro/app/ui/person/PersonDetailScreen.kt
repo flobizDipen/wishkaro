@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -83,7 +84,9 @@ fun PersonDetailScreen(
     val tone = toneFor(person)
     val zone = TimeZone.currentSystemDefault()
     val card = remember(person) { person.toCard(zone, Clock.System.todayIn(zone)) }
-    var confirmDelete by remember { mutableStateOf(false) }
+    // Saveable: a confirmation dialog that vanishes when the phone is rotated has silently
+    // cancelled something the user was part-way through deciding.
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier,
@@ -342,7 +345,7 @@ private fun TraitSection(
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
 ) {
-    var draft by remember { mutableStateOf("") }
+    var draft by rememberSaveable { mutableStateOf("") }
     val existing = person.traitsByKind[kind].orEmpty()
 
     Column(Modifier.padding(top = 8.dp)) {

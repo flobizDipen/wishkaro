@@ -166,12 +166,34 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Put the bridges down, but only if they are still ours.
+     *
+     * `ActivityHolder` was already guarded this way and the other four were not. That
+     * asymmetry was survivable while the Activity was never recreated — the old manifest's
+     * `configChanges` list meant rotating and folding destroyed nothing. M4 removed that
+     * list so FR-VIEW-07 has something real to prove, which makes this reachable by turning
+     * the phone sideways.
+     *
+     * What goes wrong without the guard: a new MainActivity runs `onCreate` and installs its
+     * own launchers into these globals, then the old one's `onDestroy` runs and sets them to
+     * null. Every later tap on "Choose a file" then does nothing at all, with no error
+     * anywhere, and force-stopping the app is the only cure. That is M3's seventh finding,
+     * word for word (`M3_VERIFY.md` §10).
+     *
+     * The ordinary configuration-change sequence does run the old `onDestroy` first, so this
+     * is belt and braces — but `launchMode="singleTask"` plus a deep link from a
+     * notification or the widget is not the ordinary sequence, and M4 adds a second
+     * deep-link entry point (FR-WID-02).
+     */
     override fun onDestroy() {
-        if (ActivityHolder.current === this) ActivityHolder.current = null
-        PermissionBridge.requester = null
-        ContactsPermissionBridge.requester = null
-        FilePickerBridge.opener = null
-        FilePickerBridge.creator = null
+        if (ActivityHolder.current === this) {
+            ActivityHolder.current = null
+            PermissionBridge.requester = null
+            ContactsPermissionBridge.requester = null
+            FilePickerBridge.opener = null
+            FilePickerBridge.creator = null
+        }
         super.onDestroy()
     }
 

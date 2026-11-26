@@ -36,11 +36,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.Sentiment
@@ -85,7 +87,18 @@ fun PeopleListScreen(
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(onClick = onAddPerson, text = { Text("Add person") }, icon = {})
+            // testTag, here and below, is not decoration. Compose exposes a clickable node
+            // to uiautomator with NO text and NO content-description — the label sits in a
+            // separate child node — so this button is literally unaddressable from the view
+            // tree without one, and MainActivity's testTagsAsResourceId turns the tag into a
+            // resource-id that tools/device/ui.sh can resolve and tap. Three blind taps
+            // across M2 and M3 went into the wrong app; this is what replaces them.
+            ExtendedFloatingActionButton(
+                onClick = onAddPerson,
+                text = { Text("Add person") },
+                icon = {},
+                modifier = Modifier.testTag("add_person_fab"),
+            )
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -95,7 +108,8 @@ fun PeopleListScreen(
                 onValueChange = onQueryChange,
                 label = { Text("Search by name") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    .testTag("people_search"),
             )
 
             Row(
@@ -325,7 +339,7 @@ private fun EmptyState(
  */
 @Composable
 private fun BlockedBanner(blocked: List<BlockedRow>) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth()

@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +48,7 @@ import `in`.wishkaro.app.domain.DateParse
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.ImportDates
 import `in`.wishkaro.app.domain.importDataRows
+import `in`.wishkaro.app.ui.components.DateFieldsSaver
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.RelationPicker
@@ -266,8 +268,12 @@ private fun ContactsReview(
 ) {
     val selected = choices.count { it.selected }
     val missingRelations = ContactsImport.missingRelations(choices)
-    var bulkRelationOpen by remember { mutableStateOf(false) }
-    var datingContact by remember { mutableStateOf<ContactChoice?>(null) }
+    var bulkRelationOpen by rememberSaveable { mutableStateOf(false) }
+    // The CONTACT ID rather than the choice itself. A ContactChoice is not something saved
+    // state can hold, and it does not need to be: the list it came from is re-read on the
+    // way back in, so the id is enough to find it again and is always current.
+    var datingContactId by rememberSaveable { mutableStateOf<String?>(null) }
+    val datingContact = datingContactId?.let { id -> choices.firstOrNull { it.contact.id == id } }
 
     Column(modifier = modifier.fillMaxSize()) {
         Column(Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp)) {
@@ -297,7 +303,7 @@ private fun ContactsReview(
                 ContactRow(
                     choice = choice,
                     onToggle = { store.toggleContact(choice.contact.id) },
-                    onAddDate = { datingContact = choice },
+                    onAddDate = { datingContactId = choice.contact.id },
                 )
             }
         }
@@ -341,9 +347,9 @@ private fun ContactsReview(
             onSave = { date ->
                 store.setContactDate(choice.contact.id, date)
                 store.toggleContact(choice.contact.id)
-                datingContact = null
+                datingContactId = null
             },
-            onDismiss = { datingContact = null },
+            onDismiss = { datingContactId = null },
         )
     }
 }
@@ -391,7 +397,7 @@ private fun ContactRow(choice: ContactChoice, onToggle: () -> Unit, onAddDate: (
 
 @Composable
 private fun BulkRelationDialog(count: Int, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    var custom by remember { mutableStateOf<String?>(null) }
+    var custom by rememberSaveable { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("How do you know these $count?") },
@@ -420,7 +426,9 @@ private fun BulkRelationDialog(count: Int, onPick: (String) -> Unit, onDismiss: 
 
 @Composable
 private fun AddDateDialog(name: String, onSave: (EventDate) -> Unit, onDismiss: () -> Unit) {
-    var fields by remember { mutableStateOf(DateFieldsState()) }
+    var fields by rememberSaveable(stateSaver = DateFieldsSaver) {
+        mutableStateOf(DateFieldsState())
+    }
     val parsed = fields.toEventDate()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -518,7 +526,7 @@ private fun MappingScreen(
     modifier: Modifier = Modifier,
 ) {
     val labels = state.columnLabels
-    var relationPickerOpen by remember { mutableStateOf(false) }
+    var relationPickerOpen by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),

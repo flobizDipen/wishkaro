@@ -71,8 +71,17 @@ need_adb() {
 # mCurrentFocus naming NotificationShade or a Keyguard window means locked, not broken.
 guard() {
   need_adb
-  local focus
-  focus="$(adb shell dumpsys window | grep -m1 mCurrentFocus || true)"
+  local focus=""
+  # Wait for focus to SETTLE, don't lower the bar. For a second or two after `am start`
+  # mCurrentFocus is null — no window has taken focus yet — and failing on that teaches
+  # whoever is driving this to add blind sleeps, which is how the guard gets bypassed. It
+  # still refuses outright once focus lands somewhere that is not this app.
+  local attempt
+  for attempt in $(seq 1 "${WK_SETTLE_TRIES:-10}"); do
+    focus="$(adb shell dumpsys window | grep -m1 mCurrentFocus || true)"
+    [[ "$focus" == *"mCurrentFocus=null"* ]] || break
+    sleep 0.5
+  done
   note "focus: ${focus:-<none>}"
 
   case "$focus" in
