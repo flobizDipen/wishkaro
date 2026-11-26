@@ -4,6 +4,7 @@ import IORedis from 'ioredis';
 import { DraftingService } from './drafting.service';
 import { AiUsageService } from './ledger/ai-usage.service';
 import { FakeLlmProvider } from './llm/fake.provider';
+import { PRICING_VERSION } from './llm/pricing';
 import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
 import { WishHistoryService } from './wish-history.service';
 import type { AppEnv } from '../../config/env';
@@ -126,7 +127,6 @@ beforeEach(async () => {
     new AiUsageService(db, env),
     new DraftRateLimitService(redis, env),
     provider,
-    env,
   );
 });
 
@@ -192,7 +192,10 @@ describe('drafting — the happy path and what it records', () => {
 
     // Per row, so that changing either later cannot re-price what last month cost.
     expect(Number(row.usdInrRate)).toBe(89);
-    expect(row.pricingVersion).toMatch(/^anthropic-/);
+    // Asserted against the constant rather than a hard-coded string: the version moves
+    // whenever a rate does, and a test that pinned the literal would go red on a price
+    // change — which is a thing that SHOULD be a one-line edit, not a failing suite.
+    expect(row.pricingVersion).toBe(PRICING_VERSION);
   });
 
   it('never logs or stores the drafted text on the ledger row', async () => {

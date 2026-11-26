@@ -77,3 +77,33 @@ describe('M5 — the Anthropic key', () => {
     expect(() => parseEnv({ ...BASE, WISH_DRAFT_LIMIT_HOUR: '0' })).toThrow();
   });
 });
+
+describe('M5 — choosing a wish provider', () => {
+  it('defaults to the fake, and keeps defaulting to it when a key appears', () => {
+    // Key-presence magic would mean that pasting a key into .env to try something silently
+    // changes what every draft costs and what `source` the history records.
+    expect(parseEnv(BASE).WISH_PROVIDER).toBe('fake');
+    expect(parseEnv({ ...BASE, OPENAI_API_KEY: 'sk-test' }).WISH_PROVIDER).toBe('fake');
+  });
+
+  it('REFUSES TO BOOT when the named provider has no key', () => {
+    // The alternative — fall back to the fake and log it — is how a deployment that was told
+    // to call a model serves templates for a week while somebody wonders why the drafts read
+    // the same. Same reasoning as ALLOW_DEV_LOGIN: refuse to start rather than start wrong.
+    expect(() => parseEnv({ ...BASE, WISH_PROVIDER: 'openai' })).toThrow(/OPENAI_API_KEY/);
+    expect(() => parseEnv({ ...BASE, WISH_PROVIDER: 'anthropic' })).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  it('boots on openai once the key is there', () => {
+    const env = parseEnv({ ...BASE, WISH_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-test' });
+    expect(env.WISH_PROVIDER).toBe('openai');
+    // D20's own words for this feature are "Haiku for high-volume wish drafting"; this is
+    // the OpenAI tier at the same published rates.
+    expect(env.OPENAI_MODEL).toBe('gpt-6-luna');
+    expect(env.OPENAI_EFFORT).toBe('low');
+  });
+
+  it('rejects a provider nobody has written an adapter for', () => {
+    expect(() => parseEnv({ ...BASE, WISH_PROVIDER: 'gemini' })).toThrow();
+  });
+});

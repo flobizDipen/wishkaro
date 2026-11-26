@@ -142,7 +142,7 @@ Agreed during scoping. Changing one of these invalidates downstream requirements
 | D17 | Core loop | WhatsApp wish send · widget + rich notifications · wish/gift history · calendar + timeline |
 | D18 | Compliance | Privacy-by-design baseline from day one |
 | D19 | Repo | Single **public** GitHub monorepo (`flobizDipen/wishkaro`) — decided 2026-11-24, overriding the earlier private-repo requirement |
-| D20 | Text AI | Claude (Haiku for volume, Sonnet for reasoning), strict JSON output |
+| D20 | Text AI | **Provider-neutral, behind `LlmProvider`.** *(Amended 2026-11-26, in M5.)* This row said "Claude (Haiku for volume, Sonnet for reasoning)" from v1 onwards, and M5's build prompt said to default to `claude-opus-5-5` — two different answers before anyone had written a line of drafting code. Dipen's decision, taken after being shown the conflict rather than finding a swap in a diff: run **both** providers behind the one port and choose by configuration (`WISH_PROVIDER`), so that TBD-4's hand review compares real output from both instead of settling on a vendor first. M5 ships the OpenAI adapter (`gpt-6-luna`, the cheap tier this row always intended) and the Anthropic one is unwritten, because there is no Anthropic key. The cost ledger records `provider` and `model` per row, so the comparison is a measurement. See `docs/M5_PLAN.md` §3 and §11. |
 | D21 | Image AI | **OpenAI `gpt-image-1`**, server-side only, behind an `ImageProvider` interface |
 | D22 | Build order | M0 walking skeleton → vertical feature slices |
 | D23 | Sync | Offline-first local DB, last-write-wins per field, soft deletes, sync cursor |
@@ -511,10 +511,17 @@ POST   /v1/billing/webhook             Play RTDN
 
 ## 10. AI pipeline and cost control
 
-**Providers.** Claude for all text and structured reasoning (Haiku for high-volume wish drafting,
-Sonnet for gift reasoning). OpenAI `gpt-image-1` for background artwork and the optional AI-blend
-edit path. Both sit behind `LlmProvider` / `ImageProvider` interfaces so either can be swapped
-without touching feature code.
+**Providers.** Text and structured reasoning are **provider-neutral behind `LlmProvider`**, chosen
+by configuration rather than named here (`WISH_PROVIDER`: `openai` | `anthropic` | `fake`). OpenAI
+`gpt-image-1` for background artwork and the optional AI-blend edit path, behind `ImageProvider`.
+
+*(Amended 2026-11-26, in M5, together with D20. This paragraph used to say "Claude for all text",
+which was a vendor choice written before any drafting code existed and before anything could be
+compared. The sentence that survives is the one that was always the point: either can be swapped
+without touching feature code. M5 proves that by shipping an OpenAI adapter against a port that
+was designed for Anthropic, and the only thing the port had to grow was `modelName` — plus one
+real correction, that OpenAI's `input_tokens` INCLUDES cached tokens where Anthropic's excludes
+them, which is normalised in the adapter so the ledger cannot double-count. `docs/M5_PLAN.md` §11.)*
 
 **Hard rules.**
 

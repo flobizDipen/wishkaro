@@ -31,6 +31,21 @@ const EnvSchema = z
 
     // ---- M5: wish drafting (FR-WSH-02, FR-WSH-08, FR-POS-10) --------------------------
     //
+    /**
+     * Which provider serves a draft. The choice is EXPLICIT, not inferred from which key
+     * happens to be present.
+     *
+     * Key-presence magic would mean that pasting a key into `.env` to try something silently
+     * changes what every draft costs and what `source` the history records. "fake" is the
+     * default and stays the default until somebody says otherwise in writing — which is also
+     * Dipen's instruction of 2026-11-26: keep the dummy for now.
+     *
+     * A provider named here without its key is a BOOT FAILURE, not a quiet fall back to the
+     * fake: a deployment that was told to use OpenAI and serves templates instead is exactly
+     * the lie this milestone keeps refusing to tell.
+     */
+    WISH_PROVIDER: z.enum(['fake', 'anthropic', 'openai']).default('fake'),
+    //
     // The key is SERVER-SIDE ONLY. It never reaches the phone — a key in the APK is a key
     // anyone can extract, and this repository is public on top of that. It lives in
     // `~/.secrets/` locally (pointed at from a gitignored `.env`) and in Railway's own env.
@@ -91,6 +106,26 @@ const EnvSchema = z
     WISH_DRAFT_LIMIT_HOUR: z.coerce.number().int().positive().default(15),
     WISH_DRAFT_LIMIT_DAY: z.coerce.number().int().positive().default(50),
 
+    // ---- OpenAI, added 2026-11-26 ------------------------------------------------------
+    //
+    // D20 in REQUIREMENTS.md said "Text AI = Claude". Dipen amended it after being shown the
+    // conflict and chose BOTH providers behind one port, so the solemn copy TBD-4 has to
+    // hand-review can be compared on real output rather than settled by picking a vendor.
+    // The same rules apply as to the Anthropic key: server-side only, outside git.
+    OPENAI_API_KEY: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.trim() !== '' ? v : undefined)),
+
+    /**
+     * Default `gpt-6-luna`: the cheapest current tier, and the one D20's own words call for
+     * ("Haiku for high-volume wish drafting"). Its published rates are identical to Claude
+     * Haiku 5.5's, which makes the two a clean comparison — the same prompt costs the same
+     * on both, so a quality difference is the only difference.
+     */
+    OPENAI_MODEL: z.string().default('gpt-6-luna'),
+    OPENAI_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+
     /**
      * Registers POST /v1/auth/dev-token, which mints a session without a real Google ID
      * token. Deliberately absent from .env.example so a deployment cannot inherit it by
@@ -109,6 +144,29 @@ const EnvSchema = z
         message:
           'Set FIREBASE_SERVICE_ACCOUNT (raw JSON) or GOOGLE_APPLICATION_CREDENTIALS (file path). ' +
           'Without one of them the server cannot send a single push.',
+      });
+    }
+    /**
+     * A provider named without its key is a boot failure.
+     *
+     * The tempting alternative — fall back to the fake and log it — is how a deployment that
+     * was told to call a model ends up serving templates for a week while somebody wonders
+     * why the drafts read the same. The same reasoning as ALLOW_DEV_LOGIN below: refuse to
+     * start rather than start wrong.
+     */
+    if (env.WISH_PROVIDER === 'openai' && !env.OPENAI_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['OPENAI_API_KEY'],
+        message: 'WISH_PROVIDER=openai needs OPENAI_API_KEY. Set it, or set WISH_PROVIDER=fake.',
+      });
+    }
+    if (env.WISH_PROVIDER === 'anthropic' && !env.ANTHROPIC_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ANTHROPIC_API_KEY'],
+        message:
+          'WISH_PROVIDER=anthropic needs ANTHROPIC_API_KEY. Set it, or set WISH_PROVIDER=fake.',
       });
     }
     if (env.ALLOW_DEV_LOGIN && env.NODE_ENV === 'production') {

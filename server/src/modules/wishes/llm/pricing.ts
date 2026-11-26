@@ -6,11 +6,17 @@
  * and the question this whole table exists to answer — "what does a user cost per year", the
  * one M7's pricing is built on — needs rows that stay true.
  *
- * Rates as published for the Claude API, first-party. Not Bedrock or Vertex, which are
- * partner-operated and priced separately; this app calls the first-party API.
+ * Rates as published on each provider's own pricing page on 2026-11-26, first-party. Not
+ * Bedrock, Vertex or Azure, which are partner-operated and priced separately; this app calls
+ * both first-party APIs directly.
+ *
+ * The OpenAI rows were read off `platform.openai.com/docs/pricing` rather than from a
+ * third-party rate-card blog, because four aggregator sites disagreed with each other about
+ * the current flagship and two of them were a generation behind. A number in a cost ledger
+ * that came from a blog is a number that looks measured and is not.
  */
 
-export const PRICING_VERSION = 'anthropic-2026-11';
+export const PRICING_VERSION = 'claude+openai-2026-11-26';
 
 export interface ModelRates {
   /** Fresh input tokens. */
@@ -46,6 +52,40 @@ const RATES: Record<string, ModelRates> = {
     outputPerMTok: 0.5,
     cacheReadPerMTok: 0.01,
     cacheWritePerMTok: 0.125,
+  },
+
+  // ---- OpenAI (D20 amended; see docs/M5_PLAN.md) ------------------------------------
+  //
+  // Only the three tiers this app could sensibly be pointed at. The catalogue has forty-odd
+  // text models and an entry here is a claim that somebody checked the price — a stale row
+  // for a model nobody runs is a lie waiting to be read as a fact.
+
+  /**
+   * The cheap, high-volume tier, and M5's default.
+   *
+   * Identical published rates to Claude Haiku 5.5, which makes the two a clean comparison:
+   * the same prompt on both costs the same, so a quality difference is the only difference.
+   * D20's own words for this feature are "Haiku for high-volume wish drafting".
+   */
+  'gpt-6-luna': {
+    inputPerMTok: 0.1,
+    outputPerMTok: 0.5,
+    cacheReadPerMTok: 0.01,
+    cacheWritePerMTok: 0.125,
+  },
+  /** Mid tier, if the cheap one's Hindi or solemn copy does not hold up. */
+  'gpt-6.1-terra': {
+    inputPerMTok: 1.0,
+    outputPerMTok: 5.0,
+    cacheReadPerMTok: 0.05,
+    cacheWritePerMTok: 1.25,
+  },
+  /** The current flagship, for a like-for-like comparison against Claude Opus 5.5. */
+  'gpt-6.2-astra': {
+    inputPerMTok: 8.0,
+    outputPerMTok: 40.0,
+    cacheReadPerMTok: 0.4,
+    cacheWritePerMTok: 10.0,
   },
 };
 

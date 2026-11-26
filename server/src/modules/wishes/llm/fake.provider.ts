@@ -19,6 +19,7 @@ import type { DraftPrompt, DraftResult, LlmProvider, DraftOutcome } from './llm-
 @Injectable()
 export class FakeLlmProvider implements LlmProvider {
   readonly providerName = 'fake';
+  readonly modelName = 'fake-model';
   readonly isLive = false;
 
   /**
@@ -43,7 +44,7 @@ export class FakeLlmProvider implements LlmProvider {
         return {
           outcome: 'REFUSED',
           text: '',
-          model: 'fake-model',
+          model: this.modelName,
           usage,
           refusalCategory: 'simulated',
         };
@@ -51,7 +52,7 @@ export class FakeLlmProvider implements LlmProvider {
         return {
           outcome: 'ERROR',
           text: '',
-          model: 'fake-model',
+          model: this.modelName,
           // A provider that failed before producing anything bills nothing, and the row
           // still gets written — with zeros. A gap in the ledger is worse than a zero.
           usage: { ...usage, inputTokens: 0, outputTokens: 0 },
@@ -61,7 +62,7 @@ export class FakeLlmProvider implements LlmProvider {
         return {
           outcome: 'TIMEOUT',
           text: '',
-          model: 'fake-model',
+          model: this.modelName,
           usage: { ...usage, outputTokens: 0 },
           errorMessage: 'simulated timeout',
         };
@@ -69,7 +70,7 @@ export class FakeLlmProvider implements LlmProvider {
         return {
           outcome: 'OK',
           text: 'This draft came from the fake provider. No model was called.',
-          model: 'fake-model',
+          model: this.modelName,
           usage,
         };
     }

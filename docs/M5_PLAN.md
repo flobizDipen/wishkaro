@@ -617,3 +617,116 @@ public and a drafted wish is about somebody by name. The five-by-three matrix an
 remembrance draft in `M5_VERIFY.md` are all about invented people, and the account with 575
 people on Railway is used for the no-repeat check against real history **without any of its
 contents being written down**.
+
+---
+
+## 11. Amendment — the provider is OpenAI, and D20 changed to allow it
+
+> Added 2026-11-26, after §§1–10 were written and steps 1–3 were built. Dipen's decision.
+
+### 11.1 What was asked, and the conflict it hit
+
+> *"For now keep dummy and I am more interested to add chatGpt model."*
+
+Two things in the repository said otherwise, and they did not agree with each other either:
+
+- **`docs/BUILD_PROMPT_M5.md`** — "default to `claude-opus-5-5`… Do NOT quietly pick a
+  cheaper model to save money." It also says the model choice is Dipen's, so this is him
+  exercising it rather than a session working around the instruction.
+- **`REQUIREMENTS.md` D20** — "Text AI | Claude (Haiku for volume, Sonnet for reasoning)",
+  and §10, "Claude for all text and structured reasoning". That is a locked decision, and
+  the build prompt is explicit that a conflict with REQUIREMENTS is raised, not resolved.
+
+Worth noting that **D20 and the build prompt already disagreed before OpenAI came up**: D20
+says Haiku — the cheap tier — "for high-volume wish drafting", and the build prompt says
+default to Opus and don't pick anything cheaper. Nobody had written a line of drafting code
+when either was written.
+
+### 11.2 The decision
+
+Raised, and answered: **both providers behind the one port, chosen by configuration.** Not a
+replacement.
+
+The argument that decided it is TBD-4. The solemn copy has to be hand-reviewed and cannot be
+signed off by the session that wrote it, so the review is happening whatever runs underneath.
+Having two providers makes that review a comparison rather than a verdict on one sample — and
+the cost ledger already records `provider` and `model` per row, so "which one, and what does
+it cost" is a query rather than an argument. Settling on a vendor first would have thrown that
+away for nothing.
+
+Tier: the cheapest, per D20's own words. `gpt-6-luna` at $0.10 / $0.50 per MTok, which are
+**the same published rates as Claude Haiku 5.5** — so the same prompt costs the same on both
+and a quality difference is the only difference between them.
+
+### 11.3 What it gives up, stated
+
+- **No server-side fallback.** Anthropic's `fallbacks: "default"` re-runs a declined request
+  on another model inside the same call. OpenAI has no equivalent, so §5.3's refusal path is
+  one attempt shorter: a decline goes straight to the app's local template. A client-side
+  retry on a second model is possible, costs double in the worst case, and is deliberately
+  not built — it is a product decision, not a session's.
+- **Two live adapters is more surface than one.** Two keys, two SDKs, two sets of API
+  semantics to keep straight, and a `WISH_PROVIDER` switch that somebody can set wrong. The
+  DI-graph test in `wishes.module.spec.ts` exists because of that last one.
+- **TBD-4's review is per provider.** Approving the solemn copy on one does not approve it on
+  the other, and switching after a review means reviewing again.
+- **The Anthropic adapter is still unwritten**, so "both" is an architecture today and a
+  comparison only once a second key exists.
+
+### 11.4 What the port had to grow, and the one real bug it exposed
+
+The port survived almost unchanged, which is the claim §10 of REQUIREMENTS always made and
+had never been tested. Two changes:
+
+**`modelName` moved onto the provider.** `DraftingService` was reading `env.ANTHROPIC_MODEL`
+to label the ledger row it writes when a provider throws before returning one. That would have
+recorded `claude-opus-5-5` against every failed OpenAI call, in the one table whose job is to
+say what was actually spent.
+
+**The four token counts are now contractually DISJOINT**, and this is the one that would have
+corrupted the ledger silently. Anthropic reports `input_tokens` already excluding cached
+tokens. **OpenAI reports it as the TOTAL**, with `cached_tokens` and `cache_write_tokens` as
+subsets of it. Passing OpenAI's numbers straight through would bill the cached tokens twice —
+once at the full input rate inside the total and again at the cache rate — so the ledger would
+read high by roughly the amount caching was supposed to save, and the conclusion a reader
+would draw is "caching is not worth having". The adapter subtracts; `openai.provider.spec.ts`
+asserts it in rupees, because that is the number somebody acts on.
+
+### 11.5 What is verified, and what is not
+
+**Verified.** The pricing rows were read off `platform.openai.com/docs/pricing` on 2026-11-26,
+not from a rate-card blog — four aggregator sites disagreed with each other and two were a
+generation behind. The field names come from the installed SDK's own type declarations, so
+`tsc` rejects a field that does not exist. 14 adapter tests, 4 DI-graph tests, and the
+`WISH_PROVIDER` boot guard, all green. Run through `costOf` at ₹89/USD, a draft of
+1,000 input and 150 output tokens comes to:
+
+| Model | One draft | 100 drafts |
+|---|---|---|
+| `gpt-6-luna` (M5's default) | ₹0.0156 | ₹1.56 |
+| `claude-haiku-5-5` | ₹0.0156 | ₹1.56 |
+| `claude-opus-5-5` (what the build prompt asked for) | ₹0.6230 | ₹62.30 |
+| `gpt-6.2-astra` (OpenAI's flagship) | ₹1.2460 | ₹124.60 |
+
+**These are arithmetic from the rate table, not measurements.** The token counts are an
+assumption; the real ones come from the ledger on the first live call, and the number the
+build prompt actually asked for — definition-of-done item 7 — is the measured one. What the
+table does show is the shape of the decision: the cheap tier is **forty times** cheaper than
+the model the build prompt named, and the two cheap tiers are indistinguishable on price,
+which is what makes them a fair comparison on quality.
+
+**NOT verified, and it is the whole adapter.** There is no OpenAI key on this machine, so
+**nothing in `openai.provider.ts` has made a real request.** A type is a claim about a shape,
+not a recording of one. The failure that would be silent is usage arriving in fields this code
+does not read: the ledger would record zeros, every draft would look free, and nothing would
+break. `readUsage` logs a warning rather than returning quietly, which is the best that can be
+done without a key. `M5_VERIFY.md` will carry this as **PARTIAL**, not as a pass.
+
+### 11.6 What this changes in the earlier sections
+
+§3.1 and §3.3 are now about whichever provider is configured. `prompt-builder.ts` is unchanged
+and did not need to be: the two-system-prompt layout was designed for Anthropic's explicit
+cache breakpoints and it earns its keep under OpenAI's automatic caching too, because a stable
+prefix is what both of them match on. §5.3's refusal path loses its server-side second attempt
+(§11.3). §8 item 1 is no longer the blocker it was — an **OpenAI** key now unblocks steps 4
+onward, and an Anthropic key is only needed for the comparison D20 was amended to allow.

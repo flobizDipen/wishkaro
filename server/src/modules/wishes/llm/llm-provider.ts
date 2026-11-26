@@ -23,11 +23,23 @@ export interface DraftPrompt {
 }
 
 /**
- * Token counts as the provider reports them.
+ * Token counts, NORMALISED.
  *
  * Four, not two. Cache reads cost roughly a twentieth of fresh input, so a ledger that
  * cannot tell them apart cannot answer whether prompt caching is working — which is the one
  * question caching has to be checked against rather than assumed.
+ *
+ * **The four counts are DISJOINT, and this is a contract every adapter has to honour.**
+ * `inputTokens` means input tokens that were neither read from the cache nor written to it,
+ * so that `costOf` can add all four at their own rates without counting anything twice.
+ *
+ * It is a contract because the two providers disagree. Anthropic reports `input_tokens`
+ * already excluding cached tokens; OpenAI reports `input_tokens` as the TOTAL, with
+ * `cached_tokens` and `cache_write_tokens` as subsets of it. An adapter that passed OpenAI's
+ * numbers straight through would bill the cached tokens twice — once at the full input rate
+ * inside the total, and again at the cache rate — and the ledger would read high by exactly
+ * the amount caching was supposed to save. A cost table that is wrong in the direction of
+ * "caching looks useless" is worse than no cost table, because somebody acts on it.
  */
 export interface TokenUsage {
   inputTokens: number;
@@ -72,8 +84,19 @@ export interface DraftResult {
 }
 
 export interface LlmProvider {
-  /** A short name for the ledger: "anthropic", or "fake". */
+  /** A short name for the ledger: "anthropic", "openai", or "fake". */
   readonly providerName: string;
+
+  /**
+   * The model this provider is configured to call.
+   *
+   * On the provider rather than read from the environment by the caller: `DraftingService`
+   * needs a model name for the ledger row it writes when a provider throws before returning
+   * one, and reaching into `env.ANTHROPIC_MODEL` for that — which is what it used to do —
+   * is a provider-specific name leaking into provider-neutral code. It would have gone on
+   * quietly recording "claude-opus-5-5" against failed OpenAI calls.
+   */
+  readonly modelName: string;
 
   /**
    * True when this provider can actually reach a model.

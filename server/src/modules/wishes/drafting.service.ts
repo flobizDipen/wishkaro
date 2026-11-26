@@ -7,7 +7,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { APP_ENV, type AppEnv } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { milestoneLabelFor } from '../events/derived';
 import { AiUsageService, FEATURE_WISH_DRAFT } from './ledger/ai-usage.service';
@@ -47,7 +46,6 @@ export class DraftingService {
     private readonly ledger: AiUsageService,
     private readonly rateLimit: DraftRateLimitService,
     @Inject(LLM_PROVIDER) private readonly provider: LlmProvider,
-    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   async draft(userId: string, request: DraftWishRequest): Promise<DraftWishResponse> {
@@ -128,7 +126,10 @@ export class DraftingService {
     let result: DraftResult = {
       outcome: 'ERROR',
       text: '',
-      model: this.env.ANTHROPIC_MODEL,
+      // The provider's own model, not an env var named after one vendor. Reaching for
+      // ANTHROPIC_MODEL here would have recorded "claude-opus-5-5" against every failed
+      // OpenAI call, in the one table whose job is to say what was actually spent.
+      model: this.provider.modelName,
       usage: NO_TOKENS,
       errorMessage: 'provider threw',
     };
