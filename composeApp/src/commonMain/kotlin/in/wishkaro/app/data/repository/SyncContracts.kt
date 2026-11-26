@@ -33,11 +33,37 @@ interface SyncApi {
 
 /** The outbox, plus the one write that applies a pulled page. */
 interface SyncStore {
-    suspend fun pendingPeople(): List<wishkaro.db.Person>
+    /**
+     * One bounded, ordered snapshot of the outbox — oldest first, blocked rows excluded.
+     *
+     * [limit] is not a page size. The engine takes the whole snapshot and then pages it in
+     * memory, because paging the SQL instead would re-read a table that the previous page's
+     * settlement has just changed underneath it. See [SyncEngine.push].
+     */
+    suspend fun pendingPeople(limit: Long): List<wishkaro.db.Person>
 
-    suspend fun pendingEvents(): List<wishkaro.db.Event>
+    suspend fun pendingEvents(limit: Long): List<wishkaro.db.Event>
 
-    suspend fun pendingTraits(): List<wishkaro.db.Person_trait>
+    suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait>
+
+    /**
+     * Ids of every person with unsent changes, blocked ones included and without a limit.
+     *
+     * Used for one question only: is this event's person still waiting to be pushed? An
+     * event whose person is pending but did not make it into this snapshot must wait too —
+     * sending it would earn a guaranteed UNKNOWN_PERSON. Cheap because it is ids only.
+     */
+    suspend fun pendingPersonIds(): Set<String>
+
+    /**
+     * Set a row aside: the server named it and refused it, so it leaves the drain while
+     * keeping its pending flag. [reason] is the server's own message, shown to the user.
+     */
+    suspend fun blockPerson(id: String, reason: String)
+
+    suspend fun blockEvent(id: String, reason: String)
+
+    suspend fun blockTrait(id: String, reason: String)
 
     suspend fun clearPersonPending(ids: List<String>)
 

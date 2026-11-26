@@ -31,7 +31,14 @@ CREATE TABLE person (
     -- ---- added in M1 (schema version 3) ----
     -- The server's ordered "what to add next" list, comma-separated. Mirrored rather than
     -- recomputed so COMPLETENESS_WEIGHTS stays the only place the ordering is decided.
-    completeness_suggestions TEXT NOT NULL DEFAULT ''
+    completeness_suggestions TEXT NOT NULL DEFAULT '',
+    -- ---- added in M3 (schema version 6) ----
+    -- Set when the server rejected THIS row by name, with the server's own reason. The row
+    -- keeps pending_sync = 1 — it still holds an unsent change — but leaves the drain, so
+    -- one row the server will never accept cannot stop every other row from reaching it.
+    -- See 5.sqm, and docs/M3_PLAN.md §1.6.
+    sync_blocked      INTEGER NOT NULL DEFAULT 0,
+    sync_block_reason TEXT
 );
 
 CREATE INDEX person_pending_sync ON person(pending_sync);
@@ -42,8 +49,38 @@ SELECT * FROM person WHERE deleted_at IS NULL ORDER BY display_name;
 selectById:
 SELECT * FROM person WHERE id = ?;
 
+-- The outbox, as the sync engine drains it.
+--
+-- Three things this query says that the one it replaced did not:
+--
+--   `sync_blocked = 0` — a row the server has named and refused is set aside rather than
+--   re-sent on every run for ever.
+--
+--   `ORDER BY updated_at, id` — oldest first, and deterministic. With a LIMIT, an unordered
+--   query would hand back an arbitrary slice each run, so a large outbox could re-read the
+--   same rows and never reach the rest.
+--
+--   `LIMIT` — M3 can produce an outbox of thousands in one go. Unbounded, a single push
+--   tried to carry all of them, which is the failure docs/M3_PLAN.md §1 is about. The engine
+--   pages this snapshot; what does not fit goes on the next run.
 selectPendingSync:
-SELECT * FROM person WHERE pending_sync = 1;
+SELECT * FROM person
+WHERE pending_sync = 1 AND sync_blocked = 0
+ORDER BY updated_at, id
+LIMIT :limit;
+
+-- Still pending, but set aside: the server named this row and refused it.
+selectBlocked:
+SELECT * FROM person WHERE sync_blocked = 1 ORDER BY updated_at;
+
+countBlocked:
+SELECT COUNT(*) FROM person WHERE sync_blocked = 1;
+
+markSyncBlocked:
+UPDATE person SET sync_blocked = 1, sync_block_reason = ? WHERE id = ?;
+
+clearSyncBlocked:
+UPDATE person SET sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 -- NOTE: no `ON CONFLICT ... DO UPDATE` (UPSERT) anywhere in this schema.
 -- UPSERT needs SQLite 3.24, which arrived in Android 11 (API 30). minSdk is 26 (OD-13), so
@@ -76,15 +113,20 @@ SELECT * FROM person WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC;
 updateProfile:
 UPDATE person SET
     display_name = ?, relation_to_owner = ?, gender = ?, phone = ?, email = ?, notes = ?,
-    is_deceased = ?, updated_at = ?, pending_sync = 1
+    is_deceased = ?, updated_at = ?, pending_sync = 1,
+    -- A user edit clears the block. Whatever the server refused, this is different data
+    -- now, and leaving the row set aside would make the edit silently unsendable.
+    sync_blocked = 0, sync_block_reason = NULL
 WHERE id = ?;
 
 -- Soft delete, as a tombstone the sync engine will push (D23).
 markDeleted:
-UPDATE person SET deleted_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE person SET deleted_at = ?, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 markRestored:
-UPDATE person SET deleted_at = NULL, updated_at = ?, pending_sync = 1 WHERE id = ?;
+UPDATE person SET deleted_at = NULL, updated_at = ?, pending_sync = 1,
+    sync_blocked = 0, sync_block_reason = NULL WHERE id = ?;
 
 clearPendingSync:
 UPDATE person SET pending_sync = 0 WHERE id = ?;

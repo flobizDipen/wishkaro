@@ -3,6 +3,7 @@ package `in`.wishkaro.app.data.repository
 import `in`.wishkaro.app.data.local.RemoteEvent
 import `in`.wishkaro.app.data.local.RemotePerson
 import `in`.wishkaro.app.data.local.RemoteTrait
+import `in`.wishkaro.app.data.remote.ApiException
 import `in`.wishkaro.app.data.remote.DeliveryReportDto
 import `in`.wishkaro.app.data.remote.DeliveryReportRequest
 import `in`.wishkaro.app.data.remote.SettingsDto
@@ -10,6 +11,7 @@ import `in`.wishkaro.app.data.remote.SettingsPush
 import `in`.wishkaro.app.data.remote.SyncEventPush
 import `in`.wishkaro.app.data.remote.SyncPersonPush
 import `in`.wishkaro.app.data.remote.SyncPushRequest
+import `in`.wishkaro.app.data.remote.SyncPushResponse
 import `in`.wishkaro.app.data.remote.SyncSkipped
 import `in`.wishkaro.app.data.remote.SyncTraitPush
 import `in`.wishkaro.app.domain.ReminderSettings
@@ -50,9 +52,36 @@ class SyncEngine(
          * the difference used to be invisible to everything above this class.
          */
         val rejected: List<SyncSkipped> = emptyList(),
+        /**
+         * Rows set aside this run because the server named them and refused them. They keep
+         * their pending flag but leave the drain, so the rest of the outbox keeps moving.
+         * Reported here so the UI can tell the user; a row silently set aside would be the
+         * same silent-partial-success M3 exists to avoid.
+         */
+        val blocked: List<Blocked> = emptyList(),
+        /**
+         * Events and traits deliberately held back because their person is pending but did
+         * not fit in this run's snapshot. They go next run. Zero in every ordinary case.
+         */
+        val deferred: Int = 0,
         /** How many delivery reports this run managed to hand over (FR-REM-10). */
         val deliveryReported: Int = 0,
     )
+
+    /** One row the server refused by name, with the server's own message. */
+    data class Blocked(val id: String, val entity: String, val reason: String)
+
+    /** What one run's push phase did, before it is folded into [Result]. */
+    private data class PushOutcome(
+        val counts: Counts = Counts(),
+        val rejected: List<SyncSkipped> = emptyList(),
+        val blocked: List<Blocked> = emptyList(),
+        val deferred: Int = 0,
+        val truncated: Boolean = false,
+    )
+
+    /** What one page did. */
+    private data class PageResult(val counts: Counts, val skipped: List<SyncSkipped>)
 
     suspend fun sync(): kotlin.Result<Result> = mutex.withLock {
         runCatching {
@@ -65,8 +94,15 @@ class SyncEngine(
             // gone. Its own failure is swallowed for the same reason in reverse — losing the
             // user's data because the metrics endpoint was down would be an absurd trade.
             val reported = runCatching { drainDeliveryReports() }.getOrDefault(0)
-            val (pushed, rejected) = push()
-            Result(pushed = pushed, pulled = pull(), rejected = rejected, deliveryReported = reported)
+            val outcome = push()
+            Result(
+                pushed = outcome.counts,
+                pulled = pull(),
+                rejected = outcome.rejected,
+                blocked = outcome.blocked,
+                deferred = outcome.deferred,
+                deliveryReported = reported,
+            )
         }
     }
 
@@ -147,7 +183,7 @@ class SyncEngine(
      * of what the v1 schema can express (docs/M0_PLAN.md §2) — losing a real edit to a
      * housekeeping sweep is the worse of the two failures.
      */
-    private suspend fun push(): Pair<Counts, List<SyncSkipped>> {
+    private suspend fun push(): PushOutcome {
         // Settings go in a request of their OWN, ahead of the records.
         //
         // Not an optimisation — isolation. Validation runs before anything is applied, so a
@@ -160,87 +196,183 @@ class SyncEngine(
         // rarely-changing thing must never block the user's actual data.
         pushSettings()
 
-        val people = local.pendingPeople()
-        val events = local.pendingEvents()
-        val traits = local.pendingTraits()
-        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) {
-            return Counts() to emptyList()
+        // ONE bounded snapshot, paged in memory — not a loop on "is the outbox empty yet".
+        //
+        // That distinction is load-bearing. A STALE row is re-stamped and stays pending, and
+        // an UNKNOWN_PERSON row stays pending unchanged, both by design. A loop that re-read
+        // the outbox after each page would therefore never terminate on either of them.
+        // Snapshot-and-page terminates by construction: every page is sent at most once per
+        // run, and whatever is still pending at the end goes on the next run, exactly as it
+        // did when the whole outbox was one request.
+        val people = local.pendingPeople(OUTBOX_SNAPSHOT_LIMIT)
+        val events = local.pendingEvents(OUTBOX_SNAPSHOT_LIMIT)
+        val traits = local.pendingTraits(OUTBOX_SNAPSHOT_LIMIT)
+        if (people.isEmpty() && events.isEmpty() && traits.isEmpty()) return PushOutcome()
+
+        val plan = planPages(people, events, traits, local.pendingPersonIds())
+
+        var counts = Counts()
+        val rejected = mutableListOf<SyncSkipped>()
+        val blocked = mutableListOf<Blocked>()
+
+        for (page in plan.pages) {
+            val result = sendPage(page, blocked) ?: continue
+            counts = Counts(
+                people = counts.people + result.counts.people,
+                events = counts.events + result.counts.events,
+                traits = counts.traits + result.counts.traits,
+            )
+            rejected += result.skipped
         }
 
-        // The push DTOs omit every server-derived field. The server's write schemas are
-        // .strict(), so including `sentiment`, `isMinor` or `completenessScore` would make
-        // each sync a 400 — and silently dropping them, which is what a lenient schema used
-        // to do, would hide a client bug rather than report it.
-        val response = api.syncPush(
-            SyncPushRequest(
-                people = people.map {
-                    SyncPersonPush(
-                        id = it.id,
-                        displayName = it.display_name,
-                        relationToOwner = it.relation_to_owner,
-                        isSelf = it.is_self != 0L,
-                        gender = it.gender,
-                        phone = it.phone,
-                        email = it.email,
-                        notes = it.notes,
-                        isDeceased = it.is_deceased != 0L,
-                        updatedAt = it.updated_at,
-                        deletedAt = it.deleted_at,
-                    )
-                },
-                events = events.map {
-                    SyncEventPush(
-                        id = it.id,
-                        personId = it.person_id,
-                        type = it.type,
-                        label = it.label,
-                        isMuted = it.is_muted != 0L,
-                        day = it.day.toInt(),
-                        month = it.month.toInt(),
-                        year = it.year?.toInt(),
-                        updatedAt = it.updated_at,
-                        deletedAt = it.deleted_at,
-                    )
-                },
-                traits = traits.map {
-                    SyncTraitPush(
-                        id = it.id,
-                        personId = it.person_id,
-                        kind = it.kind,
-                        value = it.value_,
-                        updatedAt = it.updated_at,
-                        deletedAt = it.deleted_at,
-                    )
-                },
-            ),
-        )
+        return PushOutcome(counts, rejected, blocked, plan.deferred, plan.truncated)
+    }
 
-        // One timestamp for every re-stamp in this batch, a millisecond past the server's own
+    /**
+     * Send one page and settle it on its own response, before the next page is sent.
+     *
+     * That is what makes a page an independent commit: a failure in page four leaves pages
+     * one to three cleared, not undone and not re-sent.
+     *
+     * Returns null when the page could not be handed over but the run should continue; the
+     * page's rows simply stay pending. **Throws** when the run should stop.
+     *
+     * The difference is the status, and it matters:
+     *
+     *  - **5xx, or a transport failure** — not about this data. The next page will fail the
+     *    same way, so stop and let the next sync try again.
+     *  - **4xx** — about this data, and the pages after it are probably fine. Do not stop:
+     *    that was the original bug, where one unacceptable row meant nothing else ever
+     *    reached the server again.
+     *
+     * A `VALIDATION_FAILED` 400 is the one worth working on, because the server says which
+     * row. Those rows are set aside with the server's own message and the page goes once
+     * more without them, so a single 400-character name out of a spreadsheet costs its own
+     * row and not the 199 around it.
+     */
+    private suspend fun sendPage(page: PushPage, blocked: MutableList<Blocked>): PageResult? {
+        val response = try {
+            api.syncPush(page.toRequest())
+        } catch (failure: ApiException) {
+            if (failure.status !in 400..499) throw failure
+            if (failure.code != VALIDATION_FAILED) return null
+
+            val rejectedRows = rowsRejectedBy(page, failure.details)
+            // An empty list means the server refused the page without naming a row we can
+            // find. "Could not attribute this" is not "nothing was wrong", so nothing is
+            // blocked and the page stays pending — guessing would delete the user's data.
+            if (rejectedRows.isEmpty()) return null
+
+            rejectedRows.forEach { row ->
+                when (row.entity) {
+                    PERSON -> local.blockPerson(row.id, row.reason)
+                    EVENT -> local.blockEvent(row.id, row.reason)
+                    TRAIT -> local.blockTrait(row.id, row.reason)
+                }
+                blocked += Blocked(row.id, row.entity, row.reason)
+            }
+
+            val retry = page.without(rejectedRows)
+            // Every row in the page was refused. There is nothing left to send, and they are
+            // all blocked now, so the page is finished rather than failed.
+            if (retry.isEmpty()) return PageResult(Counts(), emptyList())
+
+            return try {
+                settlePage(retry, api.syncPush(retry.toRequest()))
+            } catch (retryFailure: ApiException) {
+                // One retry, not a loop. Zod reports every failed check at once, so one pass
+                // should have caught every bad row; a second failure means something this
+                // code does not understand, and the honest answer is to leave the rows
+                // pending rather than keep deleting them from the page until it fits.
+                if (retryFailure.status !in 400..499) throw retryFailure
+                null
+            }
+        }
+
+        return settlePage(page, response)
+    }
+
+    /** Apply the server's answer to the rows this page actually sent. */
+    private suspend fun settlePage(page: PushPage, response: SyncPushResponse): PageResult {
+        // One timestamp for every re-stamp in this page, a millisecond past the server's own
         // clock. STALE means the stored row's `updated_at` is at or before `serverTime`, so
         // this is strictly newer than anything the server can currently be holding.
         val retryStamp = retryStamp(response.serverTime)
 
         settle(
-            ids = people.map { it.id },
+            ids = page.people.map { it.id },
             skipped = response.skipped.filter { it.entity == PERSON },
             clear = local::clearPersonPending,
             restamp = { local.restampPersonPending(it, retryStamp) },
         )
         settle(
-            ids = events.map { it.id },
+            ids = page.events.map { it.id },
             skipped = response.skipped.filter { it.entity == EVENT },
             clear = local::clearEventPending,
             restamp = { local.restampEventPending(it, retryStamp) },
         )
         settle(
-            ids = traits.map { it.id },
+            ids = page.traits.map { it.id },
             skipped = response.skipped.filter { it.entity == TRAIT },
             clear = local::clearTraitPending,
             restamp = { local.restampTraitPending(it, retryStamp) },
         )
 
-        return Counts(people.size, events.size, traits.size) to response.skipped
+        return PageResult(
+            counts = Counts(page.people.size, page.events.size, page.traits.size),
+            skipped = response.skipped,
+        )
     }
+
+    /**
+     * The wire shape of one page.
+     *
+     * The push DTOs omit every server-derived field. The server's write schemas are
+     * `.strict()`, so including `sentiment`, `isMinor` or `completenessScore` would make each
+     * sync a 400 — and silently dropping them, which is what a lenient schema used to do,
+     * would hide a client bug rather than report it.
+     */
+    private fun PushPage.toRequest() = SyncPushRequest(
+        people = people.map {
+            SyncPersonPush(
+                id = it.id,
+                displayName = it.display_name,
+                relationToOwner = it.relation_to_owner,
+                isSelf = it.is_self != 0L,
+                gender = it.gender,
+                phone = it.phone,
+                email = it.email,
+                notes = it.notes,
+                isDeceased = it.is_deceased != 0L,
+                updatedAt = it.updated_at,
+                deletedAt = it.deleted_at,
+            )
+        },
+        events = events.map {
+            SyncEventPush(
+                id = it.id,
+                personId = it.person_id,
+                type = it.type,
+                label = it.label,
+                isMuted = it.is_muted != 0L,
+                day = it.day.toInt(),
+                month = it.month.toInt(),
+                year = it.year?.toInt(),
+                updatedAt = it.updated_at,
+                deletedAt = it.deleted_at,
+            )
+        },
+        traits = traits.map {
+            SyncTraitPush(
+                id = it.id,
+                personId = it.person_id,
+                kind = it.kind,
+                value = it.value_,
+                updatedAt = it.updated_at,
+                deletedAt = it.deleted_at,
+            )
+        },
+    )
 
     /**
      * Apply the four outcomes above to one entity's slice of the batch.
@@ -348,13 +480,13 @@ class SyncEngine(
     private companion object {
         const val MAX_PAGES = 50
 
-        // Wire values, matched as strings so an unrecognised reason from a newer server is
-        // simply not one of the ones we hold — it clears, exactly as an acknowledgement
-        // would, rather than becoming a row that sticks in the outbox forever.
-        const val PERSON = "person"
-        const val EVENT = "event"
-        const val TRAIT = "trait"
+        // PERSON / EVENT / TRAIT are the same wire values, and live in SyncPaging.kt
+        // because the paging code needs them too. Matched as strings so an unrecognised
+        // reason from a newer server is simply not one of the ones we hold — it clears,
+        // exactly as an acknowledgement would, rather than sticking in the outbox forever.
         const val STALE = "STALE"
+        /** The server's code for a body that failed zod. The only 400 that names rows. */
+        const val VALIDATION_FAILED = "VALIDATION_FAILED"
         const val UNKNOWN_PERSON = "UNKNOWN_PERSON"
     }
 }

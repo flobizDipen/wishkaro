@@ -2,6 +2,7 @@ package `in`.wishkaro.app.data.local
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOne
 import `in`.wishkaro.app.data.repository.SyncStore
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
@@ -332,14 +333,58 @@ class LocalStore(private val db: WishKaroDb) : SyncStore, PlanStore, DeliverySto
     // Sync plumbing
     // -----------------------------------------------------------------------------------
 
-    override suspend fun pendingPeople(): List<wishkaro.db.Person> =
-        withContext(Dispatchers.Default) { people.selectPendingSync().executeAsList() }
+    override suspend fun pendingPeople(limit: Long): List<wishkaro.db.Person> =
+        withContext(Dispatchers.Default) { people.selectPendingSync(limit).executeAsList() }
 
-    override suspend fun pendingEvents(): List<wishkaro.db.Event> =
-        withContext(Dispatchers.Default) { events.selectPendingSync().executeAsList() }
+    override suspend fun pendingEvents(limit: Long): List<wishkaro.db.Event> =
+        withContext(Dispatchers.Default) { events.selectPendingSync(limit).executeAsList() }
 
-    override suspend fun pendingTraits(): List<wishkaro.db.Person_trait> =
-        withContext(Dispatchers.Default) { traits.selectPendingSync().executeAsList() }
+    override suspend fun pendingTraits(limit: Long): List<wishkaro.db.Person_trait> =
+        withContext(Dispatchers.Default) { traits.selectPendingSync(limit).executeAsList() }
+
+    /**
+     * Every person id still waiting to be pushed, blocked ones included.
+     *
+     * Blocked ones ARE included, deliberately: a blocked person is not on the server, so
+     * their events must not be sent either. Excluding them here would send an event whose
+     * person can never arrive, earning an UNKNOWN_PERSON on every run for ever.
+     */
+    override suspend fun pendingPersonIds(): Set<String> = withContext(Dispatchers.Default) {
+        val drainable = people.selectPendingSync(Long.MAX_VALUE).executeAsList().map { it.id }
+        val blocked = people.selectBlocked().executeAsList().map { it.id }
+        (drainable + blocked).toSet()
+    }
+
+    override suspend fun blockPerson(id: String, reason: String) {
+        withContext(Dispatchers.Default) { people.markSyncBlocked(reason, id) }
+    }
+
+    override suspend fun blockEvent(id: String, reason: String) {
+        withContext(Dispatchers.Default) { events.markSyncBlocked(reason, id) }
+    }
+
+    override suspend fun blockTrait(id: String, reason: String) {
+        withContext(Dispatchers.Default) { traits.markSyncBlocked(reason, id) }
+    }
+
+    /** Rows the server named and refused, for the banner that tells the user about them. */
+    fun observeBlockedCount(): Flow<Long> = combine(
+        people.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+        events.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+        traits.countBlocked().asFlow().mapToOne(Dispatchers.Default),
+    ) { p, e, t -> p + e + t }
+
+    /** The blocked rows themselves, with the server's reason, newest problem last. */
+    suspend fun blockedRows(): List<BlockedRow> = withContext(Dispatchers.Default) {
+        val byId = people.selectAll().executeAsList().associateBy({ it.id }, { it.display_name })
+        people.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "person", it.display_name, it.sync_block_reason.orEmpty())
+        } + events.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "event", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
+        } + traits.selectBlocked().executeAsList().map {
+            BlockedRow(it.id, "trait", byId[it.person_id] ?: "A person", it.sync_block_reason.orEmpty())
+        }
+    }
 
     override suspend fun clearPersonPending(ids: List<String>) = withContext(Dispatchers.Default) {
         db.transaction { ids.forEach(people::clearPendingSync) }
@@ -884,4 +929,18 @@ private fun wishkaro.db.User_settings.toDomain() = ReminderSettings(
     timezone = timezone,
     updatedAt = updated_at,
     pendingSync = pending_sync == 1L,
+)
+
+/**
+ * One row the server named and refused, ready to show the user.
+ *
+ * `personName` rather than an id, because the only useful thing to say about a blocked row
+ * is whose it is — and `reason` is the server's own message, passed through rather than
+ * reworded, so a report of this is a report of what actually happened.
+ */
+data class BlockedRow(
+    val id: String,
+    val entity: String,
+    val personName: String,
+    val reason: String,
 )
