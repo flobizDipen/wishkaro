@@ -36,6 +36,8 @@ import `in`.wishkaro.app.ui.nav.WishKaroNavigation
 import `in`.wishkaro.app.ui.components.WishKaroTopBar
 import `in`.wishkaro.app.ui.nav.WishKaroNavigationBar
 import `in`.wishkaro.app.ui.nav.rememberWishKaroNavigation
+import `in`.wishkaro.app.ui.calendar.CalendarScreen
+import `in`.wishkaro.app.ui.timeline.TimelineScreen
 import `in`.wishkaro.app.ui.upcoming.UpcomingListScreen
 import `in`.wishkaro.app.ui.people.PeopleListScreen
 import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
@@ -152,6 +154,42 @@ private fun AppStore.personOf(personId: String): Person? {
 }
 
 /**
+ * The frame the top-level views share: the app's top bar, and nothing else.
+ *
+ * Upcoming and People add a floating action button of their own; Calendar and Timeline do
+ * not, because "add a person" from a month grid would land the user in a form with no date
+ * chosen and no relation to what they were looking at.
+ */
+@Composable
+private fun TopLevelScaffold(
+    title: String,
+    busy: Boolean,
+    store: AppStore,
+    nav: WishKaroNavigation,
+    modifier: Modifier = Modifier,
+    content: @Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit,
+) {
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            WishKaroTopBar(
+                title = title,
+                busy = busy,
+                onRefresh = store::refresh,
+                onOpenSettings = {
+                    store.prepareSettings()
+                    nav.goTo(Screen.Settings)
+                },
+                onOpenImport = store::openImport,
+                onOpenDeleted = { nav.goTo(Screen.Deleted) },
+                onSignOut = store::signOut,
+            )
+        },
+        content = content,
+    )
+}
+
+/**
  * Every destination's content.
  *
  * Each entry collects the state it needs itself rather than being handed values closed over
@@ -214,6 +252,48 @@ private fun wishKaroEntryProvider(
                     nav.goTo(Screen.AddPerson)
                 },
                 onOpenImport = store::openImport,
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    entry<Screen.Calendar> {
+        val repository: UpcomingRepository = koinInject()
+        val entries by repository.observeUpcoming().collectAsState(emptyList())
+        val busy by store.busy.collectAsState()
+
+        TopLevelScaffold(
+            title = "Calendar",
+            busy = busy,
+            store = store,
+            nav = nav,
+            modifier = inner,
+        ) { padding ->
+            CalendarScreen(
+                entries = entries,
+                today = Clock.System.todayIn(TimeZone.currentSystemDefault()),
+                onOpenPerson = { nav.goTo(Screen.PersonDetail(it)) },
+                modifier = Modifier.padding(padding),
+            )
+        }
+    }
+
+    entry<Screen.Timeline> {
+        val repository: UpcomingRepository = koinInject()
+        val entries by repository.observeUpcoming().collectAsState(emptyList())
+        val busy by store.busy.collectAsState()
+
+        TopLevelScaffold(
+            title = "The year ahead",
+            busy = busy,
+            store = store,
+            nav = nav,
+            modifier = inner,
+        ) { padding ->
+            TimelineScreen(
+                entries = entries,
+                today = Clock.System.todayIn(TimeZone.currentSystemDefault()),
+                onOpenPerson = { nav.goTo(Screen.PersonDetail(it)) },
                 modifier = Modifier.padding(padding),
             )
         }

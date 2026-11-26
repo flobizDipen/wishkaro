@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
+import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
 import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.toneFor
@@ -275,10 +276,40 @@ private fun PersonRow(card: PersonCard, highlighted: Boolean, onClick: () -> Uni
                     // means the local mirror is mid-sync. Show the quiet label, not the loud one.
                     Text("quiet", style = MaterialTheme.typography.labelSmall)
                 }
+                CompletenessIndicator(person)
             }
         }
     }
 }
+
+/**
+ * FR-VIEW-04's completeness indicator.
+ *
+ * The score is the SERVER'S and is only mirrored here — the client never computes it, which
+ * is an engineering rule from M0 and the reason `COMPLETENESS_WEIGHTS` lives in one place.
+ * What is decided locally is only whether to draw anything: a full profile gets no badge,
+ * because a row of green ticks down a directory of three hundred people is decoration, and
+ * the point of the indicator is to show which records are thin.
+ */
+@Composable
+private fun CompletenessIndicator(person: Person) {
+    if (person.completenessScore >= COMPLETE_ENOUGH) return
+
+    Text(
+        "${person.completenessScore}%",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("completeness_${person.id}"),
+    )
+}
+
+/**
+ * Above this, a record is not worth nagging about.
+ *
+ * A threshold rather than a weighting: the weighting is the server's and duplicating it here
+ * is exactly what BUILD_PROMPT_M1 ruled out. This only decides whether the badge is drawn.
+ */
+private const val COMPLETE_ENOUGH = 80
 
 @Composable
 private fun EmptyState(

@@ -1,6 +1,6 @@
 package `in`.wishkaro.app.ui.nav
 
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import kotlin.test.Test
@@ -34,7 +34,7 @@ class WishKaroNavigationTest {
     private fun navigation(routes: List<Screen> = tabs): WishKaroNavigation =
         WishKaroNavigation(
             topLevelRoutes = routes,
-            selectedTab = mutableIntStateOf(0),
+            selectedTab = mutableStateOf(routes.first()::class.simpleName.orEmpty()),
             stacks = routes.associateWith { NavBackStack<NavKey>(it) },
         )
 

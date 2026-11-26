@@ -3,7 +3,7 @@ package `in`.wishkaro.app.ui.nav
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -31,31 +31,34 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
  *    into the report they had just read. That cannot be built here.
  */
 class WishKaroNavigation(
-    /** In order, so the selected one can be saved as an index. The first is the start route. */
+    /** In bar order. The first is the start route — the one the user always exits through. */
     private val topLevelRoutes: List<Screen>,
-    selectedTab: MutableState<Int>,
+    selectedTab: MutableState<String>,
     private val stacks: Map<Screen, NavBackStack<NavKey>>,
 ) {
     val startRoute: Screen get() = topLevelRoutes.first()
 
+    private fun nameOf(screen: Screen): String = screen::class.simpleName.orEmpty()
+
     /**
-     * Which tab is showing, saved as its INDEX.
+     * Which tab is showing, saved by NAME.
      *
-     * An index rather than the key itself, because saving the key means serializing a
-     * `NavKey` polymorphically, and the serializer that does that
-     * (`androidx.navigation3.runtime.serialization.NavKeySerializer`) exists on Android and
-     * not on Kotlin/Native — the Android target compiled with it and the iOS one did not.
-     * The set of tabs is fixed and ordered, so an index says the same thing with no
-     * serialization at all.
+     * Not the key itself: serializing a `NavKey` polymorphically needs
+     * `androidx.navigation3.runtime.serialization.NavKeySerializer`, which exists on Android
+     * and not on Kotlin/Native — the Android target compiled with it and the iOS one did
+     * not. And not an index either, which was the first attempt: an index means inserting a
+     * tab in the MIDDLE of the bar silently changes what every already-saved value points
+     * at, so the user comes back from a process death looking at a different tab. A name
+     * survives the bar being reordered, and an unrecognised one falls back to the start
+     * route rather than throwing.
      */
-    private var selectedTab: Int by selectedTab
+    private var selectedTabName: String by selectedTab
 
     var topLevelRoute: Screen
-        get() = topLevelRoutes[selectedTab.coerceIn(topLevelRoutes.indices)]
+        get() = topLevelRoutes.firstOrNull { nameOf(it) == selectedTabName } ?: startRoute
         private set(value) {
-            val index = topLevelRoutes.indexOf(value)
-            require(index >= 0) { "$value is not a top-level route" }
-            selectedTab = index
+            require(value in topLevelRoutes) { "$value is not a top-level route" }
+            selectedTabName = nameOf(value)
         }
 
     private val currentStack: NavBackStack<NavKey>
@@ -165,7 +168,9 @@ fun rememberWishKaroNavigation(
 ): WishKaroNavigation {
     require(topLevelRoutes.isNotEmpty()) { "there has to be somewhere to start" }
 
-    val selectedTab = rememberSaveable { mutableIntStateOf(0) }
+    val selectedTab = rememberSaveable {
+        mutableStateOf(topLevelRoutes.first()::class.simpleName.orEmpty())
+    }
 
     val stacks = topLevelRoutes.associateWith { route ->
         rememberNavBackStack(

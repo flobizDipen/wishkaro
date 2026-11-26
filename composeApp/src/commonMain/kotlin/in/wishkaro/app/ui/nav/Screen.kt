@@ -35,6 +35,14 @@ sealed interface Screen : NavKey {
     @Serializable
     data object Upcoming : Screen
 
+    /** FR-VIEW-02. A month at a glance, with a dot on every day that holds something. */
+    @Serializable
+    data object Calendar : Screen
+
+    /** FR-VIEW-03. The year ahead, scrollable, empty months included. */
+    @Serializable
+    data object Timeline : Screen
+
     /** FR-VIEW-04. The directory of people, as opposed to the list of events. */
     @Serializable
     data object People : Screen
@@ -82,10 +90,15 @@ sealed interface Screen : NavKey {
  * from inside a signed-in app. `App.kt` branches on the auth state instead.
  *
  * Ordered, and the first is the start route — the one the user always exits through. The
- * order is also what the selected tab is saved as, so inserting a route in the middle later
- * changes what a saved index means. Append rather than insert.
+ * order here is the order of the navigation bar and nothing else: the selected tab is saved
+ * by name, so this list can be reordered freely.
  */
-val TOP_LEVEL_ROUTES: List<Screen> = listOf(Screen.Upcoming, Screen.People)
+val TOP_LEVEL_ROUTES: List<Screen> = listOf(
+    Screen.Upcoming,
+    Screen.Calendar,
+    Screen.Timeline,
+    Screen.People,
+)
 
 /**
  * Whether the bottom navigation stays on screen here.
@@ -133,6 +146,8 @@ val WISHKARO_SAVED_STATE: SavedStateConfiguration = SavedStateConfiguration {
         polymorphic(NavKey::class) {
             subclass(Screen.SignIn::class)
             subclass(Screen.Upcoming::class)
+            subclass(Screen.Calendar::class)
+            subclass(Screen.Timeline::class)
             subclass(Screen.People::class)
             subclass(Screen.AddPerson::class)
             subclass(Screen.PersonDetail::class)

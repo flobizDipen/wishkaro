@@ -18,6 +18,8 @@ data class TopLevelLook(val label: String, val tag: String)
 
 fun lookOf(screen: Screen): TopLevelLook = when (screen) {
     Screen.Upcoming -> TopLevelLook("Upcoming", "tab_upcoming")
+    Screen.Calendar -> TopLevelLook("Calendar", "tab_calendar")
+    Screen.Timeline -> TopLevelLook("Timeline", "tab_timeline")
     Screen.People -> TopLevelLook("People", "tab_people")
     else -> TopLevelLook(screen::class.simpleName.orEmpty(), "tab_other")
 }
@@ -26,15 +28,11 @@ fun lookOf(screen: Screen): TopLevelLook = when (screen) {
 fun TopLevelGlyph(screen: Screen, tint: Color, modifier: Modifier = Modifier) {
     when (screen) {
         Screen.Upcoming -> UpcomingGlyph(tint, modifier)
-        Screen.People -> PeopleGlyph(tint, modifier)
-        else -> CalendarGlyph(tint, modifier)
+        Screen.Calendar -> CalendarGlyph(tint, modifier)
+        Screen.Timeline -> TimelineGlyph(tint, modifier)
+        else -> PeopleGlyph(tint, modifier)
     }
 }
-
-/** Unused until the calendar and timeline land; kept beside its siblings so it is found. */
-@Composable
-internal fun TimelinePlaceholderGlyph(tint: Color, modifier: Modifier = Modifier) =
-    TimelineGlyph(tint, modifier)
 
 /**
  * FR-VIEW-06's compact navigation.

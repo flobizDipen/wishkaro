@@ -165,8 +165,14 @@ class AppStore(
         .map { list ->
             val zone = TimeZone.currentSystemDefault()
             val today = Clock.System.todayIn(zone)
+            // ALPHABETICAL, for FR-VIEW-04: this is the directory, and a directory sorted
+            // by how soon somebody's birthday is cannot be scanned for a name. Sorting by
+            // imminence is what the Upcoming view (FR-VIEW-01) is for, and it has its own
+            // query now. Case-insensitive, or "aarav" files after "Zoya".
             list.map { it.toCard(zone, today) }
-                .sortedWith(compareBy({ it.daysUntil ?: Int.MAX_VALUE }, { it.person.displayName }))
+                .sortedWith(
+                    compareBy(String.CASE_INSENSITIVE_ORDER) { it.person.displayName },
+                )
         }
         .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
