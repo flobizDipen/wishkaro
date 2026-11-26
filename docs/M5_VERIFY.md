@@ -328,7 +328,16 @@ Application-scoped `scope`, which is never cancelled, so one coroutine and one S
 subscription accumulated **per recomposition** — and `collectAsState` keys on the flow
 instance, so each new one restarted collection from `emptyList()` and the history flashed
 empty whenever anything recomposed that screen. It was the only `stateIn` in the file behind
-a function rather than a property. Now a cold flow, remembered by `personId` at the call site.
+a function rather than a property. Now a cold flow, remembered by `personId` at the call site,
+which kills the leak at the source rather than only stabilising the instance.
+
+**Read-verified, not test-verified, and Dipen accepted it on that basis.** There is no
+revert-check for this one because there is no test: nothing in this repository constructs
+`AppStore` (it takes nine collaborators), and the flash is Compose behaviour that needs an
+instrumented test CI does not run. A structural assertion that the return type is not a
+`StateFlow` was considered and rejected — it would test the shape of the fix rather than a
+behaviour, which is the kind of test §5.4 is about. What *is* tested is the flow the screen
+now collects: `observeWishes` is live, scoped to one person, and hides a withdrawn row.
 
 **The nit, taken.** `avoid` entries were capped at 2,000 characters while `messageText`
 deliberately allows 4,000 for a pasted poem — and `regenerate()` puts the text in the box
