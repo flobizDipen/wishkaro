@@ -411,11 +411,28 @@ Pacific/Chatham    Tests: 565 passed, 565 total
 Asia/Kolkata       Tests: 565 passed, 565 total
 ```
 
+(573 after §7.3's DI-graph suite was added; the three-zone run above predates it.)
+
 **565, not 640** — these exclude the four `.db.spec.ts` suites, which need the Postgres this
 machine cannot start. CI runs all 640 in **UTC only**. So nobody has run a DB-backed suite in a
 second timezone, and item 10's three-timezone clause covers the pure suites alone.
 
-### 7.3 iOS
+### 7.3 CI does not boot this app, and M9 added two modules to its graph
+
+`npm run build` compiles; it does not run `main.ts`. So a Nest module that cannot resolve a
+dependency passes install, generate, migrate, lint, typecheck, test and build on the pull
+request, and fails on Railway at boot on deploy day — the same gap M2 proved on the client
+side with 308 green tests and an app that could not start.
+
+`MILESTONE_CHECKLIST.md` §D asks for a DI-graph test on a graph change.
+`retention.module.spec.ts` compiles `RetentionModule` and `AccountModule` against stubs for the
+three `@Global` modules they rely on and nothing else — which is also what would notice if
+`@Global` were ever removed from `PrismaModule`, `MediaModule` or `QueueModule`, since neither
+new module declares any `imports`.
+
+**Revert-check: drop `RetentionService` from the module's providers → 2 of 3 fail.**
+
+### 7.4 iOS
 
 Not compiled here — the iOS target needs a macOS runner and Xcode, and `android.yml`'s `ios` job
 is what covers it. Read-verified only: nothing M9 added to `commonMain` is platform-specific
