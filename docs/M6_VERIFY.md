@@ -243,6 +243,44 @@ the axis FR-POS-13 governs.
 That the second reviewer found a hole in the first review's fix, hours old, is the clearest
 argument in this document for not merging a 13,000-line diff on one pass.
 
+### 0.7b C8 — a cache hit now skips the COPY model too, and that is a product decision
+
+**Raised, not resolved.** The fix for §0.7 put the cache lookup above a single gate
+covering both model calls. That genuinely satisfies definition-of-done item 5 — a hit
+makes no call, writes no row and takes no slot, with a live provider and not merely the
+fake, and CI proves it. But it also means a background cache hit skips `draftCopy`, and
+the two calls have nothing in common.
+
+The background key is `(theme, event type, milestone, palette, aspect ratio)` and is
+**deliberately person-independent** — that is FR-POS-03's entire economic thesis, one image
+serving thousands of people. The copy is **per-person**: the name, the relation, the
+milestone. Coupling them drops the personal half exactly when the shared half succeeds,
+and FR-POS-04 makes that the common case by design.
+
+Concretely, with a live image provider: the first poster on a key misses, the model writes
+"Remembering Rohan, twelve years on", the background is generated and stored. Every later
+poster on that key — any person, any name — hits and gets one of six fixed strings from
+`buildPosterCopy`, with nothing in the `generation` row distinguishing it from a poster
+that was never meant to have live copy. **The better the cache performs, the less AI copy
+anyone gets.** Invisible today because `IMAGE_PROVIDER=fake` never writes to the cache, so
+every request is a miss and the copy path always runs.
+
+**Two requirements say different things and both cannot hold.**
+
+- FR-POS-01 makes copy step (a) of the pipeline for *every* poster.
+- Definition-of-done item 5, as worded, says a cache hit makes **no model call**.
+
+| Option | What it gives up |
+|---|---|
+| **A — as shipped.** One gate; a background hit skips copy entirely | FR-POS-01's step (a) stops happening on the common path. Live copy becomes a first-request-per-key luxury, and the more successful the cache, the rarer it is |
+| **B — a separate rail for copy.** Its own gate (cap, then its own limiter) and its own cache decision, leaving the image path exactly as it is now | Item 5's literal wording. A hit would make one *text* call — which §10's own cost table puts at "fractions of a paisa" against ₹1–15 for an image, so the economic argument is barely touched; but the sentence in the definition of done would need rewording, and that is not a session's to reword |
+
+**This is not mine to choose**: it decides what the product does, not how the code is
+arranged. Option A is what is on the branch because it fell out of fixing §0.7, not because
+it was selected. If B is wanted, the shape is a second rail beside `mayGenerateLive` —
+`mayDraftCopy`, consulted on both the hit and miss paths — which keeps item 5's property
+for the expensive call.
+
 ### 0.8 The fix for §0.6 was itself a regression, by 8x
 
 The measured fit replaced the estimate, and the measure canvas was sized from the string at
@@ -327,7 +365,7 @@ not merge them.
 | 2 | The same for a **solemn** occasion, no celebratory theme reachable, hand-checked by Dipen | **PARTIAL / BLOCKED** | **The filter: PROVED five ways**, all with `is_deceased` still false on the server. On the handset: the person screen read "Send a message" and **"Make a remembrance poster"**, the studio was titled "Remembrance poster", and the picker's view tree held exactly `ph-stillwater`, `ph-dusk`, `ph-lamp` and **no celebratory node**; generating gave `family=SOLEMN, sentiment=SOLEMN` in 207ms. Asha, on the same handset, got exactly the four celebratory swatches and none of the solemn — so the gate is not answering SOLEMN to everything. Plus the server's 400 `THEME_NOT_ALLOWED`, the DB-backed pipeline test and the instrumented picker test. **The hand-check: BLOCKED on TBD-5** — the themes are placeholders and nobody has judged the art |
 | 3 | All three formats produced and inspected at full size | **PROVED** | 1080×1920, 1080×1080 and 1200×630 produced through the API and read back off disk at those exact dimensions. I opened the STATUS and LINK ones; §0.1 is what that found |
 | 4 | The no-photo path produces something good enough to send | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** The typographic template centres, wraps, keeps a rule above the headline and carries the attribution — and after §0.1 it is legible, which it was not. **"Good enough": BLOCKED on TBD-5.** That sentence is a judgement and the artwork is a placeholder gradient by design |
-| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED for the image call; the text call was NOT, and is now fixed** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. **That test has not run locally** — Postgres is read-only on this machine (§0.10) — so it is verified by CI only |
+| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED, and see C8** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. That test **passed on CI** (it cannot run on this machine — §10), so item 5 now holds in the configuration that costs money. **But read §0.7b first**: the fix achieves it by skipping the copy call on a hit too, trading away FR-POS-01's step (a) on the common path. That trade is raised for Dipen, not settled |
 | 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + store + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about |
 | 7 | A ledger row per generation with a non-zero **measured** INR, and image pricing in `pricing.ts` | **PARTIAL / BLOCKED** | **Pricing: PROVED present**, per image and per `(model, quality, size)`. **One row per call: PROVED** — including for a REFUSED image, where the call happened and produced nothing. **Non-zero measured: BLOCKED.** The fake is priced at ₹0 and the published rates in `pricing.ts` are unverified; TBD-1 is open. Arithmetic from a rate table is not a measurement, and M5 was right to refuse to call one the other |
 | 8 | The global spend cap observed degrading a poster request to cached themes | **PROVED** | Ledger seeded to ₹250 against a ₹200 cap; the request came back `SUCCEEDED`, `degraded=true`, with a poster, no `ai_usage` row and no rate-limit slot consumed — being capped is our budget, not the user's allowance |
@@ -570,10 +608,14 @@ Unchanged from `M6_PLAN.md` §9. Restated with what the work has since shown.
 7. **C3 — `Generation` as a second table**, and the §8 amendment note that goes with it.
 8. **C4 — FR-POS-01 still names Claude.** Same correction D20 got.
 9. **C5 — the theme library's split home.** Manifest in the app, artwork from the server.
-10. ~~The handset's keyguard~~ — **done.** Unlocked and signed in; §3.1 is what that
+10. **C8 — does a background cache hit still get live COPY?** (§0.7b.) The fix for §0.7
+    couples the two calls, so today it does not, and FR-POS-01's step (a) stops happening
+    on the common path. Both options and what each costs are in §0.7b. **This one changes
+    what the product does and is not a session's to pick.**
+11. ~~The handset's keyguard~~ — **done.** Unlocked and signed in; §3.1 is what that
     bought, including the two bugs at §0.4 and §0.5. The one thing left on the device is
     the final tap into WhatsApp, which is yours by the same rule M5 settled on.
-11. **A debug-only dev-login button?** Offered during this run and not taken, so it is not
+12. **A debug-only dev-login button?** Offered during this run and not taken, so it is not
     in the branch. M2, M4 and M6 have each now lost verification time to "no Google account
     / signed out, stops at sign-in", and a reinstall costs a fresh sign-in every time
     (§0.3). Worth a decision before M7 rather than during it.
