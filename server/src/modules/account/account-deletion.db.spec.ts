@@ -109,7 +109,7 @@ async function seedAccount(label: string): Promise<Seeded> {
   });
 
   const generation = await prisma.generation.create({
-    data: { userId: user.id, feature: 'poster', status: 'SUCCEEDED', costInr: 7 },
+    data: { userId: user.id, feature: 'poster', status: 'SUCCEEDED', costInr: 0.0089 },
   });
   await prisma.aiUsage.create({
     data: {
@@ -123,9 +123,20 @@ async function seedAccount(label: string): Promise<Seeded> {
       outputTokens: 20,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-      costUsd: '0.08',
+      /**
+       * Deliberately near zero.
+       *
+       * §10 rule 6's cap is GLOBAL — `SpendCapService.spentToday()` sums every row in this
+       * table for the day — and jest runs suites in parallel workers against one database. The
+       * first version of this suite seeded ₹7.12 a row and pushed `drafting.db.spec.ts`'s
+       * "lets a draft through while there is budget left" over its ceiling in CI, while
+       * passing locally. That suite now computes its headroom from the live baseline; this
+       * stays small anyway, because a fixture that can move another suite's result is a
+       * fixture that will.
+       */
+      costUsd: '0.0001',
       usdInrRate: '89',
-      costInr: '7.12',
+      costInr: '0.0089',
       pricingVersion: 'spec',
     },
   });
@@ -185,6 +196,15 @@ async function remainingRows(userId: string): Promise<Record<string, number>> {
   counts['person'] = await prisma.person.count({ where: { userId } });
   counts['person_trait'] = await prisma.personTrait.count({ where: { userId } });
   counts['event'] = await prisma.event.count({ where: { userId } });
+  /**
+   * Counted through its parent, because it has no `user_id` of its own.
+   *
+   * It was missing from this map in the first version, which made `counts['event_occurrence']`
+   * undefined and the inventory loop blow up with "received value must be a number" rather
+   * than asserting anything — caught by CI. The table that is hardest to find is the one
+   * easiest to leave out of the thing that looks for it.
+   */
+  counts['event_occurrence'] = await prisma.eventOccurrence.count({ where: { event: { userId } } });
   counts['reminder'] = await prisma.reminder.count({ where: { userId } });
   counts['device'] = await prisma.device.count({ where: { userId } });
   counts['refresh_token'] = await prisma.refreshToken.count({ where: { userId } });
@@ -221,7 +241,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
   // Anonymised rows survive the user and would otherwise accumulate across runs.
   await prisma.aiUsage.deleteMany({ where: { pricingVersion: 'spec' } });
-  await prisma.generation.deleteMany({ where: { userId: null, feature: 'poster', costInr: 7 } });
+  await prisma.generation.deleteMany({ where: { userId: null, feature: 'poster', costInr: 0.0089 } });
   await prisma.contentReport.deleteMany({ where: { detail: 'spec report' } });
 });
 
@@ -348,7 +368,7 @@ describe('what a deletion must keep: the ledger, anonymised', () => {
     expect(usage).toHaveLength(1);
     expect(usage[0]?.userId).toBeNull();
     // The money is the point. It survives intact.
-    expect(usage[0]?.costInr.toString()).toBe('7.12');
+    expect(usage[0]?.costInr.toString()).toBe('0.0089');
 
     const generation = await prisma.generation.findUnique({ where: { id: me.generationId } });
     expect(generation).not.toBeNull();

@@ -494,6 +494,29 @@ describe('drafting — what the prompt is allowed to know', () => {
  * in with Google, and every call bills a personal card.
  */
 describe('drafting — the global spend cap', () => {
+  /**
+   * What the ledger ALREADY holds for today, before this block spends anything.
+   *
+   * The cap is global by design — §10 rule 6 bounds the bill, not a feature — so
+   * `spentToday()` sums every row in the table for the day, including rows written by other
+   * suites. Jest runs suites in parallel workers against **one** database, so assuming this
+   * block starts from zero makes it depend on what else happens to be running.
+   *
+   * Found in M9: `account-deletion.db.spec.ts` seeds ledger rows to prove they are anonymised
+   * rather than erased, and that was enough to push the total past 200 and fail "lets a draft
+   * through while there is budget left" in CI while passing locally.
+   *
+   * The five tests that assert the cap IS hit were never going to fail this way — extra spend
+   * only helps them — which is worse, not better: they would pass for the wrong reason against
+   * a database that already held ₹250. Every ceiling in this block is now expressed as
+   * HEADROOM above the live baseline, so each test spends against a known margin whatever else
+   * is in the table.
+   */
+  async function headroom(inr: number): Promise<number> {
+    const baseline = await new SpendCapService(db, env).spentToday();
+    return baseline + inr;
+  }
+
   function cappedService(capInr: number) {
     const capEnv = { ...env, AI_DAILY_SPEND_CAP_INR: capInr } as unknown as AppEnv;
     return new DraftingService(
@@ -538,41 +561,45 @@ describe('drafting — the global spend cap', () => {
   });
 
   it('degrades to the template path once the day is spent', async () => {
+    const cap = await headroom(200);
     spenders.push(await spend(250));
 
     // The same 503 a refusal produces, which the composer already answers with the phone's
     // own template. Degradation is a behaviour the app has; the cap is what triggers it.
-    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+    await expect(cappedService(cap).draft(userId, request())).rejects.toMatchObject({
       response: { code: 'DRAFT_UNAVAILABLE' },
       status: 503,
     });
   });
 
   it('does not tell the user a budget was hit', async () => {
+    const cap = await headroom(200);
     spenders.push(await spend(250));
 
     // It is our budget, not theirs. "We couldn't write this one" is true and is the right
     // amount of detail — and it is the identical string a refusal produces, so a user
     // cannot tell our spending apart from a classifier's opinion of their request.
-    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+    await expect(cappedService(cap).draft(userId, request())).rejects.toMatchObject({
       response: { message: "We couldn't write this one." },
     });
   });
 
   it('counts EVERY user, not just this one', async () => {
+    const cap = await headroom(200);
     // The whole point. This user has spent nothing.
     spenders.push(await spend(150));
     spenders.push(await spend(150));
     expect(await prisma.aiUsage.count({ where: { userId } })).toBe(0);
 
-    await expect(cappedService(200).draft(userId, request())).rejects.toMatchObject({
+    await expect(cappedService(cap).draft(userId, request())).rejects.toMatchObject({
       status: 503,
     });
   });
 
   it('is checked BEFORE the rate limit, so being capped costs the user no slot', async () => {
+    const cap = await headroom(200);
     spenders.push(await spend(250));
-    const service = cappedService(200);
+    const service = cappedService(cap);
 
     for (let i = 0; i < env.WISH_DRAFT_LIMIT_HOUR + 1; i += 1) {
       await expect(service.draft(userId, request())).rejects.toMatchObject({ status: 503 });
@@ -584,16 +611,19 @@ describe('drafting — the global spend cap', () => {
   });
 
   it('writes no ledger row when capped — nothing was called', async () => {
+    const cap = await headroom(200);
     spenders.push(await spend(250));
-    await expect(cappedService(200).draft(userId, request())).rejects.toBeDefined();
+    await expect(cappedService(cap).draft(userId, request())).rejects.toBeDefined();
     expect(await prisma.aiUsage.count({ where: { userId } })).toBe(0);
   });
 
   it('lets a draft through while there is budget left', async () => {
+    const cap = await headroom(200);
     spenders.push(await spend(10));
     // The assertion that stops this being a cap that is always on, which would be a quieter
-    // bug of the same size as no cap at all.
-    await expect(cappedService(200).draft(userId, request())).resolves.toBeDefined();
+    // bug of the same size as no cap at all. This is the one that actually failed in CI, and
+    // the only one in the block that could.
+    await expect(cappedService(cap).draft(userId, request())).resolves.toBeDefined();
   });
 });
 
