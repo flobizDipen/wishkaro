@@ -70,17 +70,62 @@ begin with.
 This is the shape `MILESTONE_CHECKLIST.md` warns about under green revert-checks: a test
 that passes because the input never had the thing whose absence is being asserted.
 
-### 0.3 The handset is behind a secure keyguard
+### 0.3 The handset, and what it took to reach it
 
-`adb` reaches the Pixel 9a (`4B201JEBF03493`, Android 17) and the app installs and launches
-on it, but `dumpsys window policy` reports `showing=true` and `wm dismiss-keyguard` does not
-clear it. Unlocking needs a PIN, which is not something a session enters.
+The Pixel 9a (`4B201JEBF03493`, Android 17) was behind a secure keyguard that no session can
+open, and the app was signed out of the local server. Dipen unlocked the phone and tapped
+"Continue with Google" himself; authenticating as somebody is not a thing a session does on
+their behalf, and the alternative — a debug-only dev-login button — was offered and not
+taken, so it is **not** in this branch.
 
-So the on-device half of this milestone ran on an **emulator** (`medium_phone`, API 16
-image) and the handset-specific claims are **BLOCKED**. §2 marks which items that is, and
-does not round any of them up. The APK currently installed on the handset is built against
-`http://127.0.0.1:3000` and `adb reverse tcp:3000 tcp:3000` has been removed, so a later
-run needs both set up again.
+Three things were checked before asking, so the tap was not wasted: the installed APK really
+did carry `http://127.0.0.1:3000`, `adb reverse tcp:3000 tcp:3000` was up, and the app's
+`default_web_client_id` matched the server's `GOOGLE_CLIENT_ID` exactly. The sign-in matched
+a user this local database already held from M0 testing rather than creating one.
+
+**One thing to know for next time.** Reinstalling the APK mid-session signed the app out
+again: the refresh token had already rotated across several app restarts, so
+`renewAccessToken` cleared the session, which is the documented behaviour and not a bug. It
+cost a second sign-in, and the remaining device work was therefore done through instrumented
+tests on the handset rather than by tapping through the app a third time — §2 says which
+items that affects.
+
+### 0.4 Every share failed, and the failure was silent
+
+The first time Share was tapped on the handset, nothing happened. No crash, no message, no
+sheet.
+
+`AndroidMessageSender` had the FileProvider authority written as an **over-escaped Kotlin
+interpolation**, so the string passed to `FileProvider.getUriForFile` was the literal
+`${'$'}{appContext.packageName}.posters` rather than `in.wishkaro.app.posters`. Every call
+threw `IllegalArgumentException: Couldn't find meta-data for provider with authority …`,
+which `shareImage` caught and turned into `false` — and `false` means "the other app could
+not be opened", which is exactly what the screen then said. **Indistinguishable, from the
+user's side, from WhatsApp not being installed.**
+
+Nothing could have caught it but a device. There is no compile-time link between the Kotlin
+string and `android:authorities` in the manifest; a JVM test has no merged manifest and no
+`ContentProvider` registry, so the only assertion it could make is that two strings this
+file wrote agree with each other — the tautology that let it through.
+
+`PosterSharingTest` now asserts on the handset that the authority resolves to a declared,
+non-exported, URI-granting provider; that staging returns a `content://` URI another app can
+read; and that the **real** `AndroidMessageSender.shareImage` opens a chooser. Reverting the
+escape turns two of the five red.
+
+### 0.5 The studio opened with no controls on screen
+
+At STATUS (9:16) the preview was `fillMaxWidth().aspectRatio(ratio)`, making it 1.78× as
+tall as it is wide — taller than the viewport on a 20:9 phone. Opening the poster studio
+showed the title, the person's name and a full screen of empty gradient. The theme picker,
+the size chips and the "Make the poster" button were all below the fold and nothing on
+screen suggested they were there.
+
+`PosterPickerFilterTest` did not catch it, and correctly so: `assertExists` passes for a
+node that is composed but off-screen. That is the right behaviour for that assertion and the
+wrong thing to have relied on. The preview is now capped at 380dp and fitted inside both
+bounds, because a 9:16 poster is height-bound and a 1.91:1 one is width-bound and either
+rule alone overflows the other case.
 
 ---
 
@@ -99,11 +144,17 @@ for the same key came back `cacheHit=true` in 85ms, wrote no `ai_usage` row, con
 Redis rate-limit slot and incremented `hit_count`. That is the number TBD-3, §13's health
 metric and FR-MON-03a are all waiting on, and it is the one only M6 can produce.
 
+**The device half ran, and it found two more bugs.** Dipen unlocked the Pixel 9a and signed
+in; the whole path then worked from the handset — the solemn picker offering no celebratory
+theme for a person whose `is_deceased` is still false, a photo chosen in the app's own
+picker and composited unmodified, a report reaching the server, and the share sheet opening
+with `poster.png` attached. Getting there cost a FileProvider authority that made every
+share fail silently (§0.4) and a preview that hid every control below the fold (§0.5).
+
 **What is not done.** Nothing has reached a live model: no image has been generated, no
 classifier has returned a verdict, and no INR figure in this document is a measurement. TBD-5
 is open, so every theme is a visible placeholder and nobody has judged whether a poster is
-one anybody would want to send. And the handset is locked, so the "sent from a real handset"
-half of items 1 and 2 did not happen.
+one anybody would want to send — which is the whole of what items 2 and 4 still want.
 
 **§10 rule 7 is structurally met and not actually exercised.** The port, the deterministic
 input rules, the stored verdict, the block path and the report endpoint all exist and are
@@ -117,19 +168,21 @@ not merge them.
 
 | # | Item | Verdict | Evidence |
 |---|---|---|---|
-| 1 | A celebratory poster, composited with a real photo, sent from a real handset | **PARTIAL / BLOCKED** | **Composited: PROVED.** A 1200×1600 portrait uploaded through `POST /v1/people/:id/photo`, composited upright into the 760px box with the head preserved and the headline wrapped beneath it; I looked at the PNG. **Sent from a real handset: BLOCKED** — the handset is behind a keyguard (§0.3). The hand-off path is READ-VERIFIED: a FileProvider scoped to one cache directory, `FLAG_GRANT_READ_URI_PERMISSION`, and an `ACTION_SEND` that opens and stops |
-| 2 | The same for a **solemn** occasion, no celebratory theme reachable, hand-checked by Dipen | **PARTIAL / BLOCKED** | **The filter: PROVED, three ways.** A DB-backed pipeline test produces a SOLEMN poster from the solemn family for a person whose `is_deceased` is still false; `GET /v1/themes` for that person returns only `ph-stillwater`, `ph-dusk`, `ph-lamp`; `POST /v1/ai/poster` with `ph-confetti` for them returns 400 `THEME_NOT_ALLOWED`. An instrumented test asserts the picker on a device contains no celebratory node at all. **The hand-check: BLOCKED** on TBD-5 and on the keyguard |
+| 1 | A celebratory poster, composited with a real photo, sent from a real handset | **PROVED, short of the last tap** | End to end on the Pixel 9a: a photo chosen in the app's own system picker (no permission prompt), uploaded as 1200×1600 JPEG with `photo_key` written, composited upright into the 760px box with the head preserved, headline wrapped beneath it, attribution at the foot — I looked at the PNG. Share then opened the system sheet showing **"Sharing 1 file · poster.png"** with WhatsApp among the targets. **It stops at the sheet by design**: FR-WSH-06 says the app never sends, and every route into WhatsApp's composer targets a real number or a picker of real contacts (`MILESTONE_CHECKLIST.md` §E). The last tap is Dipen's. Getting here required fixing §0.4 |
+| 2 | The same for a **solemn** occasion, no celebratory theme reachable, hand-checked by Dipen | **PARTIAL / BLOCKED** | **The filter: PROVED five ways**, all with `is_deceased` still false on the server. On the handset: the person screen read "Send a message" and **"Make a remembrance poster"**, the studio was titled "Remembrance poster", and the picker's view tree held exactly `ph-stillwater`, `ph-dusk`, `ph-lamp` and **no celebratory node**; generating gave `family=SOLEMN, sentiment=SOLEMN` in 207ms. Asha, on the same handset, got exactly the four celebratory swatches and none of the solemn — so the gate is not answering SOLEMN to everything. Plus the server's 400 `THEME_NOT_ALLOWED`, the DB-backed pipeline test and the instrumented picker test. **The hand-check: BLOCKED on TBD-5** — the themes are placeholders and nobody has judged the art |
 | 3 | All three formats produced and inspected at full size | **PROVED** | 1080×1920, 1080×1080 and 1200×630 produced through the API and read back off disk at those exact dimensions. I opened the STATUS and LINK ones; §0.1 is what that found |
 | 4 | The no-photo path produces something good enough to send | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** The typographic template centres, wraps, keeps a rule above the headline and carries the attribution — and after §0.1 it is legible, which it was not. **"Good enough": BLOCKED on TBD-5.** That sentence is a judgement and the artwork is a placeholder gradient by design |
 | 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED** | By curl: miss 136ms, hit 85ms, `cacheHit=true`, `ai_usage` count unchanged at 0, no `poster:*` key in Redis, `hit_count` 0→1. And by a DB-backed test with the provider reporting `isLive`, where the miss **does** write a row and **does** take a slot, so the hit's zero means something |
 | 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + store + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about |
 | 7 | A ledger row per generation with a non-zero **measured** INR, and image pricing in `pricing.ts` | **PARTIAL / BLOCKED** | **Pricing: PROVED present**, per image and per `(model, quality, size)`. **One row per call: PROVED** — including for a REFUSED image, where the call happened and produced nothing. **Non-zero measured: BLOCKED.** The fake is priced at ₹0 and the published rates in `pricing.ts` are unverified; TBD-1 is open. Arithmetic from a rate table is not a measurement, and M5 was right to refuse to call one the other |
 | 8 | The global spend cap observed degrading a poster request to cached themes | **PROVED** | Ledger seeded to ₹250 against a ₹200 cap; the request came back `SUCCEEDED`, `degraded=true`, with a poster, no `ai_usage` row and no rate-limit slot consumed — being capped is our budget, not the user's allowance |
-| 9 | Moderation on both surfaces, and "Report this content" reaching the server | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** A blocked generation comes back `BLOCKED` (not `FAILED`), stores `moderation=BLOCKED`, writes no poster. Input moderation is wired into the wish draft path too. `POST /v1/ai/report` exists, checks ownership before writing, and the button is on the poster preview with an instrumented test asserting it. **A live verdict: BLOCKED** — same key. **The report reaching the server from the app: BLOCKED** on the keyguard |
-| 10 | Both targets compile, the server suite green across three timezones, CI green on the exact head | **PROVED locally; CI pending** | `compileDebugKotlinAndroid` and `compileKotlinIosSimulatorArm64` both green; `assembleDebug` green; 16 instrumented tests green on the emulator; the 595-test server suite green in UTC, Asia/Kolkata and Pacific/Kiritimati. **CI on the exact head: see §5.3** |
+| 9 | Moderation on both surfaces, and "Report this content" reaching the server | **PARTIAL / BLOCKED** | **The report: PROVED from the app.** Tapped "Report this content" on the solemn poster on the handset, chose "Insensitive for this occasion", and a `content_report` row landed on the server — `feature=poster`, `reason=INSENSITIVE`, tied to the poster id, `detail` null and nothing logged. **Mechanism: PROVED.** A blocked generation comes back `BLOCKED` (not `FAILED`), stores `moderation=BLOCKED` and writes no poster; input moderation is wired into the wish draft path too. **A live verdict: BLOCKED** — the classifier needs the same missing key |
+| 10 | Both targets compile, the server suite green across three timezones, CI green on the exact head | **PROVED locally; CI on the head** | `compileDebugKotlinAndroid` and `compileKotlinIosSimulatorArm64` both green; `assembleDebug` green; **21 instrumented tests green on the Pixel 9a itself** (M4's 13 included — CI still runs none); the 595-test server suite green in UTC, Asia/Kolkata and Pacific/Kiritimati |
 
-**Four items turn on the missing key, three on TBD-5, two on the keyguard.** Items 3, 5 and
-8 are proved outright, and item 5 is the one the milestone exists to produce.
+**Items 1, 3, 5, 8, 9's report half and 10 are proved. Four turn on the missing key and two
+on TBD-5.** Item 5 is the one the milestone exists to produce; item 1 is the one that needed
+a real handset, and it needed one — two of this milestone's four bugs were only reachable
+there.
 
 ---
 
@@ -155,6 +208,34 @@ not merge them.
 11. Ran the instrumented picker test on the emulator, then reverted the filter to read
     `is_deceased` directly and watched it go red.
 
+### 3.1 On the Pixel 9a, after Dipen unlocked it and signed in
+
+12. Seeded the same two invented people under the signed-in account, leaving Rohan's
+    `is_deceased` **false** and his birthday's stored sentiment **CELEBRATORY** — the state
+    a sync push leaves before `recomputeMany` runs. Confirmed in the database first, so the
+    rest of the run is inside the window rather than near it.
+13. Opened Rohan from People. The screen read **"Send a message"** and **"Make a
+    remembrance poster"**.
+14. Opened the studio: titled **"Remembrance poster"**, previewing *Still water*. Scrolled
+    — and found §0.5, the controls all below the fold.
+15. Dumped the view tree: exactly `ph-stillwater`, `ph-dusk`, `ph-lamp`. **No celebratory
+    node.** Generated: `SOLEMN`/`SOLEMN`, 207ms, attributed.
+16. Tapped **Report this content → "Insensitive for this occasion"**. A `content_report`
+    row arrived on the server, tied to the poster id.
+17. Opened Asha: **"Send a wish"**, **"Make a poster"**, exactly the four celebratory
+    swatches and no solemn one.
+18. **Add a photo** → the system photo picker opened with **no permission prompt**. Chose a
+    synthetic image pushed to the gallery for the purpose — never one of Dipen's — and
+    confirmed by its `date_modified` that the tile tapped was that one. It uploaded as
+    1200×1600 JPEG and `photo_key` was written.
+19. Generated: `CELEBRATORY`/`CELEBRATORY`, 166ms, `ph-confetti`, 1080×1920. Pulled the PNG
+    and looked at it: photo upright and unmodified, head preserved, headline wrapped on two
+    lines beneath it, attribution at the foot.
+20. Tapped **Share** — and nothing happened. That is §0.4. Fixed it, pinned it with
+    `PosterSharingTest`, reinstalled, and the sheet opened: **"Sharing 1 file · poster.png"**
+    with WhatsApp among the targets. Dismissed without choosing a target.
+21. Ran the whole instrumented suite on the handset: **21 tests, all green.**
+
 ---
 
 ## 4. What could not be proved, and why
@@ -173,23 +254,28 @@ point: one word's difference would have made every `generation` row read as appr
 something that was never called. The module logs at boot that rule 7 is structurally met and
 not exercised.
 
-### 4.3 The app was never driven past sign-in
+### 4.3 One stretch of the journey was driven by a test rather than by tapping
 
-The emulator has no Google account and signing into one is not something a session does on
-somebody's behalf. So `PosterScreen` was exercised by instrumented tests against constructed
-state rather than by tapping through the app, and the full journey — person → poster →
-WhatsApp — has not been walked by anybody.
+Everything in §3.1 up to and including the share failure was done by tapping through the
+app. After the fix, reinstalling signed the app out again (§0.3), so the **repaired** share
+was proved by `PosterSharingTest.theRealSenderOpensAChooser` — which drives the production
+`AndroidMessageSender.shareImage`, on the handset, and left the chooser on screen where it
+was photographed and dismissed.
 
-What that leaves unproven: that the studio opens from the person screen with the right
-person, that polling updates the preview as a job completes, that the photo picker returns
-bytes the upload accepts, and that the share sheet appears.
+What that leaves: the studio → Share button wiring was exercised once, with the broken
+build. The repaired path was exercised through the same sender a layer below the button.
+`PosterPickerFilterTest` covers that the button exists and is enabled when bytes are
+present. Nobody has tapped the repaired Share button in the app itself.
 
-### 4.4 Nothing was handed to WhatsApp
+### 4.4 Nothing was handed to WhatsApp, and nothing was sent
 
 M5's constraint is inherited exactly: every route to WhatsApp's composer targets a real
 number or opens a picker of real contacts, and a blind tap near a send button in somebody's
-real chat is the incident class `MILESTONE_CHECKLIST.md` §E exists to prevent. With the
-handset locked, the question did not arise.
+real chat is the incident class `MILESTONE_CHECKLIST.md` §E exists to prevent. The share
+sheet was opened and dismissed without choosing a target — and its direct-share row carries
+real contacts, which is also why no screenshot of it exists anywhere (§9).
+
+So "sent" means "handed over and stopped", exactly as in M5. The last tap is Dipen's.
 
 ### 4.5 The cache was measured against a store that survives a restart, not a deploy
 
@@ -223,7 +309,7 @@ M6 touches none of these and closes none of them.
 |---|---|---|
 | Server | 595 | 37 suites, including 3 DB-backed against real Postgres and Redis. Green in **UTC, Asia/Kolkata and Pacific/Kiritimati** (UTC+14, where "today" is tomorrow in UTC) |
 | Android unit | green | `:composeApp:testDebugUnitTest` |
-| Android instrumented | 16 | `medium_phone` emulator. **Not in CI** |
+| Android instrumented | 21 | **Pixel 9a, Android 17** (and 16 of them on an emulator earlier). **Not in CI** |
 | iOS | compiles | `:composeApp:compileKotlinIosSimulatorArm64` |
 
 ### 5.1 Every fix was confirmed by reverting it
@@ -238,6 +324,7 @@ formality — M5 had three and each was a real gap.
 | The theme cache | `lookup()` returning null | 2 red |
 | The global spend cap | skipping `isCapped()` | 1 red |
 | The client picker filter | `posterThemesFor` reading `person.isDeceased` | Instrumented test red **on a device** |
+| The FileProvider authority (§0.4) | restoring the over-escaped interpolation | 2 of 5 red **on the handset** |
 
 **Two of these first produced a compile error rather than a failing test**, which is not a
 revert-check — it proves the code is referenced, not that anything asserts on its behaviour.
@@ -252,10 +339,19 @@ distinction is the difference between a check and a formality.
 
 ## 6. Bugs found in earlier milestones' code
 
-**None introduced by M6, one latent issue made reachable.** `Layout.textWidth` was dead code
-committed earlier on this same branch (`2d2655a`), not in a merged milestone — so §0.1 is a
-bug this branch found in its own work before anybody else saw it, which is the outcome the
-"verify by doing" rule is for.
+**None in merged code. Four in this branch's own work, all found before anybody else saw
+them** — which is the outcome the "verify by doing" rule is for. Two were only reachable on
+a device:
+
+| # | Bug | Found by |
+|---|---|---|
+| §0.1 | The headline ran off both edges of every poster | Opening a PNG |
+| §0.2 | A privacy assertion that could not have failed | Writing the assertion carefully |
+| §0.4 | Every share failed silently — FileProvider authority | **Tapping Share on the handset** |
+| §0.5 | The studio opened with every control below the fold | **Opening the studio on the handset** |
+
+Both device bugs were invisible to 595 server tests, a green Android unit suite and 16
+instrumented tests on an emulator. §0.4 in particular cannot be caught off-device at all.
 
 The four existing `person.isDeceased || marksPersonDeceased(…)` expressions in
 `PersonDerivationService`, `SyncService` and `EventsService` were correct. They were
@@ -307,8 +403,13 @@ Unchanged from `M6_PLAN.md` §9. Restated with what the work has since shown.
 7. **C3 — `Generation` as a second table**, and the §8 amendment note that goes with it.
 8. **C4 — FR-POS-01 still names Claude.** Same correction D20 got.
 9. **C5 — the theme library's split home.** Manifest in the app, artwork from the server.
-10. **The handset's keyguard** (§0.3), which is the only thing between here and items 1, 2
-    and 9's device halves.
+10. ~~The handset's keyguard~~ — **done.** Unlocked and signed in; §3.1 is what that
+    bought, including the two bugs at §0.4 and §0.5. The one thing left on the device is
+    the final tap into WhatsApp, which is yours by the same rule M5 settled on.
+11. **A debug-only dev-login button?** Offered during this run and not taken, so it is not
+    in the branch. M2, M4 and M6 have each now lost verification time to "no Google account
+    / signed out, stops at sign-in", and a reinstall costs a fresh sign-in every time
+    (§0.3). Worth a decision before M7 rather than during it.
 
 ---
 
@@ -318,6 +419,12 @@ Every person in a test, a fixture or an example above is **invented**
 (`MILESTONE_CHECKLIST.md` §F). Compositor fixtures are solid-colour and gradient PNGs
 generated by the test itself — not only a privacy measure but what makes "the photo is
 unmodified" an exact comparison rather than an eyeball.
+
+Two screenshots taken during §3.1 were **deleted rather than kept**: the system photo
+picker, whose grid is Dipen's own camera roll, and the share sheet, whose direct-share row
+names real contacts. Neither is in the repository and neither is in the scratch directory
+any more. The synthetic image pushed to the device's gallery for the picker test was
+removed from the device afterwards.
 
 **No composited poster carrying a real face has entered this repository in any form**, and
 none ever should (`M6_PLAN.md` §1.2). The posters described in §3 carry invented names and a
