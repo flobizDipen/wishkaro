@@ -376,11 +376,19 @@ private fun ThemeSwatch(theme: PosterTheme, selected: Boolean, onClick: () -> Un
                 .background(
                     Brush.linearGradient(
                         listOf(
-                            parseHex(theme.backgroundFrom) ?: Color.Gray,
-                            parseHex(theme.backgroundTo) ?: Color.DarkGray,
+                            // The same fallback the big preview above already uses. These two
+                            // were the only hardcoded colours in the app — two named Compose
+                            // greys — and therefore the only two places the new theme did not
+                            // reach. A swatch whose hex the server sent badly should look like
+                            // an unfilled part of THIS app rather than like Material's old
+                            // default. `tools/check-no-raw-colors.sh` is what keeps it at zero.
+                            parseHex(theme.backgroundFrom)
+                                ?: MaterialTheme.colorScheme.surfaceVariant,
+                            parseHex(theme.backgroundTo)
+                                ?: MaterialTheme.colorScheme.surfaceContainerHighest,
                         ),
                     ),
-                    RoundedCornerShape(10.dp),
+                    MaterialTheme.shapes.small,
                 )
                 .border(
                     width = if (selected) 3.dp else 1.dp,
@@ -389,7 +397,7 @@ private fun ThemeSwatch(theme: PosterTheme, selected: Boolean, onClick: () -> Un
                     } else {
                         MaterialTheme.colorScheme.outlineVariant
                     },
-                    shape = RoundedCornerShape(10.dp),
+                    shape = MaterialTheme.shapes.small,
                 ),
         )
         Text(
@@ -463,12 +471,17 @@ private fun ReportDialog(onDismiss: () -> Unit, onReport: (String) -> Unit) {
  *
  * The manifest stores hex because that is what the shared fixture holds and what the
  * server's SVG needs; Compose needs an ARGB long. Returns null rather than throwing on a
- * malformed value, because a bad hex in a theme should be a grey swatch, not a crash on
- * the person screen.
+ * malformed value, because a bad hex in a theme should fall back to a surface colour, not
+ * crash on the person screen.
+ *
+ * This is the ONE exemption in `tools/check-no-raw-colors.sh`, and the distinction it rests on
+ * is worth stating: the literal below is not paint. It is the opaque-alpha bits being OR'd onto
+ * six hex digits that came off the wire from `GET /v1/themes`. Nobody chose black here; the
+ * value would be identical if the palette were green.
  */
 private fun parseHex(hex: String?): Color? {
     val raw = hex?.removePrefix("#") ?: return null
     if (raw.length != 6) return null
     val value = raw.toLongOrNull(16) ?: return null
-    return Color(0xFF000000L or value)
+    return Color(0xFF000000L or value) // raw-color-ok: an alpha mask on a wire value, not paint
 }
