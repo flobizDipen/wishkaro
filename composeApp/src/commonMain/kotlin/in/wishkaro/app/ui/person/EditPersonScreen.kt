@@ -3,6 +3,7 @@ package `in`.wishkaro.app.ui.person
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -29,7 +30,9 @@ import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.ui.components.RelationPicker
+import `in`.wishkaro.app.ui.components.DetailTopBar
 import `in`.wishkaro.app.ui.components.SectionHeader
+import `in`.wishkaro.app.ui.components.ToggleRow
 
 /**
  * Edit every field of a person (FR-PPL-04). Nothing here is required but the name.
@@ -76,15 +79,21 @@ fun EditPersonScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Edit") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Cancel") } },
-            )
+            DetailTopBar(title = "Edit", onBack = onBack, backLabel = "Cancel")
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+            // `imePadding()` BEFORE `verticalScroll`, which is the order the edge-to-edge
+            // guidance calls out: applied after the scroll it pads the scrollable's CONTENT
+            // rather than its viewport, and the field still ends up under the keyboard.
+            //
+            // It is needed at all because this app is edge-to-edge. `adjustResize` in the
+            // manifest resizes the WINDOW, and a window that has already been told not to fit
+            // system windows has nothing left to resize — so from M4's `enableEdgeToEdge()`
+            // onward, every scrolling form in this app could put a focused field behind the
+            // keyboard. The Scaffold's default `contentWindowInsets` does not carry the IME.
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding()
+                .verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
             OutlinedTextField(
                 value = name,
@@ -136,33 +145,23 @@ fun EditPersonScreen(
             )
 
             SectionHeader("Remembrance")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = deceased,
-                    // Turning it off is refused by the server while a death anniversary is
-                    // live, so the switch does not offer the action at all rather than
-                    // letting the user make it and be told no.
-                    enabled = !hasDeathAnniversary || !deceased,
-                    onCheckedChange = { deceased = it },
-                )
-                Text(
-                    "This person has passed away",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
-            Text(
-                when {
+            ToggleRow(
+                title = "This person has passed away",
+                checked = deceased,
+                // Turning it off is refused by the server while a death anniversary is live,
+                // so the switch does not offer the action at all rather than letting the user
+                // make it and be told no.
+                enabled = !hasDeathAnniversary || !deceased,
+                onCheckedChange = { deceased = it },
+                subtitle = when {
                     hasDeathAnniversary ->
                         "They have a death anniversary recorded. Remove that date first if " +
                             "this was a mistake."
                     deceased ->
                         "Every date for this person becomes quiet, and their birthday " +
                             "reminder is switched off unless you turn it back on."
-                    else -> ""
+                    else -> null
                 },
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
             )
 
             Button(

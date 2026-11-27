@@ -1,12 +1,20 @@
 package `in`.wishkaro.app.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,7 +45,11 @@ import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.ui.ReliabilityState
 import `in`.wishkaro.app.ui.SelfTestState
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
+import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
+import `in`.wishkaro.app.ui.components.ToggleRow
+import `in`.wishkaro.app.ui.components.WarningNote
+import `in`.wishkaro.app.ui.components.WishKaroCard
 
 /**
  * The Settings screen M2 creates (FR-SET-01, FR-SET-02).
@@ -61,8 +73,30 @@ fun SettingsScreen(
     privacy: PrivacyState? = null,
     modifier: Modifier = Modifier,
 ) {
+    /**
+     * **This screen is not in a `Scaffold`**, which is why the insets are written out here.
+     *
+     * The app's outer `Scaffold` declares `WindowInsets(0, 0, 0, 0)` on purpose — every screen
+     * that has a top bar insets itself, and letting the outer one inset as well counted the
+     * status bar twice, which was the band of empty purple above the title from M0 to M4. The
+     * cost of that decision is that a screen with NO top bar gets no insets at all, and this
+     * is one of seven. Before M7 the Back button sat under the status bar on any phone with a
+     * cutout, and the last switch sat under the gesture bar.
+     *
+     * `windowInsetsPadding` for the horizontal and top sides, so the content starts below the
+     * status bar; the bottom goes to `contentPadding` instead, because padding a scrollable's
+     * PARENT clips it and stops the list scrolling behind the navigation bar — which is the
+     * one mistake the edge-to-edge guidance calls out by name for lists.
+     */
+    val safe = WindowInsets.safeDrawing
     LazyColumn(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(safe.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top))
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(
+            bottom = safe.asPaddingValues().calculateBottomPadding() + 32.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -71,8 +105,8 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = onBack) { Text("Back") }
-                Spacer(Modifier.height(0.dp))
-                Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.width(4.dp))
+                Text("Settings", style = MaterialTheme.typography.titleLarge)
             }
         }
 
@@ -93,7 +127,7 @@ fun SettingsScreen(
         item { SectionHeader("When to remind you") }
 
         item {
-            SettingRow(
+            ToggleRow(
                 title = "A week before",
                 subtitle = "Time to think about a gift. Never sent for a remembrance date.",
                 checked = settings.ladderD7,
@@ -101,7 +135,7 @@ fun SettingsScreen(
             )
         }
         item {
-            SettingRow(
+            ToggleRow(
                 title = "The day before",
                 subtitle = null,
                 checked = settings.ladderD1,
@@ -109,7 +143,7 @@ fun SettingsScreen(
             )
         }
         item {
-            SettingRow(
+            ToggleRow(
                 title = "On the day",
                 subtitle = null,
                 checked = settings.ladderD0,
@@ -151,7 +185,7 @@ fun SettingsScreen(
         item { SectionHeader("Quiet hours") }
 
         item {
-            SettingRow(
+            ToggleRow(
                 title = "Stay quiet overnight",
                 subtitle = "Nothing arrives inside the window. It waits until the window ends.",
                 checked = settings.quietHoursOn,
@@ -188,7 +222,7 @@ fun SettingsScreen(
         item { SectionHeader("Daily summary") }
 
         item {
-            SettingRow(
+            ToggleRow(
                 title = "One notification a day",
                 subtitle = "Instead of every reminder separately — including the week-ahead " +
                     "and day-before ones.",
@@ -249,10 +283,9 @@ private fun PrivacySection(privacy: PrivacyState) {
     var confirming by rememberSaveable { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
+        Note(
             "Export your data as a file you can keep, or delete this account and everything " +
                 "in it.",
-            style = MaterialTheme.typography.bodySmall,
         )
 
         OutlinedButton(
@@ -274,7 +307,7 @@ private fun PrivacySection(privacy: PrivacyState) {
             TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Terms") }
         }
 
-        privacy.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        privacy.message?.let { Note(it) }
 
         TextButton(
             onClick = { confirming = true },
@@ -381,7 +414,7 @@ private fun ReliabilityCard(
     onOpenBatterySettings: () -> Unit,
     onRequestExactAlarms: () -> Unit,
 ) {
-    Card(colors = CardDefaults.cardColors()) {
+    WishKaroCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             CheckLine("Notifications allowed", reliability.notificationsAllowed)
             CheckLine("Reminders can fire at an exact time", reliability.exactAlarmsAllowed)
@@ -428,9 +461,9 @@ private fun SelfTestCard(
     onSendTest: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Card {
+    WishKaroCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Check it works", fontWeight = FontWeight.SemiBold)
+            Text("Check it works", style = MaterialTheme.typography.titleSmall)
             when (state) {
                 SelfTestState.Idle -> {
                     Text(
@@ -507,12 +540,7 @@ private fun quietHoursClashNote(hour: Int, settings: ReminderSettings): String? 
 
 @Composable
 private fun ClashNote(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
-        modifier = Modifier.padding(top = 4.dp),
-    )
+    WarningNote(text, modifier = Modifier.padding(top = 4.dp))
 }
 
 @Composable
@@ -524,24 +552,9 @@ private fun CheckLine(label: String, ok: Boolean) {
     )
 }
 
-@Composable
-private fun SettingRow(
-    title: String,
-    subtitle: String?,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
+// `SettingRow` is now `components/ToggleRow`, shared with the deceased switch on the edit
+// screen and the per-event mute toggle on the person screen. Three switch-and-label rows,
+// three different layouts, is what a design system is for.
 
 /**
  * Hours as chips rather than a time picker.

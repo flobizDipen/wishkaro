@@ -31,6 +31,7 @@ import `in`.wishkaro.app.MainActivity
 import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.domain.UpcomingBucket
 import `in`.wishkaro.app.domain.UpcomingEntry
+import `in`.wishkaro.app.ui.theme.WishKaroGlanceTheme
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -75,7 +76,11 @@ class UpcomingWidget : GlanceAppWidget(), KoinComponent {
         val entries = upcoming.upcomingNow(withinDays = HORIZON_DAYS)
 
         provideContent {
-            GlanceTheme {
+            // WishKaro's own colours, light and dark, rather than `GlanceTheme()`'s default —
+            // which on Android 12+ is DYNAMIC COLOUR, so the one piece of this app that lives
+            // permanently on somebody's home screen was painted from their wallpaper. See
+            // `ui/theme/WidgetTheme.kt`.
+            WishKaroGlanceTheme {
                 WidgetBody(entries)
             }
         }

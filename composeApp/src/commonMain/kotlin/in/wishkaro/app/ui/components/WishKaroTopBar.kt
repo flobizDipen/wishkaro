@@ -5,7 +5,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +45,15 @@ fun WishKaroTopBar(
 
     TopAppBar(
         title = { Text(title) },
+        // The same colours as `DetailTopBar`, for the same reason: "warm paper" means the bar
+        // is the same sheet the content is on. Material's default puts a tinted container
+        // behind the title, which is what made every screen in this app look like it had a
+        // header pasted onto it.
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.primary,
+        ),
         actions = {
             TextButton(
                 onClick = onRefresh,

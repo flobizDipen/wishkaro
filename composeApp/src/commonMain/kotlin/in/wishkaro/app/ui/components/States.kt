@@ -57,6 +57,8 @@ fun EmptyState(
     titleTag: String? = null,
     primaryAction: Pair<String, () -> Unit>? = null,
     secondaryAction: Pair<String, () -> Unit>? = null,
+    primaryTag: String? = null,
+    secondaryTag: String? = null,
 ) {
     Column(
         modifier = modifier
@@ -88,6 +90,8 @@ fun EmptyState(
             ActionPair(
                 primary = primaryAction,
                 secondary = secondaryAction,
+                primaryTag = primaryTag,
+                secondaryTag = secondaryTag,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

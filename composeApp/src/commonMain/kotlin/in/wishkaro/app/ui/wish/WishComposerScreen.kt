@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +37,11 @@ import `in`.wishkaro.app.domain.WishChannel
 import `in`.wishkaro.app.domain.WishLanguage
 import `in`.wishkaro.app.domain.WishTone
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
+import `in`.wishkaro.app.ui.components.DetailTopBar
+import `in`.wishkaro.app.ui.components.EmptyState
+import `in`.wishkaro.app.ui.components.LoadingState
+import `in`.wishkaro.app.ui.components.Note
+import `in`.wishkaro.app.ui.theme.SolemnScope
 
 /**
  * The composer (FR-WSH-01..06).
@@ -74,20 +80,17 @@ fun WishComposerScreen(
     modifier: Modifier = Modifier,
 ) {
     if (state.person == null) {
-        Column(
-            modifier = modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (!state.loaded) {
-                CircularProgressIndicator(Modifier.testTag("composer_loading"))
-            } else {
-                // FR-VIEW-05: never a blank screen that leads nowhere.
-                Text("This person is no longer here.")
-                TextButton(onClick = onBack, modifier = Modifier.testTag("composer_back_empty")) {
-                    Text("Go back")
-                }
-            }
+        if (!state.loaded) {
+            LoadingState(modifier = modifier, tag = "composer_loading")
+        } else {
+            // FR-VIEW-05: never a blank screen that leads nowhere.
+            EmptyState(
+                title = "This person is no longer here",
+                body = "They may have been removed on another device.",
+                primaryAction = "Go back" to onBack,
+                primaryTag = "composer_back_empty",
+                modifier = modifier.fillMaxSize(),
+            )
         }
         return
     }
@@ -95,29 +98,40 @@ fun WishComposerScreen(
     val person = state.person
     val solemn = state.isSolemn
 
+    // The composer is the screen FR-WSH-09 is most about, so it is the screen where the
+    // solemn scope matters most: inside it the occasion chip, the divider rules and every
+    // accent on the screen desaturate, while the WORDS come from M5's separate string sets as
+    // they already did. Theme and copy answer the same question from two directions.
+    SolemnScope(solemn) {
     Scaffold(
         modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        // FR-EVT-04: no "wish" and nothing celebratory on a solemn record.
-                        if (solemn) "Message for ${person.displayName}"
-                        else "Wish for ${person.displayName}",
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.testTag("composer_back")) {
-                        Text("←")
-                    }
-                },
+            DetailTopBar(
+                // FR-EVT-04: no "wish" and nothing celebratory on a solemn record.
+                title = if (solemn) "Message for ${person.displayName}"
+                else "Wish for ${person.displayName}",
+                onBack = onBack,
+                // Was an IconButton containing the character "←", which a screen reader
+                // announces as the Unicode name of a left arrow. A word is a word.
+                backTag = "composer_back",
             )
         },
     ) { padding ->
         Column(
+            // `imePadding()` BEFORE `verticalScroll`, which is the order the edge-to-edge
+            // guidance calls out: applied after the scroll it pads the scrollable's CONTENT
+            // rather than its viewport, and the field still ends up under the keyboard.
+            //
+            // It is needed at all because this app is edge-to-edge. `adjustResize` in the
+            // manifest resizes the WINDOW, and a window that has already been told not to fit
+            // system windows has nothing left to resize — so from M4's `enableEdgeToEdge()`
+            // onward, every scrolling form in this app could put a focused field behind the
+            // keyboard. The Scaffold's default `contentWindowInsets` does not carry the IME.
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -231,6 +245,8 @@ fun WishComposerScreen(
                 ) { Text("Copy") }
             }
         }
+    }
+
     }
 
     if (state.askedToConfirm) {
@@ -361,12 +377,7 @@ private fun ProvenanceLine(state: ComposerState) {
         else -> null
     } ?: return
 
-    Text(
-        text = message,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.testTag("composer_provenance"),
-    )
+    Note(message, tag = "composer_provenance")
 }
 
 /**

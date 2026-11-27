@@ -50,6 +50,10 @@ import androidx.compose.foundation.Image
 import `in`.wishkaro.app.domain.PosterFormat
 import `in`.wishkaro.app.domain.PosterTheme
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
+import `in`.wishkaro.app.ui.components.DetailTopBar
+import `in`.wishkaro.app.ui.components.Note
+import `in`.wishkaro.app.ui.theme.SolemnScope
+import `in`.wishkaro.app.ui.theme.accent
 
 /**
  * The poster studio (FR-POS-01..13).
@@ -89,20 +93,17 @@ fun PosterScreen(
 ) {
     var reporting by remember { mutableStateOf(false) }
 
+    SolemnScope(state.isSolemn) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                title = {
-                    // The heading is a different heading for a remembrance, not the same
-                    // one with a flag — the arrangement FR-WSH-09 established for words.
-                    Text(if (state.isSolemn) "Remembrance poster" else "Make a poster")
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.testTag("poster_back")) {
-                        Text("←")
-                    }
-                },
+            DetailTopBar(
+                // The heading is a different heading for a remembrance, not the same one with
+                // a flag — the arrangement FR-WSH-09 established for words.
+                title = if (state.isSolemn) "Remembrance poster" else "Make a poster",
+                onBack = onBack,
+                backTag = "poster_back",
             )
         },
     ) { padding ->
@@ -144,13 +145,13 @@ fun PosterScreen(
                 Text(if (state.poster == null) "Make the poster" else "Make it again")
             }
 
-            Text(
-                text = "WishKaro never sends anything for you. You'll choose where this goes.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Note(
+                "WishKaro never sends anything for you. You'll choose where this goes.",
                 modifier = Modifier.padding(bottom = 24.dp),
             )
         }
+    }
+
     }
 
     if (reporting) {
@@ -233,12 +234,11 @@ private fun PosterPreview(state: PosterState) {
             }
 
             state.working -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(modifier = Modifier.testTag("poster_progress"))
-                Text(
-                    "Making it…",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 8.dp),
+                CircularProgressIndicator(
+                    color = MaterialTheme.accent,
+                    modifier = Modifier.testTag("poster_progress"),
                 )
+                Note("Making it…", modifier = Modifier.padding(top = 8.dp))
             }
 
             state.problem != null -> Text(
@@ -331,14 +331,12 @@ private fun PhotoRow(state: PosterState, onPick: () -> Unit, onRemove: () -> Uni
         }
         // FR-POS-06 / OD-11: no photo is a first-class case, not a missing step, and the
         // copy says so rather than nagging.
-        Text(
-            text = if (state.photoUrl == null) {
+        Note(
+            if (state.photoUrl == null) {
                 "Optional — posters without a photo are typographic, and still good."
             } else {
                 "Your photo goes on unchanged. It is never passed through an AI model."
             },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -393,7 +391,7 @@ private fun ThemeSwatch(theme: PosterTheme, selected: Boolean, onClick: () -> Un
                 .border(
                     width = if (selected) 3.dp else 1.dp,
                     color = if (selected) {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.accent
                     } else {
                         MaterialTheme.colorScheme.outlineVariant
                     },

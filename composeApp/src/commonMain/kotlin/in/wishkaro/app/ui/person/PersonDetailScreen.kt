@@ -10,7 +10,19 @@ import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.toCard
 import `in`.wishkaro.app.domain.toneFor
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
+import `in`.wishkaro.app.ui.components.ActionPair
+import `in`.wishkaro.app.ui.components.AvatarDefaults
+import `in`.wishkaro.app.ui.components.DetailTopBar
+import `in`.wishkaro.app.ui.components.LoadingState
+import `in`.wishkaro.app.ui.components.Note
+import `in`.wishkaro.app.ui.components.PersonAvatar
 import `in`.wishkaro.app.ui.components.SectionHeader
+import `in`.wishkaro.app.ui.components.ToggleRow
+import `in`.wishkaro.app.ui.components.WishKaroCard
+import `in`.wishkaro.app.ui.components.DateBadge
+import `in`.wishkaro.app.ui.theme.LocalSolemn
+import `in`.wishkaro.app.ui.theme.SolemnScope
+import `in`.wishkaro.app.ui.theme.accent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,8 +30,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -86,14 +102,18 @@ fun PersonDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     if (person == null) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            // Only say they are gone once we have actually looked. Before the first
-            // database emission a person who exists is also null, and a deep link into a
-            // cold process — a reminder, or M4's widget — arrives exactly then.
-            if (stillLoading) {
-                CircularProgressIndicator(Modifier.testTag("person_detail_loading"))
-            } else {
-                Text("This person is no longer here.")
+        // Only say they are gone once we have actually looked. Before the first database
+        // emission a person who exists is also null, and a deep link into a cold process —
+        // a reminder, or M4's widget — arrives exactly then.
+        if (stillLoading) {
+            LoadingState(modifier = modifier, tag = "person_detail_loading")
+        } else {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "This person is no longer here.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         return
@@ -106,57 +126,99 @@ fun PersonDetailScreen(
     // cancelled something the user was part-way through deciding.
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
+    /**
+     * The whole screen is one solemn scope, and this is the clearest place in the app to see
+     * what that buys. A remembrance page and a birthday page are **the same composable, the
+     * same layout and the same call tree** — the avatar's ring, the countdown, the section
+     * headers and the top bar's back affordance all read `MaterialTheme.accent` and all
+     * desaturate together. `docs/M7_VERIFY.md` item 9 is a screenshot pair of exactly this
+     * function with one field of the fixture changed.
+     */
+    SolemnScope(person.isSolemn) {
     Scaffold(
         modifier = modifier,
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                title = { Text(person.displayName) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+            DetailTopBar(
+                title = person.displayName,
+                onBack = onBack,
                 actions = { TextButton(onClick = onEdit) { Text("Edit") } },
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
+            // `imePadding()` BEFORE `verticalScroll`, which is the order the edge-to-edge
+            // guidance calls out: applied after the scroll it pads the scrollable's CONTENT
+            // rather than its viewport, and the field still ends up under the keyboard.
+            //
+            // It is needed at all because this app is edge-to-edge. `adjustResize` in the
+            // manifest resizes the WINDOW, and a window that has already been told not to fit
+            // system windows has nothing left to resize — so from M4's `enableEdgeToEdge()`
+            // onward, every scrolling form in this app could put a focused field behind the
+            // keyboard. The Scaffold's default `contentWindowInsets` does not carry the IME.
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding()
+                .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         ) {
-            // ---- the headline: next event and countdown ----
-            Card(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    val next = card.nextEvent
-                    if (next == null) {
-                        Text(tone.noEvents, style = MaterialTheme.typography.bodyLarge)
-                    } else {
-                        val days = card.daysUntil
-                        Text(
-                            if (days == 0) tone.today(next.title) else tone.upcoming(next.title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        card.countdown?.let {
+            // ---- the headline: who, then the next event and its countdown ----
+            //
+            // The countdown is `headlineLarge` rather than `headlineSmall`. This is the one
+            // screen that is about a single date, and the build prompt's instruction was
+            // literal: the date is the hero, not the chrome.
+            Spacer(Modifier.height(8.dp))
+            WishKaroCard(solemn = person.isSolemn) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PersonAvatar(person.displayName, size = AvatarDefaults.Large)
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) {
+                        val next = card.nextEvent
+                        if (next == null) {
                             Text(
-                                tone.countdown(it),
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                tone.noEvents,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            val days = card.daysUntil
+                            Text(
+                                if (days == 0) tone.today(next.title) else tone.upcoming(next.title),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            card.countdown?.let {
+                                Text(
+                                    tone.countdown(it),
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    color = MaterialTheme.accent,
+                                )
+                            }
+                            // Null when the year is unknown, and null for a deceased person's
+                            // birthday — the solemn string set returns nothing there rather
+                            // than "they would have been 40".
+                            tone.years(card.turningAge, next.type)?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        person.relationToOwner?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        // Null when the year is unknown, and null for a deceased person's
-                        // birthday — the solemn string set returns nothing there rather than
-                        // "they would have been 40".
-                        tone.years(card.turningAge, next.type)?.let {
-                            Text(it, style = MaterialTheme.typography.bodyLarge)
-                        }
-                    }
-                    person.relationToOwner?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
 
             if (person.isDeceased) {
-                Text(
+                Note(
                     "Remembered. This page stays quiet.",
-                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 12.dp),
                 )
             }
@@ -173,32 +235,27 @@ fun PersonDetailScreen(
              * somebody who wants to send a message to a person they have stored should not
              * have to add a date first.
              */
-            Button(
-                onClick = { onSendWish(card.nextEvent?.id) },
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("person_send_wish"),
-            ) {
-                Text(if (person.isSolemn) "Send a message" else "Send a wish")
-            }
-
-            /**
-             * The poster studio (FR-POS-01), M6.
-             *
-             * The label follows the same rule as the button above and for the same reason:
-             * FR-POS-13 gives a remembrance its own template family, and a button that said
-             * "Make a poster" on a death anniversary would be the first word of a
-             * celebration on a screen that must not contain one.
-             *
-             * Secondary to the message, deliberately. A poster is "instead of, or
-             * alongside" the words (FR-POS-01), and the words are the thing most people
-             * will send — FR-POS-04's economics depend on the poster being a flourish
-             * rather than the default path.
-             */
-            OutlinedButton(
-                onClick = { onMakePoster(card.nextEvent?.id) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("person_make_poster"),
-            ) {
-                Text(if (person.isSolemn) "Make a remembrance poster" else "Make a poster")
-            }
+            ActionPair(
+                // FR-WSH-01, from the person screen. The LABEL comes from the tone, not from
+                // the feature's name: FR-REM-11 already makes the solemn notification say
+                // "Send message" rather than "Send wish", and this button is the same action
+                // reached another way — the two must not disagree on a death anniversary.
+                //
+                // Shown even with no dates recorded: the composer falls back to a birthday,
+                // and somebody who wants to write to a person they have stored should not
+                // have to add a date first.
+                primary = (if (person.isSolemn) "Send a message" else "Send a wish") to
+                    { onSendWish(card.nextEvent?.id) },
+                // The poster studio (FR-POS-01), M6. Same labelling rule, and secondary
+                // deliberately: a poster is "instead of, or alongside" the words
+                // (FR-POS-01), and the words are what most people will send.
+                secondary = (if (person.isSolemn) "Make a remembrance poster" else "Make a poster") to
+                    { onMakePoster(card.nextEvent?.id) },
+                secondaryOutlined = true,
+                primaryTag = "person_send_wish",
+                secondaryTag = "person_make_poster",
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            )
 
             // ---- events (FR-PPL-03) ----
             SectionHeader("Dates")
@@ -223,10 +280,9 @@ fun PersonDetailScreen(
             if (person.isMinor) {
                 // FR-PPL-09: flagged records are excluded from profiling entirely, so the
                 // app does not merely hide the chips — it explains why it is not asking.
-                Text(
+                Note(
                     "This person is under 18, so WishKaro does not collect interests or a " +
                         "budget for them.",
-                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
             } else {
@@ -267,6 +323,7 @@ fun PersonDetailScreen(
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Keep") } },
         )
     }
+    } // SolemnScope
 }
 
 @Composable
@@ -277,39 +334,45 @@ private fun EventRow(
     onToggleMute: (Boolean) -> Unit,
 ) {
     val tone = toneFor(event.sentiment)
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        colors = if (event.sentiment == Sentiment.SOLEMN) {
-            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        } else {
-            CardDefaults.cardColors()
-        },
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(event.title, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        BirthdayMath.formatDayMonth(event.date.day, event.date.month) +
-                            (event.date.year?.let { " · $it" } ?: ""),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+    // A nested scope for THIS event. Usually redundant — the whole screen is already solemn
+    // for a deceased person — but not always: FR-EVT-05 allows a SOLEMN event on a person the
+    // local mirror still thinks is living, and that one date's badge should be quiet while the
+    // rest of their page is not. Composition locals nest, so this costs a provider and nothing
+    // else, and it means the rule holds from either direction.
+    SolemnScope(event.sentiment == Sentiment.SOLEMN || LocalSolemn.current) {
+        WishKaroCard(
+            solemn = event.sentiment == Sentiment.SOLEMN,
+            modifier = Modifier.padding(vertical = 4.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DateBadge(day = event.date.day, month = event.date.month)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(event.title, style = MaterialTheme.typography.titleSmall)
+                        // The year on its own line rather than appended to the date with a
+                        // separator: the day and month are the badge now, and "14 Mar \u00B7 1992"
+                        // beside a badge reading "14 MAR" said the same thing twice.
+                        event.date.year?.let {
+                            Text(
+                                it.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    TextButton(onClick = onEdit) { Text("Edit") }
+                    TextButton(onClick = onDelete) { Text("Remove") }
                 }
-                TextButton(onClick = onEdit) { Text("Edit") }
-                TextButton(onClick = onDelete) { Text("Remove") }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = !event.isMuted, onCheckedChange = { onToggleMute(!it) })
-                Text(
+                ToggleRow(
                     // For a deceased person's birthday this reads "Remembrance reminder off",
                     // which is the FR-EVT-05 opt-in stated as a control rather than a notice.
-                    tone.reminderToggle(!event.isMuted),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 8.dp),
+                    title = tone.reminderToggle(!event.isMuted),
+                    checked = !event.isMuted,
+                    onCheckedChange = { onToggleMute(!it) },
                 )
             }
         }
@@ -337,6 +400,8 @@ private fun CompletenessBar(person: Person, onImprove: () -> Unit) {
         }
         LinearProgressIndicator(
             progress = { person.completenessScore / 100f },
+            color = MaterialTheme.accent,
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
 
@@ -361,16 +426,11 @@ private fun CompletenessBar(person: Person, onImprove: () -> Unit) {
              */
             next == null && person.completenessScore < 100 -> Unit
 
-            next == null -> Text(
-                "Nothing left to add.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            next == null -> Note("Nothing left to add.", modifier = Modifier.padding(top = 4.dp))
             // Hobbies, likes, dislikes and the budget band are chips further down this very
             // screen, so pointing at the editor would be wrong — it does not hold them.
-            next in TRAIT_FIELDS -> Text(
+            next in TRAIT_FIELDS -> Note(
                 "Add ${next.prompt} below to improve this profile.",
-                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
             else -> TextButton(onClick = onImprove, modifier = Modifier.padding(top = 2.dp)) {

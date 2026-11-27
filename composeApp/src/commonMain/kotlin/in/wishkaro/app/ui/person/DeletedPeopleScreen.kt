@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +25,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.Person
+import `in`.wishkaro.app.ui.components.DetailTopBar
+import `in`.wishkaro.app.ui.components.EmptyState
+import `in`.wishkaro.app.ui.components.PersonAvatar
+import `in`.wishkaro.app.ui.components.WishKaroCard
+import `in`.wishkaro.app.ui.theme.SolemnScope
 
 /**
  * The 30-day restore window, made visible (FR-PPL-08).
@@ -42,23 +49,15 @@ fun DeletedPeopleScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Recently removed") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
+            DetailTopBar(title = "Recently removed", onBack = onBack)
         },
     ) { padding ->
         if (people.isEmpty()) {
-            Box(
+            EmptyState(
+                title = "Nothing removed",
+                body = "Anybody you remove stays here for 30 days, so you can put them back.",
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "Nothing removed in the last 30 days.",
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(32.dp),
-                )
-            }
+            )
             return@Scaffold
         }
 
@@ -68,20 +67,28 @@ fun DeletedPeopleScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(people, key = { it.id }) { person ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(person.displayName, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                person.relationToOwner ?: "—",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                SolemnScope(person.isSolemn) {
+                    WishKaroCard(solemn = person.isSolemn) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PersonAvatar(person.displayName)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    person.displayName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    person.relationToOwner ?: "\u2014",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            TextButton(onClick = { onRestore(person.id) }) { Text("Restore") }
                         }
-                        TextButton(onClick = { onRestore(person.id) }) { Text("Restore") }
                     }
                 }
             }
