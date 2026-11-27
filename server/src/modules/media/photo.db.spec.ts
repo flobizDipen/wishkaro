@@ -181,10 +181,54 @@ describe('uploading a photo', () => {
   });
 
   it('refuses something that is not an image, rather than failing in the compositor', async () => {
+    /**
+     * Asserted on the CODE, not the prose.
+     *
+     * This matched `/image/i` against the message, and CI caught it when the message
+     * changed to name the three accepted formats instead — "That file isn't a JPEG, PNG
+     * or WebP we can read" contains no "image". A test pinned to user-facing wording goes
+     * red on a copy edit and says nothing about behaviour; the code is the contract the
+     * client actually branches on.
+     */
     await expect(
       service.upload(userId, personId, Buffer.from('this is not a photograph', 'utf8')),
-    ).rejects.toThrow(/image/i);
+    ).rejects.toMatchObject({ response: { code: 'NOT_AN_IMAGE' } });
   });
+
+  it('refuses an image format outside the three the endpoint accepts', async () => {
+    // An SVG sent as image/png was verified to be rasterised and stored before this: the
+    // content-type allowlist is a TRANSPORT filter, and the decoded format is the fact.
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">' +
+        '<rect width="300" height="300" fill="#123456"/></svg>',
+      'utf8',
+    );
+    await expect(service.upload(userId, personId, svg)).rejects.toMatchObject({
+      response: { code: 'NOT_AN_IMAGE' },
+    });
+  });
+
+  it('refuses a decompression bomb instead of decoding 256 megapixels', async () => {
+    /**
+     * Measured before the fix: a 0.72 MB solid-colour PNG declaring 16000x16000 sat just
+     * under sharp's default `limitInputPixels` of 268 MP, decoded in ~220 ms and cost
+     * ~143 MB of RSS — on a route that had no rate limiter at all.
+     *
+     * The fixture here is 8000x6400 — 51.2 MP, just over the 50 MP ceiling — rather than
+     * the 256 MP original, because BUILDING the original costs ~768 MB in the test
+     * process and this suite runs on a shared CI runner. Just over the line proves the
+     * line.
+     */
+    const bomb = await sharp({
+      create: { width: 8000, height: 6400, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+
+    await expect(service.upload(userId, personId, bomb)).rejects.toMatchObject({
+      response: { code: 'NOT_AN_IMAGE' },
+    });
+  }, 120000);
 
   it('refuses an empty body with a message naming the content types', async () => {
     await expect(service.upload(userId, personId, undefined)).rejects.toThrow(/image\/jpeg/);
