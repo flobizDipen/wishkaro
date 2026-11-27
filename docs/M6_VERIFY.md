@@ -210,6 +210,39 @@ a killed worker re-ran the job and billed a second image while the row sat at RU
 forever; the subline measured bold and drawn regular; and `OPENAI_IMAGE_QUALITY` being dead
 config the boot log claimed was live.
 
+### 0.7a A second, independent review found four more — and a gap in the fix for §0.7
+
+A parallel reviewer went over the same diff without seeing the first five reports. Two of
+its findings were already fixed at head (the rails ahead of the copy call; the model's
+headline sentiment-checked). Two were not, and one of those is the more uncomfortable
+result:
+
+**The guard I had just written against this milestone's worst failure was approximating a
+requirement that states its own words.** FR-EVT-04 says copy "never uses 'celebrate',
+'wish', 'congrats' or emoji for these events". `solemnCopyViolation` was built from
+`BANNED_ON_SOLEMN`, which is a list of MOTIFS — it happens to contain "celebrate" and
+"congrats", and contains neither "wish" nor any notion of emoji. The fix was written
+against the list that was to hand rather than against the sentence in the requirement.
+
+**Input moderation was implemented twice and differently.** Drafting checked the `avoid`
+list and the notes; the poster pipeline checked the display name and the notes. The wish
+prompt carries the name, the relation, the hobbies, the likes and the notes — so the name
+went unchecked on the surface that sends it to a model, hobbies and likes went unchecked on
+both, and whether §10 rule 7 applied depended on which field the user had typed into. Each
+builder now declares the user text it carries and both services ask it;
+`prompt-coverage.spec.ts` renders each prompt with sentinels and fails if the rendered
+prompt contains a user string the moderation list does not.
+
+**The studio kept the first event when reopened for a second on the same person**, because
+the guard compared the person id while the nav key also carries the event. Birthday, back,
+anniversary generated "Happy Birthday" under the birthday's cache key — and on the path
+where a sync marks the person deceased between visits, the picker still offered the
+CELEBRATORY family. The server refuses that (400, not confetti), but it is wrong on exactly
+the axis FR-POS-13 governs.
+
+That the second reviewer found a hole in the first review's fix, hours old, is the clearest
+argument in this document for not merging a 13,000-line diff on one pass.
+
 ### 0.8 The fix for §0.6 was itself a regression, by 8x
 
 The measured fit replaced the estimate, and the measure canvas was sized from the string at
