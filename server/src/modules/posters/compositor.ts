@@ -1,6 +1,7 @@
 import sharp, { type OverlayOptions } from 'sharp';
 import type { PosterFormat } from '@prisma/client';
 import { FORMATS, type PosterTheme } from './theme-library';
+import { fitText } from './text-fitting';
 
 /**
  * FR-POS-01(c): "the server composites the person's **unmodified** photo, the copy, and
@@ -159,6 +160,15 @@ export function layoutFor(format: PosterFormat): Layout {
 const ATTRIBUTION = 'made with WishKaro';
 
 /**
+ * The gutter the typographic template keeps from the canvas edge.
+ *
+ * Wider than it looks necessary because WhatsApp re-encodes a status image and some
+ * devices crop a few pixels of bleed; text that only just fits is text that is only just
+ * readable after somebody else's pipeline has had it.
+ */
+const CANVAS_MARGIN = 80;
+
+/**
  * Compose one poster.
  *
  * Order matters and is the design: background, then photo, then text. The text layer is one
@@ -232,7 +242,6 @@ function textLayerSvg(
   hasPhoto: boolean,
 ): string {
   const { theme } = request;
-  const anchor = layout.textAnchor;
 
   /**
    * The no-photo path (FR-POS-06, OD-11): "typographic/illustrated template, still high
@@ -241,37 +250,107 @@ function textLayerSvg(
    * The headline moves UP into the space the photo would have occupied and gets larger, so
    * the result is a typographic poster rather than a photo poster with a hole in it. That
    * is the difference between a fallback and a template.
+   *
+   * **It also re-centres, and LINK is why.** LINK is the one landscape format, so its
+   * photo sits BESIDE the text and its text box is a 590px column starting at x=530. With
+   * no photo there is no column — the right half of a 1200px canvas is simply where the
+   * words used to be squeezed, and a headline set there at 1.3× ran off the right edge
+   * while the whole left half sat empty. The pixel-measuring spec caught it; reading the
+   * layout table would not have, because the table is correct for the case it describes.
    */
+  const anchor = hasPhoto ? layout.textAnchor : 'middle';
+  const textLeft = hasPhoto ? layout.textLeft : Math.round(spec.width / 2);
+  const textWidth = hasPhoto ? layout.textWidth : spec.width - CANVAS_MARGIN * 2;
+
+  const nominalHeadline = hasPhoto ? layout.headlineSize : Math.round(layout.headlineSize * 1.3);
+
+  /**
+   * **Fitted, not assumed.** `layout.textWidth` was declared in all three layouts and read
+   * by nothing, so a headline wider than the canvas ran off both edges — see
+   * `text-fitting.ts` for the poster that found it. Two lines at most: a third would push
+   * a headline into the subline, and `assertNoOverlap` would then be guarding a band the
+   * text had already left.
+   */
+  const headline = fitText(request.headline, {
+    maxWidth: textWidth,
+    nominalSize: nominalHeadline,
+    maxLines: 2,
+  });
+
+  const lineHeight = Math.round(headline.fontSize * 1.12);
   const headlineY = hasPhoto ? layout.headlineY : typographicHeadlineY(spec);
-  const headlineSize = hasPhoto ? layout.headlineSize : Math.round(layout.headlineSize * 1.3);
-  const sublineY = hasPhoto ? layout.sublineY : headlineY + Math.round(headlineSize * 1.1);
+
+  /**
+   * A second line grows the block DOWNWARDS from the first baseline, so the first line
+   * stays where the layout put it and the rule above it does not move. The subline is then
+   * pushed below whatever the headline actually occupied rather than below where a
+   * one-line headline would have ended.
+   */
+  const headlineBottom = headlineY + lineHeight * (headline.lines.length - 1);
+  const sublineY = hasPhoto
+    ? Math.max(layout.sublineY, headlineBottom + Math.round(layout.sublineSize * 1.6))
+    : headlineBottom + Math.round(headline.fontSize * 1.1);
 
   const rule = hasPhoto
     ? ''
     : // One quiet rule above the headline, so a typographic poster has a frame element of
       // its own rather than being words floating on a gradient.
-      `<rect x="${layout.textAnchor === 'middle' ? spec.width / 2 - 80 : layout.textLeft}" ` +
-      `y="${headlineY - headlineSize - 56}" width="160" height="4" ` +
+      `<rect x="${anchor === 'middle' ? spec.width / 2 - 80 : textLeft}" ` +
+      `y="${headlineY - headline.fontSize - 56}" width="160" height="4" ` +
       `fill="${theme.textColor}" opacity="0.5"/>`;
 
-  const subline = request.subline
-    ? `<text x="${layout.textLeft}" y="${sublineY}" text-anchor="${anchor}" ` +
-      `font-family="${FONT_STACK}" font-size="${layout.sublineSize}" ` +
-      `fill="${theme.textColor}" opacity="0.82">${escapeXml(request.subline)}</text>`
+  const headlineTspans = headline.lines
+    .map(
+      (line, i) =>
+        `<tspan x="${textLeft}" ${i === 0 ? '' : `dy="${lineHeight}"`}>${escapeXml(line)}</tspan>`,
+    )
+    .join('');
+
+  // Shrunk but never wrapped: a subline is a year count or a milestone, and breaking
+  // "25th Silver anniversary" across two lines reads worse than setting it smaller.
+  const fittedSub = request.subline
+    ? fitText(request.subline, {
+        maxWidth: textWidth,
+        nominalSize: layout.sublineSize,
+        maxLines: 1,
+      })
+    : null;
+
+  const subline = fittedSub
+    ? `<text x="${textLeft}" y="${sublineY}" text-anchor="${anchor}" ` +
+      `font-family="${FONT_STACK}" font-size="${fittedSub.fontSize}" ` +
+      `fill="${theme.textColor}" opacity="0.82">${escapeXml(fittedSub.lines[0])}</text>`
     : '';
 
   const attribution = request.attributed
-    ? `<text x="${layout.textLeft}" y="${layout.attributionY}" text-anchor="${anchor}" ` +
+    ? `<text x="${textLeft}" y="${layout.attributionY}" text-anchor="${anchor}" ` +
       `font-family="${FONT_STACK}" font-size="24" fill="${theme.textColor}" ` +
       `opacity="0.55">${ATTRIBUTION}</text>`
     : '';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${spec.width}" height="${spec.height}">
   ${rule}
-  <text x="${layout.textLeft}" y="${headlineY}" text-anchor="${anchor}" font-family="${FONT_STACK}" font-size="${headlineSize}" font-weight="700" fill="${theme.textColor}">${escapeXml(request.headline)}</text>
+  <text x="${textLeft}" y="${headlineY}" text-anchor="${anchor}" font-family="${FONT_STACK}" font-size="${headline.fontSize}" font-weight="700" fill="${theme.textColor}">${headlineTspans}</text>
   ${subline}
   ${attribution}
 </svg>`;
+}
+
+/**
+ * The text layer on its own, transparent.
+ *
+ * Exported so `compositor.spec.ts` can render it and measure the drawn ink with
+ * `sharp.trim()`. That is the only way to assert "the words are inside the picture"
+ * against the actual pixels rather than against the estimate that decided the font size —
+ * and the estimate being wrong is exactly the failure this is guarding.
+ */
+export async function renderTextLayer(
+  request: CompositeRequest,
+  hasPhoto: boolean,
+): Promise<Buffer> {
+  const spec = FORMATS[request.format];
+  const svg = textLayerSvg(request, LAYOUTS[request.format], spec, hasPhoto);
+  return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 /**
