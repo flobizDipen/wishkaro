@@ -1,0 +1,157 @@
+{
+  "_comment": [
+    "The ONE table of cases for the export CSV's round trip, read by BOTH sides of it:",
+    "server/src/modules/account/export-csv.spec.ts WRITES these rows and",
+    "composeApp/src/commonTest/.../ExportRoundTripTest.kt READS them back through M3's",
+    "importer. FR-SET-03 produces the file; FR-IMP-04..08 consume it; definition-of-done",
+    "item 2 is the claim that the two agree.",
+    "",
+    "MILESTONE_CHECKLIST.md, bought by M3: 'a rule implemented TWICE in TWO languages is",
+    "held to one shared table of cases'. The export format is exactly that shape — a writer",
+    "in TypeScript and a reader in Kotlin — and nothing else would notice them drifting,",
+    "because each side's own tests pass perfectly while disagreeing with the other.",
+    "",
+    "## Why the dates are written as `d MMM yyyy` and not `dd/MM/yyyy`",
+    "",
+    "Because `03/05/1990` is AMBIGUOUS and the importer resolves it with a USER PREFERENCE.",
+    "FR-IMP-06's dd/MM-vs-MM/dd toggle defaults to day-first for India, and FR-SET-08 makes",
+    "it a setting the user can change — so an export written as `03/05/1990` re-imports as",
+    "3 May for one user and 5 March for another. A round trip that depends on a preference",
+    "is not a round trip; it is silent data corruption for whoever flipped the switch.",
+    "",
+    "`ImportDates.fromNamedMonth` returns `ambiguous = false` unconditionally, because a",
+    "named month leaves nothing to be ambiguous about. So `3 May 1990` reads identically",
+    "under either setting, which is the property this format was chosen for.",
+    "",
+    "## Why the header is exactly this",
+    "",
+    "Definition-of-done item 2 says 'without a mapping change', which means",
+    "`ImportStore.guessMapping` has to claim all five columns correctly with nobody",
+    "touching the screen. It matches on substrings in claim order (name, date, relation,",
+    "phone, notes), and one column may only be claimed once. `expectedMapping` below is",
+    "asserted against the real guesser rather than assumed.",
+    "",
+    "Every person here is INVENTED. The repo is public (MILESTONE_CHECKLIST.md §F)."
+  ],
+
+  "header": ["Name", "Date", "Relation", "Phone", "Notes"],
+
+  "expectedMapping": { "name": 0, "date": 1, "relation": 2, "phone": 3, "notes": 4 },
+
+  "cases": [
+    {
+      "why": "the base case — every field present, year known",
+      "person": {
+        "displayName": "Meera Iyer",
+        "relationToOwner": "Friend",
+        "phone": "+91 98200 11111",
+        "notes": "likes filter coffee",
+        "day": 3,
+        "month": 5,
+        "year": 1990
+      },
+      "row": ["Meera Iyer", "3 May 1990", "Friend", "+91 98200 11111", "likes filter coffee"],
+      "reimported": { "name": "Meera Iyer", "day": 3, "month": 5, "year": 1990, "relation": "Friend" }
+    },
+    {
+      "why": "FR-EVT-02 — year unknown must survive the trip as unknown, not as a guess",
+      "person": {
+        "displayName": "Arjun Nair",
+        "relationToOwner": "Cousin",
+        "phone": null,
+        "notes": null,
+        "day": 17,
+        "month": 11,
+        "year": null
+      },
+      "row": ["Arjun Nair", "17 Nov", "Cousin", "", ""],
+      "reimported": { "name": "Arjun Nair", "day": 17, "month": 11, "year": null, "relation": "Cousin" }
+    },
+    {
+      "why": "both numbers under 13 — the case dd/MM/yyyy would resolve differently under each setting of the FR-SET-08 toggle",
+      "person": {
+        "displayName": "Priya Deshmukh",
+        "relationToOwner": "Sister",
+        "phone": null,
+        "notes": null,
+        "day": 4,
+        "month": 9,
+        "year": 1988
+      },
+      "row": ["Priya Deshmukh", "4 Sep 1988", "Sister", "", ""],
+      "reimported": { "name": "Priya Deshmukh", "day": 4, "month": 9, "year": 1988, "relation": "Sister" }
+    },
+    {
+      "why": "a comma in a note — the quoting rule, which is where two CSV implementations differ first",
+      "person": {
+        "displayName": "Rohan Deshpande",
+        "relationToOwner": "Colleague",
+        "phone": null,
+        "notes": "coffee, not tea",
+        "day": 29,
+        "month": 2,
+        "year": 1992
+      },
+      "row": ["Rohan Deshpande", "29 Feb 1992", "Colleague", "", "coffee, not tea"],
+      "reimported": { "name": "Rohan Deshpande", "day": 29, "month": 2, "year": 1992, "relation": "Colleague" }
+    },
+    {
+      "why": "a double quote inside a note — doubled on write, collapsed on read",
+      "person": {
+        "displayName": "Kavya Menon",
+        "relationToOwner": "Best Friend",
+        "phone": null,
+        "notes": "calls it \"the usual\"",
+        "day": 1,
+        "month": 1,
+        "year": 2001
+      },
+      "row": ["Kavya Menon", "1 Jan 2001", "Best Friend", "", "calls it \"the usual\""],
+      "reimported": { "name": "Kavya Menon", "day": 1, "month": 1, "year": 2001, "relation": "Best Friend" }
+    },
+    {
+      "why": "a newline inside a note — the case a line-based reader gets wrong and a real CSV reader does not",
+      "person": {
+        "displayName": "Sanjay Pillai",
+        "relationToOwner": "Uncle",
+        "phone": "022 2222 3333",
+        "notes": "two lines\nof notes",
+        "day": 12,
+        "month": 12,
+        "year": 1960
+      },
+      "row": ["Sanjay Pillai", "12 Dec 1960", "Uncle", "022 2222 3333", "two lines\nof notes"],
+      "reimported": { "name": "Sanjay Pillai", "day": 12, "month": 12, "year": 1960, "relation": "Uncle" }
+    },
+    {
+      "why": "a comma in the NAME, which is also what a dedup rule tokenises",
+      "person": {
+        "displayName": "Nair, Anita",
+        "relationToOwner": "Aunt",
+        "phone": null,
+        "notes": null,
+        "day": 8,
+        "month": 7,
+        "year": 1975
+      },
+      "row": ["Nair, Anita", "8 Jul 1975", "Aunt", "", ""],
+      "reimported": { "name": "Nair, Anita", "day": 8, "month": 7, "year": 1975, "relation": "Aunt" }
+    }
+  ],
+
+  "_notInThisFile": [
+    "DEATH ANNIVERSARIES AND SECOND EVENTS ARE NOT HERE, AND THAT IS THE POINT.",
+    "",
+    "M3's importer hard-codes `type = EventType.BIRTHDAY` (LocalStore.importPeopleLocally)",
+    "and ColumnMapping has five targets with no type among them. So one row is one person",
+    "and one BIRTHDAY, always. A death anniversary written into this file and re-imported",
+    "would come back as a birthday — the outcome FR-EVT-05 calls 'the worst failure this",
+    "app can have ... impossible by construction, not by a copy tweak'.",
+    "",
+    "The export therefore writes ONLY birthdays to people.csv, says so in the file itself,",
+    "and puts every event of every type in the JSON, which is the lossless artifact.",
+    "docs/M9_PLAN.md C11 raises this rather than resolving it: the alternative readings of",
+    "definition-of-done item 2 are Dipen's to pick between, and the one that silently",
+    "converts a remembrance into a celebration is not being built in the meantime."
+  ]
+}

@@ -36,11 +36,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.ContactChoice
+import `in`.wishkaro.app.domain.ContactsDisclosure
 import `in`.wishkaro.app.domain.ContactsImport
 import `in`.wishkaro.app.domain.DateOrder
 import `in`.wishkaro.app.domain.DateParse
@@ -176,11 +178,18 @@ fun ImportContactsScreen(
 }
 
 /**
- * The rationale, shown BEFORE the system dialog (FR-IMP-01).
+ * The prominent disclosure, shown BEFORE the system dialog (FR-AUTH-06, FR-IMP-01, §12).
  *
- * It says what is read and what is not, because "allow WishKaro to access your contacts?" is
- * a frightening question with no detail in it, and the honest answer — the list never leaves
- * the phone — is the one thing the system dialog cannot say.
+ * "Allow WishKaro to access your contacts?" is a frightening question with no detail in it,
+ * and the detail is the one thing the system dialog cannot carry. So this screen carries it,
+ * and the **words are in `ContactsDisclosure`** rather than here, because they are the
+ * requirement and a value can be held to FR-AUTH-06's clauses by a test where a string
+ * literal inside a composable cannot.
+ *
+ * Scrollable, which it was not. Five statements, a heading, a button and a decline do not fit
+ * on a 20:9 phone at a large font scale — M6 §0.5 is the same bug on the poster studio, where
+ * the controls were simply below the fold and nobody could reach them. A disclosure the user
+ * cannot read to the end is not a disclosure.
  */
 @Composable
 private fun PermissionRationale(
@@ -190,23 +199,27 @@ private fun PermissionRationale(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+            .testTag(ContactsDisclosure.TAG_SCREEN),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Read your contacts?", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "WishKaro looks for birthdays already saved against your contacts, so you do " +
-                "not have to type them again.",
-        )
-        Text(
-            "• It all happens on this phone.\n" +
-                "• You pick who comes in — nothing is saved until you tap Import.\n" +
-                "• The people you do not pick are never saved, never sent anywhere, and " +
-                "never written down.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Button(onClick = onAsk, enabled = !busy) { Text("Continue") }
-        TextButton(onClick = onBack) { Text("Not now") }
+        Text(ContactsDisclosure.TITLE, style = MaterialTheme.typography.headlineSmall)
+        Text(ContactsDisclosure.PURPOSE)
+        for (point in ContactsDisclosure.POINTS) {
+            Text("\u2022  $point", style = MaterialTheme.typography.bodyMedium)
+        }
+        Button(
+            onClick = onAsk,
+            enabled = !busy,
+            modifier = Modifier.testTag(ContactsDisclosure.TAG_CONTINUE),
+        ) { Text(ContactsDisclosure.CONTINUE) }
+        TextButton(
+            onClick = onBack,
+            modifier = Modifier.testTag(ContactsDisclosure.TAG_DECLINE),
+        ) { Text(ContactsDisclosure.DECLINE) }
     }
 }
 

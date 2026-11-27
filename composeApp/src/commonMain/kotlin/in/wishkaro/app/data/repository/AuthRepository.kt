@@ -2,6 +2,7 @@ package `in`.wishkaro.app.data.repository
 
 import `in`.wishkaro.app.data.TokenStore
 import `in`.wishkaro.app.data.local.LocalStore
+import `in`.wishkaro.app.data.remote.ExportFiles
 import `in`.wishkaro.app.data.remote.RegisterDeviceRequest
 import `in`.wishkaro.app.data.remote.TestReminderResponse
 import `in`.wishkaro.app.data.remote.WishKaroApi
@@ -100,6 +101,45 @@ class AuthRepository(
 
     fun onSessionExpired() {
         tokens.clear()
+        _state.value = AuthState.SignedOut
+    }
+
+    /**
+     * Delete this account, irreversibly (FR-SET-04, FR-AUTH-08).
+     *
+     * [confirmEmail] is what the user typed. It is sent rather than compared here: the server
+     * is what decides, so a stale build, a second client or a curl cannot skip the check. The
+     * screen compares it too, to give an answer before a round trip — two checks of the same
+     * thing, with the authoritative one on the side that performs the deletion.
+     *
+     * The local wipe happens only AFTER the server has confirmed. Wiping first would destroy
+     * the user's data on a request that failed, which is the one outcome worse than the
+     * feature not working.
+     */
+    /** FR-SET-03. The bytes only; where they go is the caller's business. */
+    suspend fun fetchExport(): Result<ExportFiles> = runCatching { api.fetchExport() }
+
+    suspend fun deleteAccount(confirmEmail: String): Result<Unit> = runCatching {
+        api.deleteAccount(confirmEmail)
+        tokens.clear()
+        local.wipe()
+        _state.value = AuthState.SignedOut
+    }
+
+    /**
+     * The account is gone — deleted here, on another device, or from the web page (M9, C9).
+     *
+     * **Wipes the local database**, which [onSessionExpired] deliberately does not. An expired
+     * session is reversible: sign in again and everything is still there. A deleted account is
+     * not, and leaving 566 people on the phone after their owner asked for them to be erased
+     * is a privacy failure on the device even when the server side is spotless.
+     *
+     * FR-AUTH-07 already wipes on sign-out. What is new is that this can now happen without
+     * the user touching the app at all.
+     */
+    suspend fun onAccountGone() {
+        tokens.clear()
+        local.wipe()
         _state.value = AuthState.SignedOut
     }
 }

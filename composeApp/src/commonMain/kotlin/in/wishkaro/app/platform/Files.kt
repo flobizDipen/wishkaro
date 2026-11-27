@@ -27,6 +27,17 @@ interface FileGateway {
     suspend fun saveCsv(suggestedName: String, content: String): Boolean
 
     /**
+     * The same save, **without the UTF-8 BOM** `saveCsv` writes (M9, FR-SET-03).
+     *
+     * Not a parameter on `saveCsv`, because the two have opposite requirements and a boolean
+     * at the call site is a thing people get backwards. A CSV wants the BOM so Excel does not
+     * render a Gujarati name as mojibake; a JSON file must NOT have one, because several
+     * parsers — `JSON.parse` among them — treat a leading BOM as a syntax error, and an export
+     * nobody can open is not an export.
+     */
+    suspend fun saveTextFile(suggestedName: String, content: String): Boolean
+
+    /**
      * One photo of a person (FR-PPL-04, and FR-POS-01's "the person's unmodified photo").
      *
      * Through the SYSTEM photo picker, which is the whole reason this is a separate method

@@ -68,6 +68,8 @@ class BusyFlagTest {
 
         override suspend fun saveCsv(suggestedName: String, content: String) = false
 
+        override suspend fun saveTextFile(suggestedName: String, content: String) = false
+
         override suspend fun pickPhoto(): PickedPhoto? = null
     }
 

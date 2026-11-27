@@ -4,111 +4,105 @@ import { resolve } from 'node:path';
 /**
  * **No real person's email address is committed to this public repository.**
  *
- * `MILESTONE_CHECKLIST.md` §F has said since M3 that fixtures carry invented people and never
- * real contacts. M5 §0.5 extended it to screenshots. `docs/M9_VERIFY.md` §14 extended it to
- * export files, and §14.1 to verification documents. Every one of those extensions was bought
- * the same way: by somebody nearly committing the thing.
+ * The check itself is `tools/check-no-pii.sh`, and this spec **calls it** rather than
+ * reimplementing it. That is the point of the arrangement: there is exactly one definition of
+ * what counts as a real address, and a developer running the server suite exercises the same
+ * code CI does.
  *
- * Four written rules and one found leak later — a real address sat in `docs/M0_PREREQUISITES.md`
- * from M0 until M9 — the lesson the checklist itself draws applies: *"where a mistake has a
- * mechanical signature, write the grep or the test instead."* A rule on a list did not stop
- * M6 shipping the same `${'$'}` bug twice more after it was listed. This is the grep.
+ * ## Why the check does not live here
  *
- * ## What it looks for, and what it deliberately does not
+ * It did, for about an hour, and a peer session found the hole. This spec runs in the server
+ * suite; `.github/workflows/server.yml` is path-filtered to `server/**`,
+ * `.github/workflows/server.yml` and `docs/fixtures/**` — and **the leak it was written for was
+ * in `docs/M0_PREREQUISITES.md`**. A pull request that adds an address to `docs/` and touches
+ * nothing under `server/` never runs this suite, so the guard would have stayed silent on
+ * exactly the case that motivated it.
  *
- * Addresses at the consumer mail hosts a real person's account lives on, plus the owner's work
- * domain. **Not** a general email regex: `.env.example`, fixtures and specs are full of
- * deliberately fake addresses, and a check that flagged those would be turned off within a week
- * — which is the real failure mode for a test like this one.
+ * `.github/workflows/privacy.yml` now runs the script with **no path filter at all**. This spec
+ * remains because the server suite is what a developer runs locally, and a check nobody runs
+ * until they push is a check that finds things late.
  *
- * `example.invalid`, `example.test`, `example.com` and `wishkaro.local` are reserved by RFC 2606
- * and RFC 6761 precisely so that they can be used this way. They are what a fixture should use,
- * and they are not matched below.
+ * ## Why four written rules did not prevent the leak it guards
  *
- * ## Scope, stated honestly
- *
- * This checks the **working tree**, not history. Removing an address does not unpublish it —
- * git history is permanent and public repositories are scraped, exactly as with a leaked
- * secret, and unlike a secret an address cannot be rotated. So this stops the next one from
- * being added; it cannot undo one already pushed.
+ * `MILESTONE_CHECKLIST.md` §F has said since M3 that fixtures carry invented people; M5 §0.5
+ * extended it to screenshots; `docs/M9_VERIFY.md` §14 to export files; §14.1 to verification
+ * documents. A real address still sat in `docs/` across four milestones. The checklist's own
+ * conclusion applies — *where a mistake has a mechanical signature, write the grep instead.*
  */
 
 const REPO_ROOT = resolve(__dirname, '../../..');
+const SCRIPT = 'tools/check-no-pii.sh';
 
-/**
- * Hosts a real person's personal account lives on, and this project owner's work domain.
- *
- * Narrow on purpose. Widening it to "any address anywhere" would make the suite fail on its own
- * fixtures, and a test that cries wolf is a test that gets deleted.
- */
-const REAL_ADDRESS = String.raw`[A-Za-z0-9._%+-]+@(gmail|yahoo|outlook|hotmail|icloud|proton|protonmail)\.(com|me)|[A-Za-z0-9._%+-]+@flobiz\.in`;
+interface Run {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
 
-/** Files that are allowed to mention the pattern because they are ABOUT the pattern. */
-const ALLOWED = [
-  'server/src/common/no-pii-in-repo.spec.ts',
-];
+function runCheck(args: string[] = []): Run {
+  const result = execFileSync('bash', [SCRIPT, ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    // The script exits 1 on a hit, which is a result rather than a crash.
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return { status: 0, stdout: result, stderr: '' };
+}
 
-function grepTrackedFiles(pattern: string): string[] {
+function runCheckAllowingFailure(): Run {
   try {
-    /**
-     * `--untracked`, which matters more than it looks.
-     *
-     * Plain `git grep` searches TRACKED files only, so a brand-new document carrying an
-     * address — exactly the case this exists for, since a new verification document is how
-     * M9 nearly did it — would not be searched at all until after it was committed, which is
-     * one push too late.
-     */
-    const out = execFileSync('git', ['grep', '-nIE', '--untracked', pattern, '--', '.'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-    });
-    return out.split('\n').filter((line) => line.trim() !== '');
+    return runCheck();
   } catch (error) {
-    // `git grep` exits 1 when it finds nothing, which is the passing case here.
-    const status = (error as { status?: number }).status;
-    if (status === 1) return [];
-    throw error;
+    const e = error as { status?: number; stdout?: string; stderr?: string };
+    return { status: e.status ?? -1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
   }
 }
 
 describe('the public-repo rule, as a grep rather than a reminder', () => {
-  it('runs against a real checkout', () => {
-    /**
-     * Without this, a `git grep` that failed for any reason — wrong cwd, no git, a bad
-     * pattern — would make the test below pass by finding nothing. That is the vacuous-green
-     * shape this project has shipped twice and now checks for by habit.
-     *
-     * Its first version grepped for the name of a constant that existed only in THIS file,
-     * which was untracked at the time, so the sanity check itself found nothing and failed.
-     * It now looks for a string that is unarguably in the committed tree.
-     */
-    expect(grepTrackedFiles('WishKaro').length).toBeGreaterThan(10);
+  it('the script exists and is executable from the repo root', () => {
+    // Without this, a missing or unrunnable script would make the check below "pass" by
+    // throwing something the catch turned into a result — the vacuous-green shape this project
+    // has shipped twice and now checks for by habit.
+    const pattern = runCheck(['--pattern']).stdout.trim();
+    expect(pattern.length).toBeGreaterThan(20);
+    expect(pattern).toContain('@');
   });
 
-  it('contains no real personal or work email address', () => {
-    const hits = grepTrackedFiles(REAL_ADDRESS).filter(
-      (line) => !ALLOWED.some((allowed) => line.startsWith(`${allowed}:`)),
-    );
+  it('the working tree contains no real personal or work email address', () => {
+    const result = runCheckAllowingFailure();
 
-    /**
-     * The failure message names the file and line and **does not repeat the address**, which
-     * is the whole point: a test that printed what it found would put the address into CI logs
-     * and into the terminal of everybody who ran the suite.
-     */
-    const where = hits.map((line) => line.split(':').slice(0, 2).join(':'));
-    expect(where).toEqual([]);
+    // On failure the script prints file:line to stderr and never the match, so surfacing its
+    // output here cannot leak the address into a CI log either.
+    expect({ status: result.status, where: result.stderr.trim() }).toEqual({
+      status: 0,
+      where: '',
+    });
   });
 
   it('leaves the reserved example domains alone, so fixtures can use them', () => {
-    // RFC 2606 and RFC 6761 reserve these. If this ever fails, the pattern above has been
-    // widened into something that will be switched off rather than fixed.
+    // RFC 2606 and RFC 6761 reserve these. If this ever fails, the pattern has been widened
+    // into something that will be switched off rather than fixed — which is the real failure
+    // mode for a check like this one.
+    const pattern = new RegExp(runCheck(['--pattern']).stdout.trim());
+
     for (const safe of [
       'nobody@example.invalid',
       'someone@example.test',
       'test@example.com',
       'dev@wishkaro.local',
+      'spender@example.invalid',
     ]) {
-      expect(new RegExp(REAL_ADDRESS).test(safe)).toBe(false);
+      expect(pattern.test(safe)).toBe(false);
+    }
+  });
+
+  it('still matches the shapes it is for', () => {
+    // The other half of the previous test. A pattern narrowed until it matches nothing would
+    // pass every test above and guard nothing at all.
+    const pattern = new RegExp(runCheck(['--pattern']).stdout.trim());
+
+    for (const real of ['someone.real@gmail.com', 'a.person@yahoo.com', 'someone@flobiz.in']) {
+      expect(pattern.test(real)).toBe(true);
     }
   });
 });

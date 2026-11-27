@@ -163,6 +163,20 @@ enum AssetKind {
   SOURCE_PHOTO
 }
 
+/// FR-SET-06's "both user-overridable to keep" (M9).
+///
+/// An enum rather than a nullable `expires_at`, which is what M6's comment proposed. Two
+/// reasons, both found by trying to write the un-keep path: a null date cannot be told apart
+/// from "no policy was ever set", and nulling it destroys the deadline, so switching back to
+/// AUTO would have to invent a new one from today — handing every kept-then-unkept asset
+/// another full 90 or 180 days. See docs/M9_PLAN.md C2.
+enum AssetRetention {
+  /// Swept on `expires_at`, subject to the per-kind rules in `RetentionService`.
+  AUTO
+  /// Never swept. The user said so.
+  KEEP
+}
+
 /// The three output formats (FR-POS-05). Named rather than stored as "1080x1920" so that a
 /// typo cannot invent a fourth, and so the compositor's switch is exhaustive.
 enum PosterFormat {
@@ -652,8 +666,21 @@ model Wish {
 ///
 /// Not synced and never sent to a client. It is ours.
 model AiUsage {
-  id     String @id @default(uuid(7))
-  userId String @map("user_id")
+  id     String  @id @default(uuid(7))
+  /**
+   * NULLABLE since M9, and `SetNull` rather than `Cascade` below.
+   * **This is the one place DPDP's erasure right and §10 rule 2 collide**, and the schema had
+   * already resolved it in rule 2's disfavour without anybody deciding: `onDelete: Cascade`
+   * meant the first `user.delete()` anybody wrote would silently destroy the cost ledger that
+   * rule 2 and FR-POS-10 both call non-negotiable.
+   * Dipen's decision, taken after being shown the conflict rather than finding it in a diff:
+   * **anonymise, do not erase.** This table holds what a call cost — provider, model, tokens,
+   * INR — and not one character the user typed. With the id nulled, no row identifies anybody,
+   * the erasure right is satisfied in substance, and "what does a user cost per year" is still
+   * answerable in aggregate. What is given up, stated: per-user cost attribution for deleted
+   * accounts. docs/M9_PLAN.md decision 3.
+   */
+  userId String? @map("user_id")
 
   /// Which surface spent the money. "wish_draft" in M5; M6 writes posters, M8 gift ideas.
   /// A string rather than an enum so a new feature is not a migration.
@@ -703,7 +730,7 @@ model AiUsage {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   generation Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
 
   /// "What does one user cost per year" — the question M7's pricing is built on.
@@ -761,22 +788,56 @@ model Asset {
   /// FR-SET-06: source photos purged after 90 days unless attached to a saved poster,
   /// generated media after 180 days with a warning.
   ///
-  /// M6 WRITES this and does not sweep it. The retention JOB is M9's, and giving it a column
-  /// to read now means M9 is a job rather than a job plus a migration. A null means "keep" —
-  /// the user-overridable case FR-SET-06 names.
+  /// M6 wrote this and did not sweep it; M9 is the sweep. M6's comment here said "a null means
+  /// keep", which M9 replaced with `retention` below — see docs/M9_PLAN.md C2. Overloading the
+  /// date made "kept" indistinguishable from "no policy was ever set", and threw away the
+  /// information needed to UN-keep.
   expiresAt DateTime? @map("expires_at")
+
+  /// FR-SET-06's "both user-overridable to keep" (M9).
+  ///
+  /// KEEP is never swept, whatever `expires_at` says. The date is left alone rather than
+  /// nulled, so switching back to AUTO restores the original deadline instead of inventing a
+  /// new one from today — which would quietly grant every kept-then-unkept asset another full
+  /// 90 or 180 days.
+  retention AssetRetention @default(AUTO)
+
+  /// FR-SET-06's "with a warning", and the only way that clause can be ENFORCED rather than
+  /// attempted (M9).
+  ///
+  /// The sweep refuses to purge generated media unless this is set and at least
+  /// RETENTION_WARNING_DAYS old. So a warning is not a notification the job sends and hopes
+  /// about — it is a precondition of deletion, and a deployment whose job was switched off for
+  /// a month still gives every user the full notice period before anything is destroyed.
+  ///
+  /// Source photos have no warning clause in FR-SET-06 and are swept on the date alone.
+  purgeWarnedAt DateTime? @map("purge_warned_at")
+
+  /// When the BYTES went. The row stays.
+  ///
+  /// Deleting the row would take the poster with it (`Poster.asset` is Cascade) and leave
+  /// `person.photo_key` pointing at nothing. Keeping it means the history of what existed
+  /// survives a retention purge, which is the difference between retention and deletion:
+  /// retention removes the media, account deletion removes the record too.
+  purgedAt DateTime? @map("purged_at")
 
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  person  Person?  @relation(fields: [personId], references: [id], onDelete: SetNull)
-  posters Poster[]
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person    Person?  @relation(fields: [personId], references: [id], onDelete: SetNull)
+  posters   Poster[] @relation("PosterOutput")
+  /// The posters this asset was the SOURCE PHOTO for (M9). See `Poster.sourceAsset`.
+  sourceFor Poster[] @relation("PosterSource")
 
   @@index([userId, createdAt])
   @@index([personId])
   /// Drives M9's retention sweep. Partial in spirit — most rows have a date.
   @@index([expiresAt])
+  /// The sweep's actual predicate: un-purged rows whose date has passed. `purged_at` leads
+  /// because it eliminates everything already dealt with, which is most of the table after a
+  /// deployment has been running a year.
+  @@index([purgedAt, expiresAt])
   @@map("asset")
 }
 
@@ -873,8 +934,15 @@ model ThemeCache {
 /// the cache-hit rate unmeasurable. That rate is the number §13 lists as a health metric,
 /// TBD-3 waits on, and FR-MON-03a's margin guard is built from.
 model Generation {
-  id     String @id @default(uuid(7))
-  userId String @map("user_id")
+  id     String  @id @default(uuid(7))
+  /**
+   * NULLABLE since M9, `SetNull` below, for the same reason and by the same decision as
+   * `ai_usage.user_id`: a `generation` row holds status, cache hit, latency, INR cost and a
+   * moderation verdict, and no user content whatsoever. Anonymised rather than erased so the
+   * cache-hit rate §13 lists as a health metric, TBD-3 waits on and FR-MON-03a is built from
+   * does not develop holes every time somebody deletes an account.
+   */
+  userId String? @map("user_id")
 
   /// Same vocabulary as `ai_usage.feature`: "poster" here, "gift_ideas" in M8.
   feature  String
@@ -921,7 +989,7 @@ model Generation {
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
   completedAt DateTime? @map("completed_at")
 
-  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   calls   AiUsage[]
   posters Poster[]
 
@@ -976,6 +1044,21 @@ model Poster {
   format  PosterFormat
   assetId String       @map("asset_id")
 
+  /// The SOURCE PHOTO this poster was composited from, or null when it was typographic
+  /// (FR-POS-06 / OD-11 — most people in a 600-person contact list have no photo).
+  ///
+  /// **Added in M9, because FR-SET-06's "unless attached to a saved poster" was otherwise not
+  /// expressible at all** (docs/M9_PLAN.md C3). `asset_id` above points at the OUTPUT png;
+  /// nothing recorded the input. The pipeline picked the person's most recent non-tombstoned
+  /// SOURCE_PHOTO and forgot which one, while every new upload tombstones the previous photo —
+  /// so "the person's current photo" is not the one a six-month-old poster was made from, and
+  /// the sweep had no way to tell which photos a poster depends on.
+  ///
+  /// M9's migration BACKFILLS this for every poster M6 made, by the same rule the pipeline
+  /// used: the most recent SOURCE_PHOTO for that person created at or before the poster. So
+  /// there is no heuristic at sweep time — the sweep asks for a recorded link and nothing else.
+  sourceAssetId String? @map("source_asset_id")
+
   /// FR-POS-08 / OD-9: free-tier posters carry subtle WishKaro attribution; Premium removes
   /// it. **Defaults to true** and M7 is what can make it false — M6 builds the switch and one
   /// function that answers "is this user premium" with `false`. Recorded per poster rather
@@ -987,9 +1070,15 @@ model Poster {
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  person     Person      @relation(fields: [personId], references: [id], onDelete: Cascade)
-  asset      Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  asset  Asset  @relation("PosterOutput", fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// `SetNull`, not `Cascade`: a retention purge removes the source photo's BYTES and keeps
+  /// its row, but if the row ever does go, the poster it produced must survive. A poster is
+  /// the thing the user made and may already have sent; the photo is an input to it.
+  sourceAsset Asset? @relation("PosterSource", fields: [sourceAssetId], references: [id], onDelete: SetNull)
+
   generation Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
@@ -1011,8 +1100,15 @@ model Poster {
 /// posters only would leave §10 rule 7 unmet for the feature that is already in users' hands
 /// and move the debt silently to M7.
 model ContentReport {
-  id     String @id @default(uuid(7))
-  userId String @map("user_id")
+  id     String  @id @default(uuid(7))
+  /**
+   * NULLABLE since M9, `SetNull` below. Dipen's decision, with the ledger.
+   * A content report is evidence about the CONTENT, not a record about the reporter. Erasing
+   * it on the reporter's own request would delete the record of a complaint — and Play's GenAI
+   * obligation is about having a mechanism that produces something durable, not a mailbox.
+   * The reporter's identity goes; what they reported stays.
+   */
+  userId String? @map("user_id")
 
   /// "poster" | "wish_draft". The same vocabulary as `ai_usage.feature`, so a report can be
   /// lined up against what it cost.
@@ -1038,7 +1134,7 @@ model ContentReport {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([userId, createdAt])

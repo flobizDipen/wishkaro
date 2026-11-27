@@ -12,6 +12,20 @@ data class GoogleSignInRequest(val idToken: String, val timezone: String? = null
 @Serializable
 data class RefreshRequest(val refreshToken: String)
 
+/**
+ * FR-AUTH-08's typed confirmation, sent to the server rather than only checked on screen.
+ * The email proves the caller knows WHOSE account this is — a token picked up elsewhere
+ * authenticates fine and does not.
+ */
+@Serializable
+data class DeleteAccountRequest(val confirmEmail: String)
+
+/**
+ * FR-SET-03's export, as the two files the user gets. Not `@Serializable` — these are the
+ * bytes themselves, carried to a save dialog and never parsed by this app.
+ */
+data class ExportFiles(val json: String, val peopleCsv: String)
+
 @Serializable
 data class SessionUserDto(
     val id: String,

@@ -570,19 +570,56 @@ The entire economic thesis rests on the cache-hit rate. Instrument it from day o
 
 ## 12. Privacy and compliance checklist
 
+*(Walked box by box in M9. Each tick below is traceable to a section of `docs/M9_VERIFY.md`;
+each box left unticked says what is missing rather than being left blank, because a blank box
+and a box nobody has looked at read identically. Several were already true before M9 started
+and are credited to the milestone that built them.)*
+
 - [ ] Privacy policy and terms published at a stable public URL before Play submission.
-- [ ] Play **Data Safety** form completed and truthful.
-- [ ] Prominent disclosure screen before the contacts permission.
-- [ ] In-app **and** public web account-deletion path (Play requirement).
-- [ ] Data export (DPDP access right).
-- [ ] Retention limits enforced by a scheduled job, not just stated in policy.
+      **BLOCKED on decision 1** (`M9_PLAN.md` §3): this project has no website and Railway's
+      hostname is generated rather than stable. Whether that means buying a domain is Dipen's.
+- [ ] Play **Data Safety** form completed and truthful. **Not M9** — the launch half, and it
+      needs a Play Console account that does not exist. Calendar time, not build time.
+- [ ] Prominent disclosure screen before the contacts permission. **Built and corrected in M9**
+      (`ContactsDisclosure`, 7 tests, `M9_VERIFY.md` §3). The screen has existed since M3 and
+      said *"It all happens on this phone"*, which is false of the contacts the user selects —
+      they sync to the server. Left unticked because definition-of-done item 7 asks for it on
+      the handset and the handset run needs a sign-in only Dipen can do.
+- [ ] In-app **and** public web account-deletion path (Play requirement). **The in-app half is
+      BUILT and proved in CI** — `DELETE /v1/account` with a typed confirmation, every row,
+      every blob object and every Redis key asserted absent by name against real Postgres, a
+      real blob store and real Redis (`M9_VERIFY.md` §9). The **public web half is not built**,
+      and that is decision 1: an unauthenticated deletion page is the most attackable surface
+      this app would have, and it is not going up before somebody decides what URL it lives at
+      and how it proves who is asking (`M9_VERIFY.md` §10). The box stays unticked until both
+      halves exist, because Play requires both.
+- [ ] Data export (DPDP access right). **Produced in M9**, not delivered: FR-SET-03 says "by
+      email link" and this app cannot send email. **BLOCKED on decision 2.** `M9_VERIFY.md` §4.
+- [x] Retention limits enforced by a scheduled job, not just stated in policy.
+      **M9.** `RetentionScheduler`, a daily repeatable BullMQ job; `retention.rules.ts` holds
+      FR-SET-06's three clauses; 14 rules tests at the exact boundaries and a DB-backed suite
+      against real Postgres and a real blob store, green in CI. `M9_VERIFY.md` §2.
 - [ ] Minor flag suppresses profiling, personalisation and affiliate tracking.
-- [ ] No behavioural advertising anywhere in the app.
-- [ ] GenAI content reporting mechanism (Play GenAI policy).
-- [ ] Input/output moderation on all generated content.
-- [ ] Affiliate relationship disclosed on the gift surface.
-- [ ] Music licensing cleared before any video ships.
-- [ ] Breach response note in `/docs`.
+      **Implemented on both prompt surfaces, and they do not agree with each other.** Drafting
+      keeps the relation and drops hobbies, likes and notes; poster copy drops the relation.
+      Both are defensible readings of FR-PPL-09's "beyond age band" and only one can be what
+      the Data Safety form says. M9 added the poster surface's first test — it had none — and
+      pinned the divergence rather than resolving it. `M9_VERIFY.md` §5. There is no affiliate
+      surface to track on (M8).
+- [x] No behavioural advertising anywhere in the app. **True by construction** — there is no
+      ad SDK, no tracking SDK and no analytics in the dependency tree of either target. The
+      grep is in `M9_VERIFY.md` §6.
+- [x] GenAI content reporting mechanism (Play GenAI policy). **M6** — `POST /v1/ai/report`.
+      M9 rebuilt nothing; the tick is M6's.
+- [x] Input/output moderation on all generated content. **M6, structurally, on both surfaces**
+      — with M6's own caveat carried rather than dropped: no classifier has ever been called,
+      because it needs the key that does not exist, and a generation nobody moderated records
+      `UNCHECKED` rather than claiming an approval. `M6_VERIFY.md` §4.2.
+- [ ] Affiliate relationship disclosed on the gift surface. **There is no gift surface** (M8).
+- [ ] Music licensing cleared before any video ships. **There is no video** (M10).
+- [x] Breach response note in `/docs`. **M9** — `docs/BREACH_RESPONSE.md`, written against
+      what the deployment actually contains, including a closing section naming the five
+      things that would make it better and do not exist.
 
 > ⚠️ **Hard external gate:** a personal Google Play developer account created after Nov 2023 must
 > run a **closed test with 12+ testers for 14 consecutive days** before it can apply for production

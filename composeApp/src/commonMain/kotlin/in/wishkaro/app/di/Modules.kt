@@ -64,6 +64,9 @@ val appModule = module {
             baseUrl = PlatformConfig.apiBaseUrl,
             tokens = get(),
             onSessionExpired = { get<AuthRepository>().onSessionExpired() },
+            // Distinct from the line above on purpose: an expired session keeps the local
+            // database and a deleted account must not (M9, FR-SET-04).
+            onAccountGone = { get<AuthRepository>().onAccountGone() },
         )
     } binds arrayOf(SyncApi::class, PlanApi::class)
 
@@ -140,6 +143,7 @@ val appModule = module {
             scheduler = get<ReminderScheduler>(),
             oem = get<OemBatteryHelper>(),
             importing = get(),
+            files = get<FileGateway>(),
             scope = get(),
         )
     }
