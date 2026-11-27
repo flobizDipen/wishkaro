@@ -7,6 +7,7 @@ import { DerivationModule } from './modules/people/derivation.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
+import { AccountModule } from './modules/account/account.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { DevicesModule } from './modules/devices/devices.module';
@@ -40,6 +41,7 @@ import { WishesModule } from './modules/wishes/wishes.module';
     MediaModule,
     ModerationModule,
     AuthModule,
+    AccountModule,
     PeopleModule,
     EventsModule,
     DevicesModule,
