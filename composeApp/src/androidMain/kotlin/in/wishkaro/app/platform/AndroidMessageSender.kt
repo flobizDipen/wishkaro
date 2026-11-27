@@ -110,6 +110,81 @@ class AndroidMessageSender(private val appContext: Context) : MessageSender {
             false
         }
 
+    /**
+     * A composited poster, handed to the share sheet (FR-POS-01, FR-WSH-05).
+     *
+     * Three steps and each one is load-bearing:
+     *
+     *  1. **Write to `cacheDir/posters/`.** An image cannot travel as an intent extra and a
+     *     `file://` URI has thrown `FileUriExposedException` since Android 7. The cache is
+     *     where it goes because a poster is disposable once sent: the system reclaims it
+     *     under pressure, so a picture of somebody's late father does not accumulate.
+     *  2. **One fixed filename, overwritten.** Not a timestamped one. The alternative fills
+     *     the cache with every poster a user has ever previewed, and nothing deletes them.
+     *  3. **FLAG_GRANT_READ_URI_PERMISSION.** The receiving app gets read access to that one
+     *     file for the life of the intent, which is why the provider is `exported="false"`
+     *     — the grant is the access path.
+     *
+     * Still opens and stops. FR-WSH-06 does not change because the payload is bytes.
+     */
+    override fun shareImage(bytes: ByteArray, mimeType: String, caption: String): Boolean =
+        shareImageTo(null, bytes, mimeType, caption)
+
+    override fun shareImageToWhatsApp(
+        bytes: ByteArray,
+        mimeType: String,
+        caption: String,
+    ): Boolean {
+        val target = when {
+            isInstalled(WHATSAPP) -> WHATSAPP
+            isInstalled(WHATSAPP_BUSINESS) -> WHATSAPP_BUSINESS
+            // The screen offers the sheet instead, rather than appearing to do nothing.
+            else -> return false
+        }
+        return shareImageTo(target, bytes, mimeType, caption)
+    }
+
+    private fun shareImageTo(
+        packageName: String?,
+        bytes: ByteArray,
+        mimeType: String,
+        caption: String,
+    ): Boolean {
+        val uri = try {
+            val dir = java.io.File(appContext.cacheDir, "posters").apply { mkdirs() }
+            val file = java.io.File(dir, "poster.png")
+            file.writeBytes(bytes)
+            androidx.core.content.FileProvider.getUriForFile(
+                appContext,
+                "${'$'}{appContext.packageName}.posters",
+                file,
+            )
+        } catch (cause: Exception) {
+            Log.w(TAG, "Could not stage the poster for sharing", cause)
+            return false
+        }
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            // The message beside the picture (FR-POS-01: "instead of, or alongside").
+            // WhatsApp uses it as the caption; the sheet passes it as the subject text.
+            if (caption.isNotBlank()) putExtra(Intent.EXTRA_TEXT, caption)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (packageName != null) setPackage(packageName)
+        }
+
+        return if (packageName != null) {
+            start(intent, "WhatsApp")
+        } else {
+            start(
+                Intent.createChooser(intent, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                "the share sheet",
+            )
+        }
+    }
+
     private fun isInstalled(packageName: String): Boolean =
         try {
             appContext.packageManager.getPackageInfo(packageName, 0)

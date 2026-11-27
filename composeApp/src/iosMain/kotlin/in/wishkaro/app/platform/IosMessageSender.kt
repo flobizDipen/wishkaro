@@ -16,4 +16,12 @@ class IosMessageSender : MessageSender {
     override fun share(text: String): Boolean = false
 
     override fun copyToClipboard(text: String): Boolean = false
+
+    override fun shareImage(bytes: ByteArray, mimeType: String, caption: String): Boolean = false
+
+    override fun shareImageToWhatsApp(
+        bytes: ByteArray,
+        mimeType: String,
+        caption: String,
+    ): Boolean = false
 }

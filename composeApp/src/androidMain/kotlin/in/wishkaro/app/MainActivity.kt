@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -54,6 +55,23 @@ class MainActivity : ComponentActivity() {
     private val createDocumentLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
             FilePickerBridge.pendingCreate.complete(uri)
+        }
+
+    /**
+     * The system photo picker (M6, FR-PPL-04).
+     *
+     * `PickVisualMedia` rather than `OpenDocument` with image MIME types, and rather than
+     * `READ_MEDIA_IMAGES`: it needs **no permission at all**, it is the gallery UI people
+     * expect when they are choosing a picture of somebody, and the app receives only the
+     * one image that was chosen. A media permission would hand this app the entire camera
+     * roll for the life of the grant, which would be the largest ask in the manifest for
+     * the smallest feature in the app.
+     */
+    private val photoPickerLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.PickVisualMedia(),
+        ) { uri ->
+            FilePickerBridge.pendingPhoto.complete(uri)
         }
 
     private val contactsPermissionLauncher =
@@ -109,6 +127,15 @@ class MainActivity : ComponentActivity() {
                     PermissionOutcome.DENIED_PERMANENTLY
                 else -> PermissionOutcome.DENIED
             }
+        }
+
+        FilePickerBridge.photoPicker = {
+            val deferred = CompletableDeferred<android.net.Uri?>()
+            FilePickerBridge.pendingPhoto.deferred = deferred
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+            deferred.await()
         }
 
         FilePickerBridge.opener = {

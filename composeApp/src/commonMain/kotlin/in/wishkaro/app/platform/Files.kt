@@ -25,4 +25,33 @@ interface FileGateway {
 
     /** True when the file was written. False covers both "cancelled" and "failed". */
     suspend fun saveCsv(suggestedName: String, content: String): Boolean
+
+    /**
+     * One photo of a person (FR-PPL-04, and FR-POS-01's "the person's unmodified photo").
+     *
+     * Through the SYSTEM photo picker, which is the whole reason this is a separate method
+     * rather than `pickSpreadsheet` with different MIME types. On Android 13+ the photo
+     * picker needs **no permission at all** — the user chooses one image and the app
+     * receives only that image, where `READ_MEDIA_IMAGES` would hand this app the entire
+     * camera roll for the life of the grant. This app reads one contact list under a
+     * rationale and otherwise asks for nothing; a gallery permission to put one face on one
+     * poster would be the largest ask in the manifest for the smallest feature.
+     *
+     * [PickedFile.name] carries the MIME type where the picker gave one, because the
+     * upload endpoint needs a content type and sniffing it from the bytes is the thing
+     * `media.controller.ts` already refuses to do.
+     *
+     * Null when the user backed out or the bytes could not be read.
+     */
+    suspend fun pickPhoto(): PickedPhoto?
+}
+
+/** A chosen image and the content type to upload it as. */
+data class PickedPhoto(val bytes: ByteArray, val mimeType: String) {
+    // ByteArray has identity equals, which would make the enclosing data class lie.
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            (other is PickedPhoto && mimeType == other.mimeType && bytes.size == other.bytes.size)
+
+    override fun hashCode(): Int = 31 * mimeType.hashCode() + bytes.size
 }

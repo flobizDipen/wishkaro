@@ -15,9 +15,19 @@ object FilePickerBridge {
     @Volatile
     var creator: (suspend (String) -> Uri?)? = null
 
+    /**
+     * The SYSTEM photo picker (M6). A third launcher rather than a MIME list on [opener],
+     * because it is a different contract: `PickVisualMedia` needs **no permission at all**
+     * on Android 13+ and returns exactly the one image the user chose, where
+     * `ACTION_OPEN_DOCUMENT` with image types would work but go through the documents UI
+     * rather than the gallery people expect for a photo.
+     */
+    @Volatile
+    var photoPicker: (suspend () -> Uri?)? = null
+
     val pendingOpen = CompletableDeferredHolder<Uri?>()
     val pendingCreate = CompletableDeferredHolder<Uri?>()
-
+    val pendingPhoto = CompletableDeferredHolder<Uri?>()
 }
 
 /**
@@ -79,11 +89,42 @@ class AndroidFileGateway(private val context: Context) : FileGateway {
         }
     }
 
+    /**
+     * One photo, through the system picker (FR-PPL-04, FR-POS-01).
+     *
+     * The content type comes from the `ContentResolver` rather than from the file name or
+     * from the bytes. The upload endpoint accepts exactly three types and sniffing the
+     * bytes is what `media.controller.ts` already refuses to do; a resolver type is what
+     * the platform itself believes the file is.
+     *
+     * Falls back to `image/jpeg` when the resolver has no opinion — the server re-encodes
+     * everything to JPEG anyway and decodes before it trusts the header, so a wrong guess
+     * is a 400 with a message rather than a stored file of the wrong kind.
+     */
+    override suspend fun pickPhoto(): PickedPhoto? {
+        val uri = FilePickerBridge.photoPicker?.invoke() ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: return@runCatching null
+                val type = context.contentResolver.getType(uri)
+                    ?.takeIf { it in ACCEPTED_IMAGE_TYPES }
+                    ?: "image/jpeg"
+                PickedPhoto(bytes, type)
+            }.getOrNull()
+        }
+    }
+
     private fun displayName(uri: Uri): String {
         val cursor = context.contentResolver.query(uri, null, null, null, null) ?: return "file"
         return cursor.use {
             val column = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (column >= 0 && it.moveToFirst()) it.getString(column) ?: "file" else "file"
         }
+    }
+
+    private companion object {
+        /** Exactly what `configure-app.ts` registers a raw parser for. */
+        val ACCEPTED_IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
 }

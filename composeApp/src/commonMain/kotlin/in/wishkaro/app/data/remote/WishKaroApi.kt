@@ -8,6 +8,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -134,6 +135,115 @@ class WishKaroApi(
                 setBody(body)
             }
         }.decode()
+
+
+    // ---- M6: posters (FR-POS-01..13) --------------------------------------------------
+
+    /**
+     * FR-POS-04's library, filtered for the occasion by the SERVER (FR-POS-13).
+     *
+     * The picker filters locally too, from `POSTER_THEMES`, so it renders with the radio
+     * off — which is what FR-POS-04's "ships with the app" is protecting. This call is the
+     * authority: a phone whose sync has not caught up has a person row that still says
+     * alive, and that window is where `454ea75` shipped. When the two disagree the app
+     * takes whichever is QUIETER, never whichever is fresher.
+     */
+    suspend fun posterThemes(personId: String, eventType: String): ThemesResponse =
+        authed { token ->
+            client.get("$baseUrl/v1/themes") {
+                header("Authorization", "Bearer $token")
+                parameter("personId", personId)
+                parameter("eventType", eventType)
+            }
+        }.decode()
+
+    /** FR-POS-09. Accepted and queued; poll [generationStatus]. */
+    suspend fun requestPoster(body: RequestPosterRequest): RequestPosterResponse =
+        authed { token ->
+            client.post("$baseUrl/v1/ai/poster") {
+                header("Authorization", "Bearer $token")
+                setBody(body)
+            }
+        }.decode()
+
+    suspend fun generationStatus(generationId: String): GenerationStatusResponse =
+        authed { token ->
+            client.get("$baseUrl/v1/ai/generation/$generationId") {
+                header("Authorization", "Bearer $token")
+            }
+        }.decode()
+
+    /** FR-HIS-01's "and the poster used", for a phone that has not cached the file. */
+    suspend fun postersFor(personId: String): PosterListResponse =
+        authed { token ->
+            client.get("$baseUrl/v1/posters") {
+                header("Authorization", "Bearer $token")
+                parameter("personId", personId)
+            }
+        }.decode()
+
+    /** FR-POS-12 / FR-SET-07. Both surfaces: a poster and a wish draft. */
+    suspend fun reportContent(body: ReportContentRequest) {
+        authed { token ->
+            client.post("$baseUrl/v1/ai/report") {
+                header("Authorization", "Bearer $token")
+                setBody(body)
+            }
+        }.decode<Map<String, String>>()
+    }
+
+    /**
+     * The person's photo (FR-PPL-04, FR-POS-01).
+     *
+     * Raw bytes with an image content type rather than multipart — the server registers a
+     * raw parser for exactly three image types and this is one request with one file and
+     * no fields.
+     */
+    suspend fun uploadPhoto(personId: String, bytes: ByteArray, contentType: String): PhotoUploadResponse =
+        authed { token ->
+            client.post("$baseUrl/v1/people/$personId/photo") {
+                header("Authorization", "Bearer $token")
+                contentType(ContentType.parse(contentType))
+                setBody(bytes)
+            }
+        }.decode()
+
+    /** The person's current photo URL, relative, or null. */
+    suspend fun photoUrl(personId: String): String? =
+        authed { token ->
+            client.get("$baseUrl/v1/people/$personId/photo") {
+                header("Authorization", "Bearer $token")
+            }
+        }.decode<PhotoUrlResponse>().url
+
+    /**
+     * The bytes behind a signed media URL.
+     *
+     * No Authorization header, deliberately: `MediaController` is `@Public` and the
+     * SIGNATURE is the authorisation, because the URL is also handed to WhatsApp, which
+     * fetches it as itself with no session of ours. Sending a bearer token to a route that
+     * ignores it would be a token in one more place for no benefit.
+     */
+    suspend fun downloadMedia(absoluteUrl: String): ByteArray = client.get(absoluteUrl).body()
+
+    suspend fun deletePhoto(personId: String) {
+        authed { token ->
+            client.delete("$baseUrl/v1/people/$personId/photo") {
+                header("Authorization", "Bearer $token")
+            }
+        }
+    }
+
+    /**
+     * A signed media path joined to this API's base URL.
+     *
+     * The server returns a RELATIVE path for the local blob store, because it does not know
+     * which host the phone reached it on and a Host header is not something to trust for a
+     * capability URL. An R2 deployment returns an absolute one. This handles both rather
+     * than making every call site remember which.
+     */
+    fun absoluteUrl(url: String): String =
+        if (url.startsWith("http://") || url.startsWith("https://")) url else "$baseUrl$url"
 
     override suspend fun syncPull(cursor: String?): SyncPullResponse =
         authed { token ->
