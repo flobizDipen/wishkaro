@@ -15,6 +15,7 @@ import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.domain.TraitKind
 import `in`.wishkaro.app.domain.Wish
 import `in`.wishkaro.app.domain.toCard
+import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.platform.NotificationGateway
 import `in`.wishkaro.app.platform.OemBatteryHelper
 import `in`.wishkaro.app.platform.OemHelperOutcome
@@ -93,6 +94,14 @@ data class PeopleFilter(
  * is left is data, the actions that write it, and [navEvents], which is a one-shot channel
  * rather than a value anybody can read twice.
  */
+/**
+ * Which privacy action is running, as one value rather than two booleans.
+ *
+ * Two booleans permit a state that must not exist — exporting AND deleting at once — and the
+ * second of those would be a request racing an account being destroyed underneath it.
+ */
+enum class PrivacyBusy { IDLE, EXPORTING, DELETING }
+
 class AppStore(
     private val auth: AuthRepository,
     private val people: PeopleRepository,
@@ -102,6 +111,8 @@ class AppStore(
     private val scheduler: ReminderScheduler,
     private val oem: OemBatteryHelper,
     private val importing: ImportStore,
+    /** M9, FR-SET-03: the export goes to the user's own save dialog, never a path we pick. */
+    private val files: FileGateway,
     private val scope: CoroutineScope,
     private val now: () -> Instant = Clock.System::now,
 ) {
@@ -467,6 +478,88 @@ class AppStore(
             plan.refresh()
             refreshReliability()
             _busy.value = false
+        }
+    }
+
+    // -----------------------------------------------------------------------------------
+    // M9 — FR-SET-03 (export) and FR-SET-04 (delete my account)
+    // -----------------------------------------------------------------------------------
+
+    private val _privacyBusy = MutableStateFlow(PrivacyBusy.IDLE)
+    val privacyBusy: StateFlow<PrivacyBusy> = _privacyBusy.asStateFlow()
+
+    private val _privacyMessage = MutableStateFlow<String?>(null)
+    val privacyMessage: StateFlow<String?> = _privacyMessage.asStateFlow()
+
+    fun dismissPrivacyMessage() {
+        _privacyMessage.value = null
+    }
+
+    /**
+     * FR-SET-03. Fetches the export and hands it to the platform's own save dialog, which is
+     * where M3's corrected CSV already goes (`FileGateway`) — the user chooses the
+     * destination, so a file holding 566 people's phone numbers is not dropped somewhere this
+     * app picked.
+     *
+     * **How the export reaches the user beyond this is decision 2 in docs/M9_PLAN.md**:
+     * FR-SET-03 says "delivered by email link" and this app cannot send email at all. Saving
+     * the file the signed-in app already fetched needs nothing new; it is also the weaker
+     * reading, because it is useless to somebody who has already uninstalled.
+     */
+    fun exportMyData() {
+        if (_privacyBusy.value != PrivacyBusy.IDLE) return
+        scope.launch {
+            _privacyBusy.value = PrivacyBusy.EXPORTING
+            _privacyMessage.value = null
+            val fetched = auth.fetchExport()
+            val message = fetched.fold(
+                onSuccess = { files ->
+                    /**
+                     * Two saves, two dialogs, in a fixed order — the JSON first because it is
+                     * the lossless one. Cancelling the second is not a failure: the user got
+                     * the file that holds everything.
+                     *
+                     * The CSV is BIRTHDAYS ONLY and the server says so in the file; it is the
+                     * one that re-imports through M3's importer without a mapping change, and
+                     * M9_PLAN C11 is why it cannot carry anything else.
+                     */
+                    val savedJson = this@AppStore.files.saveTextFile("wishkaro-export.json", files.json)
+                    val savedCsv = this@AppStore.files.saveCsv("wishkaro-people.csv", files.peopleCsv)
+                    when {
+                        savedJson && savedCsv -> "Saved both files."
+                        savedJson || savedCsv -> "Saved one file; the other was cancelled."
+                        else -> "Export cancelled."
+                    }
+                },
+                onFailure = { "Could not prepare your export. Please try again." },
+            )
+            _privacyBusy.value = PrivacyBusy.IDLE
+            _privacyMessage.value = message
+        }
+    }
+
+    /**
+     * FR-SET-04 / FR-AUTH-08. Irreversible.
+     *
+     * The local wipe is `AuthRepository`'s, after the server confirms — never before. The
+     * navigation reset is the same one sign-out does and for the same reason: a back stack or
+     * a held `focusedPersonId` carrying a record out of an account that no longer exists is
+     * the same leak as a back stack carrying it into the next user's session.
+     */
+    fun deleteAccount(confirmEmail: String) {
+        if (_privacyBusy.value != PrivacyBusy.IDLE) return
+        scope.launch {
+            _privacyBusy.value = PrivacyBusy.DELETING
+            _privacyMessage.value = null
+            val result = auth.deleteAccount(confirmEmail)
+            _privacyBusy.value = PrivacyBusy.IDLE
+            result.onSuccess {
+                _focusedPersonId.value = null
+                pendingDeepLinkPersonId = null
+                navigate(NavEvent.ResetAll)
+            }.onFailure {
+                _privacyMessage.value = "Your account was not deleted. Please try again."
+            }
         }
     }
 

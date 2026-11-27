@@ -54,6 +54,8 @@ import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
 import `in`.wishkaro.app.ui.person.EventEditorScreen
 import `in`.wishkaro.app.ui.person.PersonDetailScreen
+import `in`.wishkaro.app.ui.PrivacyBusy
+import `in`.wishkaro.app.ui.settings.PrivacyState
 import `in`.wishkaro.app.ui.settings.SettingsScreen
 import `in`.wishkaro.app.ui.signin.SignInScreen
 import `in`.wishkaro.app.ui.theme.WishKaroTheme
@@ -454,6 +456,9 @@ private fun wishKaroEntryProvider(
         val settings by store.settings.collectAsState()
         val reliability by store.reliability.collectAsState()
         val selfTest by store.selfTest.collectAsState()
+        val authState by store.authState.collectAsState()
+        val privacyBusy by store.privacyBusy.collectAsState()
+        val privacyMessage by store.privacyMessage.collectAsState()
         SettingsScreen(
             settings = settings,
             reliability = reliability,
@@ -464,6 +469,32 @@ private fun wishKaroEntryProvider(
             onDismissTest = store::dismissSelfTest,
             onOpenBatterySettings = store::openBatterySettings,
             onRequestExactAlarms = store::requestExactAlarms,
+            /**
+             * M9 — FR-SET-03, FR-SET-04, FR-SET-05.
+             *
+             * Null when nobody is signed in, so the section is ABSENT rather than disabled:
+             * there is no account to export or delete, and a greyed-out "Delete my account"
+             * is a control that tells the user the app is confused.
+             *
+             * The email comes from the session, which is also what the server compares the
+             * typed confirmation against — so the two cannot disagree about whose account
+             * this is.
+             */
+            privacy = (authState as? AuthState.SignedIn)?.email?.let { email ->
+                PrivacyState(
+                    email = email,
+                    exporting = privacyBusy == PrivacyBusy.EXPORTING,
+                    deleting = privacyBusy == PrivacyBusy.DELETING,
+                    message = privacyMessage,
+                    onExport = store::exportMyData,
+                    onDeleteAccount = store::deleteAccount,
+                    // FR-SET-05's links are deliberately absent until decision 1 in
+                    // docs/M9_PLAN.md settles where the pages live. A button that opens
+                    // nothing tells a Play reviewer the requirement is met.
+                    onOpenPrivacyPolicy = null,
+                    onOpenTerms = null,
+                )
+            },
             modifier = inner,
         )
     }

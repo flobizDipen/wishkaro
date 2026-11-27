@@ -17,6 +17,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
@@ -44,11 +45,30 @@ class ApiException(
  * more elaborate hides the failure mode that actually matters — a refresh token that has been
  * revoked, which must sign the user out rather than loop.
  */
+/**
+ * The server's code for "this account no longer exists" — `AuthService` answers it from both
+ * the access-token check and the refresh path, so the client has one string to match rather
+ * than two.
+ */
+const val USER_GONE: String = "USER_GONE"
+
 class WishKaroApi(
     private val baseUrl: String,
     private val tokens: TokenStore,
     engine: HttpClientEngine? = null,
     private val onSessionExpired: suspend () -> Unit = {},
+    /**
+     * The account is GONE, not merely signed out (M9, FR-SET-04).
+     *
+     * A different callback from [onSessionExpired] because the two need different responses
+     * and only one of them is reversible. An expired session means sign in again and your
+     * data is still here; a deleted account means there is nothing to sign in to, and the
+     * local database must go with it — otherwise a phone keeps showing 566 people, offline,
+     * for ever, after their owner asked for them to be erased. FR-AUTH-07 already establishes
+     * that losing a session wipes local data; the web deletion path makes that reachable
+     * without the user ever opening the app. `docs/M9_PLAN.md` C9.
+     */
+    private val onAccountGone: suspend () -> Unit = {},
 ) : SyncApi, PlanApi {
     /** Serialises token rotation. See [renewAccessToken] for why this is load-bearing. */
     private val refreshMutex = Mutex()
@@ -281,6 +301,44 @@ class WishKaroApi(
             }
         }.decode()
 
+    /**
+     * FR-SET-03's two artifacts: the lossless JSON and the CSV that re-imports.
+     *
+     * Fetched as TEXT, not parsed. The app is a pipe here — it hands the bytes to the user's
+     * own save dialog and keeps no copy. Parsing an export into objects only to serialise them
+     * again would mean this client had an opinion about the format, and then two things would
+     * have to agree about it.
+     */
+    suspend fun fetchExport(): ExportFiles {
+        val json = authed { token ->
+            client.get("$baseUrl/v1/account/export") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
+        }
+        val csv = authed { token ->
+            client.get("$baseUrl/v1/account/export.csv?dataset=people") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
+        }
+        if (!json.status.isSuccess()) json.decode<Unit>()
+        if (!csv.status.isSuccess()) csv.decode<Unit>()
+        return ExportFiles(json = json.bodyAsText(), peopleCsv = csv.bodyAsText())
+    }
+
+    /**
+     * `DELETE /v1/account` (FR-SET-04). Irreversible, and the server re-checks the typed
+     * confirmation rather than trusting that a screen did.
+     */
+    suspend fun deleteAccount(confirmEmail: String) {
+        val response = authed { token ->
+            client.delete("$baseUrl/v1/account") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                setBody(DeleteAccountRequest(confirmEmail))
+            }
+        }
+        if (!response.status.isSuccess()) response.decode<Unit>()
+    }
+
     /** Runs [call] with the current access token, refreshing once on a 401. */
     private suspend fun authed(call: suspend (String) -> HttpResponse): HttpResponse {
         val access = tokens.accessToken()
@@ -288,6 +346,20 @@ class WishKaroApi(
 
         val response = call(access)
         if (response.status != HttpStatusCode.Unauthorized) return response
+
+        /**
+         * Read the code BEFORE refreshing, because after a hard delete the refresh token row
+         * is gone too — so `refresh()` would answer INVALID_REFRESH_TOKEN and the account
+         * being deleted would be indistinguishable from an ordinary expired session.
+         *
+         * The server answers USER_GONE from the auth guard itself (M9 closed that gap), so
+         * this is the one place where "your account no longer exists" is actually legible.
+         * Consuming the body is safe: this response is being discarded either way.
+         */
+        if (response.errorCode() == USER_GONE) {
+            onAccountGone()
+            throw ApiException(401, USER_GONE, "This account no longer exists")
+        }
 
         val renewed = renewAccessToken(usedToken = access)
         return call(renewed)
@@ -321,15 +393,32 @@ class WishKaroApi(
             throw ApiException(401, "NO_SESSION", "Not signed in")
         }
 
-        val renewed = runCatching { refresh(refreshToken) }.getOrElse {
+        val renewed = runCatching { refresh(refreshToken) }.getOrElse { cause ->
             // The refresh token is gone or already used. Looping would never recover.
             tokens.clear()
+            if ((cause as? ApiException)?.code == USER_GONE) {
+                // The other route to it: the access token was still inside its TTL when the
+                // account was deleted, so the first call succeeded and only the refresh found
+                // out. Same outcome, reached a moment later.
+                onAccountGone()
+                throw ApiException(401, USER_GONE, "This account no longer exists")
+            }
             onSessionExpired()
             throw ApiException(401, "SESSION_EXPIRED", "Please sign in again")
         }
         tokens.save(renewed.accessToken, renewed.refreshToken)
         renewed.accessToken
     }
+
+    /**
+     * The `code` out of this app's one error envelope, or null when the body is not one.
+     *
+     * Deliberately total: a 401 from a proxy, a gateway or a half-deployed server is not JSON
+     * at all, and a parse failure there must read as "no code" rather than as an exception
+     * thrown from inside the retry path.
+     */
+    private suspend fun HttpResponse.errorCode(): String? =
+        runCatching { json.decodeFromString<ApiErrorBody>(bodyAsText()).error.code }.getOrNull()
 
     private suspend inline fun <reified T> HttpResponse.decode(): T {
         if (status.isSuccess()) return body()

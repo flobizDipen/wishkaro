@@ -89,6 +89,18 @@ class AndroidFileGateway(private val context: Context) : FileGateway {
         }
     }
 
+    /** FR-SET-03's JSON export. The same picker, and deliberately no BOM — see the interface. */
+    override suspend fun saveTextFile(suggestedName: String, content: String): Boolean {
+        val uri = FilePickerBridge.creator?.invoke(suggestedName) ?: return false
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(content.toByteArray())
+                } != null
+            }.getOrDefault(false)
+        }
+    }
+
     /**
      * One photo, through the system picker (FR-PPL-04, FR-POS-01).
      *

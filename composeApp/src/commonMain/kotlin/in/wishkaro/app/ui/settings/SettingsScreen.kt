@@ -17,12 +17,18 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.QuietHours
@@ -30,6 +36,7 @@ import `in`.wishkaro.app.domain.ReminderSettings
 import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.ui.ReliabilityState
 import `in`.wishkaro.app.ui.SelfTestState
+import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 import `in`.wishkaro.app.ui.components.SectionHeader
 
 /**
@@ -50,6 +57,8 @@ fun SettingsScreen(
     onDismissTest: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onRequestExactAlarms: () -> Unit,
+    /** M9. The privacy section is absent rather than disabled when nobody is signed in. */
+    privacy: PrivacyState? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -201,8 +210,169 @@ fun SettingsScreen(
             }
         }
 
+        // ---- Privacy and your data (FR-SET-03, FR-SET-04, FR-SET-05) -------------------
+        //
+        // LAST, and that is deliberate. FR-AUTH-08 wants deletion reachable in three taps from
+        // Settings, which this is — Settings, scroll, Delete — and a destructive action placed
+        // between two toggles is one somebody reaches by accident.
+        if (privacy != null) {
+            item { SectionHeader("Your data") }
+            item { PrivacySection(privacy) }
+        }
+
         item { Spacer(Modifier.height(32.dp)) }
     }
+}
+
+/**
+ * Everything FR-SET-03, FR-SET-04 and FR-SET-05 put on this screen.
+ *
+ * A state object rather than nine parameters on `SettingsScreen`, because the reminder half of
+ * this screen and the privacy half have nothing to do with each other and threading one
+ * through the other is how a screen becomes impossible to change.
+ */
+data class PrivacyState(
+    /** The address the user must type to confirm deletion (FR-AUTH-08). */
+    val email: String,
+    val exporting: Boolean = false,
+    val deleting: Boolean = false,
+    /** Shown after an export is saved, or when either action failed. */
+    val message: String? = null,
+    val onExport: () -> Unit = {},
+    val onDeleteAccount: (String) -> Unit = {},
+    val onOpenPrivacyPolicy: (() -> Unit)? = null,
+    val onOpenTerms: (() -> Unit)? = null,
+)
+
+@Composable
+private fun PrivacySection(privacy: PrivacyState) {
+    var confirming by rememberSaveable { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Export your data as a file you can keep, or delete this account and everything " +
+                "in it.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+
+        OutlinedButton(
+            onClick = privacy.onExport,
+            enabled = !privacy.exporting && !privacy.deleting,
+            modifier = Modifier.fillMaxWidth().testTag("settings_export"),
+        ) { Text(if (privacy.exporting) "Preparing your file…" else "Export my data") }
+
+        /**
+         * FR-SET-05: reachable in-app. Absent rather than disabled when there is no URL to
+         * open — which is where this stands until decision 1 in docs/M9_PLAN.md settles where
+         * the pages live. A button that opens nothing is worse than no button: it tells a Play
+         * reviewer the requirement is met.
+         */
+        privacy.onOpenPrivacyPolicy?.let { open ->
+            TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Privacy policy") }
+        }
+        privacy.onOpenTerms?.let { open ->
+            TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Terms") }
+        }
+
+        privacy.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
+        TextButton(
+            onClick = { confirming = true },
+            enabled = !privacy.deleting,
+            modifier = Modifier.fillMaxWidth().testTag("settings_delete_account"),
+        ) {
+            Text(
+                "Delete my account",
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+
+    if (confirming) {
+        DeleteAccountDialog(
+            email = privacy.email,
+            busy = privacy.deleting,
+            onDismiss = { confirming = false },
+            onConfirm = { typed ->
+                confirming = false
+                privacy.onDeleteAccount(typed)
+            },
+        )
+    }
+}
+
+/**
+ * FR-AUTH-08: *"irreversible, confirmed by typing"*, and FR-SET-04's "explicit confirmation".
+ *
+ * Typing the address rather than ticking a box, because the whole point is that the action
+ * cannot be taken by muscle memory. The list of what goes is specific — a dialog that says
+ * "this cannot be undone" and nothing else leaves the user to imagine the scope, and people
+ * imagine it smaller than it is.
+ */
+@Composable
+private fun DeleteAccountDialog(
+    email: String,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var typed by rememberSaveable { mutableStateOf("") }
+    val matches = typed.trim().equals(email, ignoreCase = true)
+
+    AdaptiveDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Delete your account?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("This cannot be undone. Deleting your account removes:")
+                Text(
+                    "\u2022  every person and every date you have added\n" +
+                        "\u2022  every wish you have recorded and every poster you have made\n" +
+                        "\u2022  every photo you have uploaded\n" +
+                        "\u2022  anyone you deleted recently and could still have restored\n" +
+                        "\u2022  this phone's reminders, immediately",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                /**
+                 * Said plainly, because the policy page has to say the same thing and the two
+                 * must not disagree. Dipen's decision 3: the ledger is anonymised, not erased.
+                 */
+                Text(
+                    "We keep a record of what our AI features cost us to run. It holds no " +
+                        "names, no messages and nothing you typed, and after this it is not " +
+                        "linked to you.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("Type $email to confirm.")
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    singleLine = true,
+                    enabled = !busy,
+                    label = { Text("Your email address") },
+                    modifier = Modifier.fillMaxWidth().testTag("delete_confirm_field"),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(typed.trim()) },
+                // Both: matching the address AND not already running. A second tap while the
+                // first request is in flight would send a second deletion for an account the
+                // first one is in the middle of removing.
+                enabled = matches && !busy,
+                modifier = Modifier.testTag("delete_confirm_button"),
+            ) {
+                Text(
+                    if (busy) "Deleting…" else "Delete everything",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Keep my account") }
+        },
+    )
 }
 
 @Composable
