@@ -1,6 +1,9 @@
 # M6 Verification — AI Posters
 
-> Branch `feat/m6-ai-posters`, cut from `main` at `52e842a`.
+> Branch `feat/m6-ai-posters`, cut from `main` at `52e842a`, **merged as `99d345b` on
+> 2026-11-27** (PR #8). Verified here rather than taken on trust: `origin/main` is
+> `99d345b` with parents `52e842a` and `39dd4c1`, and both CI workflows report success
+> on exactly `39dd4c1`, the head that was merged.
 >
 > **Read §1 before the table.** Three kinds of claim are kept apart here, because M5 was
 > right to separate them and because rounding one up is how a milestone closes an item it
@@ -349,8 +352,17 @@ path and nothing on the common path.
 
 **Definition-of-done item 5 is the one that matters and it is measured.** A second request
 for the same key came back `cacheHit=true` in 85ms, wrote no `ai_usage` row, consumed no
-Redis rate-limit slot and incremented `hit_count`. That is the number TBD-3, §13's health
-metric and FR-MON-03a are all waiting on, and it is the one only M6 can produce.
+Redis rate-limit slot and incremented `hit_count`.
+
+**That paragraph described a code path that no longer exists, and saying so is the point of
+this document.** Two later changes removed it. §0.7 stopped the library placeholder being
+written to `theme_cache` at all — it was poisoning the generated-artwork key — so with
+`IMAGE_PROVIDER=fake`, the committed default, *nothing is ever cached and there is never a
+hit to measure*. And C8 put the copy call on its own rail, so a hit now makes a text call.
+The 85ms figure was a real measurement of a real path in the code as it then stood; it is
+not evidence about the code that merged. The cache-hit property is still proved — by the
+DB-backed test on CI, with a provider that reports live — but the **latency** of a hit is
+now unmeasured. See §4.7.
 
 **The device half ran, and it found two more bugs.** Dipen unlocked the Pixel 9a and signed
 in; the whole path then worked from the handset — the solemn picker offering no celebratory
@@ -381,7 +393,7 @@ not merge them.
 | 3 | All three formats produced and inspected at full size | **PROVED** | 1080×1920, 1080×1080 and 1200×630 produced through the API and read back off disk at those exact dimensions. I opened the STATUS and LINK ones; §0.1 is what that found |
 | 4 | The no-photo path produces something good enough to send | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** The typographic template centres, wraps, keeps a rule above the headline and carries the attribution — and after §0.1 it is legible, which it was not. **"Good enough": BLOCKED on TBD-5.** That sentence is a judgement and the artwork is a placeholder gradient by design |
 | 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED for the image call; the wording needs amending — C8** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. That test **passed on CI** (it cannot run on this machine — §10). Then C8 (§0.7b) changed the contract on Dipen's instruction: copy runs on its own rail, so a hit may make one text call and FR-POS-01's step (a) keeps happening for everyone. The test now asserts the property the item exists for — **a hit pays for no image and takes no image slot** — and that the copy did run. The item's literal wording is stale and is Dipen's to amend |
-| 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + store + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about |
+| 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about. **FR-POS-09's other half — p95 under 2s on a HIT — has no definition-of-done item at all and is also unmeasured; §4.7 gives it the home it never had, and records that C8 made it harder, not easier** |
 | 7 | A ledger row per generation with a non-zero **measured** INR, and image pricing in `pricing.ts` | **PARTIAL / BLOCKED** | **Pricing: PROVED present**, per image and per `(model, quality, size)`. **One row per call: PROVED** — including for a REFUSED image, where the call happened and produced nothing. **Non-zero measured: BLOCKED.** The fake is priced at ₹0 and the published rates in `pricing.ts` are unverified; TBD-1 is open. Arithmetic from a rate table is not a measurement, and M5 was right to refuse to call one the other |
 | 8 | The global spend cap observed degrading a poster request to cached themes | **PROVED** | Ledger seeded to ₹250 against a ₹200 cap; the request came back `SUCCEEDED`, `degraded=true`, with a poster, no `ai_usage` row and no rate-limit slot consumed — being capped is our budget, not the user's allowance |
 | 9 | Moderation on both surfaces, and "Report this content" reaching the server | **PARTIAL / BLOCKED** | **The report: PROVED from the app.** Tapped "Report this content" on the solemn poster on the handset, chose "Insensitive for this occasion", and a `content_report` row landed on the server — `feature=poster`, `reason=INSENSITIVE`, tied to the poster id, `detail` null and nothing logged. **Mechanism: PROVED.** A blocked generation comes back `BLOCKED` (not `FAILED`), stores `moderation=BLOCKED` and writes no poster; input moderation is wired into the wish draft path too. **A live verdict: BLOCKED** — the classifier needs the same missing key |
@@ -402,9 +414,12 @@ there.
    `sentiment: SOLEMN` and three solemn themes, **while their person row still said alive**.
 3. `POST /v1/ai/poster` with `ph-confetti` for the stale person → **400 THEME_NOT_ALLOWED**.
 4. A legitimate solemn request → `SUCCEEDED`, `cacheHit=false`, 136ms, theme `ph-stillwater`,
-   family `SOLEMN`.
+   family `SOLEMN`. (136ms is the library path: render, composite, store. Not a model call.)
 5. The same request again → `cacheHit=true`, 85ms. Counted `ai_usage` rows (0, unchanged) and
-   scanned Redis for `poster:*` (none). This is item 5.
+   scanned Redis for `poster:*` (none). This was item 5 **as the code then stood** — the
+   placeholder was being cached, which §0.7 later removed as a defect, so this exact
+   sequence cannot be reproduced on the merged code. Item 5's property is now proved by
+   the DB test on CI instead; the latency number is not reproducible and §4.7 says so.
 6. All three formats, read off disk: 1080×1920, 1080×1080, 1200×630.
 7. **Opened the PNGs.** §0.1.
 8. Fixed the fitting, re-rendered, opened them again. "Remembering / Rohan Deshpande" on two
@@ -491,8 +506,53 @@ So "sent" means "handed over and stopped", exactly as in M5. The last tap is Dip
 is ephemeral, so **every poster and every cached theme is lost on redeploy** — which turns
 FR-POS-03's "generated once, served thousands of times" into "generated once per deploy".
 That is a hole in the deployment, not in the code, and `MediaModule` logs it at boot. The
-85ms hit is real; it has not been shown to survive a deploy, because no deploy has happened.
+85ms hit was real for the code as it then stood (§1), and is not reproducible on the
+merged code; durability across a deploy was never shown either way, because no deploy has
+happened.
 R2 credentials are item 6 in `M6_PLAN.md` §9.
+
+### 4.7 FR-POS-09's cache-HIT latency target has never had a home, and C8 made it worse
+
+FR-POS-09 names **two** targets: "p95 under 15 seconds for a cache miss, **under 2 seconds
+for a cache hit**". The definition-of-done list covers only the first, as item 6. The
+second has no item, and until now no line in this document — so a requirement with a
+number in it was being carried by nothing at all. That is the §A failure one category
+along: not a rule missed for having no id, but a *clause* missed inside a rule that was
+otherwise honoured.
+
+**Status: UNMEASURED, and no longer plausibly comfortable.**
+
+Three things have to be true at once for it to be measurable, and none of them is:
+
+1. **A hit requires generated artwork.** Since §0.7 the library placeholder is not cached,
+   so `theme_cache` is only ever written by a successful `gpt-image-1` call. With no key
+   there is no cached row, so there is no hit — on the merged code, the hit path cannot be
+   entered at all without the key.
+2. **A hit now makes a model call.** C8 put copy on its own rail, deliberately, so that
+   FR-POS-01's step (a) happens for everyone rather than only the first person on each
+   key. A structured text call is typically one to three seconds. Against a 2-second p95
+   that is not a rounding error — it is most or all of the budget.
+3. **The old number does not transfer.** The 85ms in §1 was measured before both changes,
+   against a placeholder row that the code no longer writes and with no copy call in the
+   path. It is not evidence about the merged code.
+
+**What would measure it.** The `OPENAI_API_KEY`, then: generate one poster on a key to warm
+it, and time fifty subsequent requests on that same key end to end — accept to poster — at
+p95, with `WISH_PROVIDER` live. That is the only configuration in which a cache hit exists
+*and* behaves the way a user will experience it.
+
+**What to do if it misses.** Not reported as a defect here, because it is a product
+decision of the same kind C8 was. The options would be to drop the hit target to something
+achievable with a live copy call, to cache copy per (person, occasion) so a repeat for the
+same person skips it, or to let the app render the template immediately and swap in the
+model's words when they arrive. Each changes what the user sees; none is a session's to
+pick.
+
+**This is the cost of C8, stated plainly.** Dipen chose the rail over one gate and I think
+that is right for the product — step (a) happening for everyone is worth more than a fast
+template. But it moved the hit-latency target from "comfortably met on the measured path"
+to "unknown, and plausibly missed", and that belongs on the record rather than in the
+reasoning that produced it.
 
 ### 4.6 Still carried forward, named rather than quietly dropped
 
