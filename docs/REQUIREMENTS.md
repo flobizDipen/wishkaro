@@ -2,6 +2,9 @@
 
 > **Status:** v1.0 — **M0 through M6 merged, and M9 merged UNFINISHED.** M9 is the privacy half (export, deletion, retention, the contacts disclosure); it went in on Dipen's explicit instruction with **six of ten definition-of-done items NOT MET**, four of them waiting on two decisions that are still open and two on a device sign-in. **Green CI on `main` does not mean this milestone is finished** — see the M9 row in §16 and `docs/M9_VERIFY.md`. M5 merged **incomplete by its own definition of done**: four items are blocked on an AI provider key that was never configured. **§10 hard rule 7 (moderation) was knowingly unmet at M5 and is now structurally met on both surfaces by M6 — and exercised on neither, because the classifier needs the same missing key.** See the M5 and M6 rows in §16, `docs/M5_VERIFY.md` and `docs/M6_VERIFY.md`.
 > **Date:** 2026-11-26
+> **Open decisions and unfinished work:** `docs/OPEN_DECISIONS.md` — the single index of what is
+> outstanding across every milestone. The `*_VERIFY.md` documents stay authoritative for detail;
+> that file exists so nobody has to read six of them to learn what is still owed.
 > **Owner:** Dipen Jansari (solo / personal project)
 > **Package id:** `in.wishkaro.app` (Android `applicationId` + iOS bundle id)
 > **Repo:** single **public** GitHub monorepo — `github.com/flobizDipen/wishkaro`.
