@@ -25,6 +25,9 @@ androidx-activity = "1.10.1"
 # Same reason as androidx-activity: 1.19.0 requires AGP 9.1+ and compileSdk 37.
 androidx-core = "1.16.0"
 androidx-security-crypto = "1.1.0"
+# M7. The splash screen compat library, required because minSdk is 26 and the platform
+# SplashScreen API lands in 31. 1.0.1 is the current stable and needs no AGP 9.
+androidx-splashscreen = "1.0.1"
 # WorkManager is the NET under AlarmManager, not a replacement for it: it cannot express an
 # exact time, and a 09:00 reminder arriving at 14:00 is the failure M2 exists to prevent.
 # Its job is to re-arm alarms a force-stop or a reboot destroyed. See docs/M2_PLAN.md §5.
@@ -122,6 +125,7 @@ sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", versi
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidx-security-crypto" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "androidx-splashscreen" }
 androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
 androidx-glance-material3 = { module = "androidx.glance:glance-material3", version.ref = "glance" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "androidx-work" }

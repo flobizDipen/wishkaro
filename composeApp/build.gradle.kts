@@ -169,6 +169,7 @@ kotlin {
             implementation(libs.sqldelight.android.driver)
 
             implementation(libs.androidx.security.crypto)
+            implementation(libs.androidx.core.splashscreen)
             implementation(libs.androidx.work.runtime)
             implementation(libs.androidx.glance.appwidget)
             implementation(libs.androidx.glance.material3)
@@ -230,6 +231,19 @@ android {
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
+}
+
+/**
+ * Where the generated `Res` class lands (M7, the bundled fonts).
+ *
+ * NOT `in.wishkaro.app.resources`, for exactly the reason the SQLDelight block below gives:
+ * `in` is a Kotlin keyword and generated code would need backticks the generator does not
+ * always emit. The app id and the Android namespace are unaffected — this names a generated
+ * class only.
+ */
+compose.resources {
+    packageOfResClass = "wishkaro.resources"
+    publicResClass = true
 }
 
 sqldelight {
