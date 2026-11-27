@@ -83,10 +83,21 @@ describe('the headline stays inside the canvas — measured, not estimated', () 
     }
   }
 
-  it('does not shrink a headline that already fits', async () => {
-    // The fix must not quietly make every poster smaller. A short name keeps the
-    // layout's own size.
-    const fitted = await fitText('Happy Birthday, Asha', {
+  it('does not shrink a headline that comfortably fits', async () => {
+    /**
+     * The fix must not quietly make every poster smaller.
+     *
+     * **The headline here is short on purpose, and the first version's was not.** It said
+     * "Happy Birthday, Asha" and asserted exactly 78 — which held on macOS and failed on
+     * CI at 76, because on DejaVu that string is a couple of pixels over 920 and shrinking
+     * it is the CORRECT answer. The test's premise was false on the font the server
+     * actually uses, which is the same mistake as §0.6 one level up: a number pinned to
+     * whichever font the machine happens to have.
+     *
+     * A string with room to spare on any plausible font keeps the assertion exact and
+     * makes the premise true everywhere.
+     */
+    const fitted = await fitText('Happy Birthday', {
       maxWidth: 920,
       nominalSize: 78,
       maxLines: 2,
@@ -97,15 +108,23 @@ describe('the headline stays inside the canvas — measured, not estimated', () 
   });
 
   it('wraps before it shrinks', async () => {
-    // Two lines at 78px reads better than one at 38px on a phone held at arm's length.
-    const fitted = await fitText('Remembering Rohan Deshpande', {
-      maxWidth: 920,
-      nominalSize: 101,
-      maxLines: 2,
-      fontStack: FONT_STACK,
-    });
-    expect(fitted.lines.length).toBe(2);
-    expect(fitted.fontSize).toBe(101);
+    /**
+     * The property, not a pixel count: two lines at a readable size beat one line at a
+     * tiny one on a phone held at arm's length.
+     *
+     * Asserted by comparing against the same text with `maxLines: 1`, so what is checked
+     * is that WRAPPING BUYS A BIGGER FONT — which is true on every font — rather than that
+     * the font came out at 101, which was true only on this laptop.
+     */
+    const options = { maxWidth: 920, nominalSize: 101, fontStack: FONT_STACK };
+    const wrapped = await fitText('Remembering Rohan Deshpande', { ...options, maxLines: 2 });
+    const oneLine = await fitText('Remembering Rohan Deshpande', { ...options, maxLines: 1 });
+
+    expect(wrapped.lines.length).toBe(2);
+    expect(oneLine.lines.length).toBe(1);
+    expect(wrapped.fontSize).toBeGreaterThan(oneLine.fontSize);
+    // And it is a real difference, not a rounding one — the whole point of wrapping.
+    expect(wrapped.fontSize).toBeGreaterThan(oneLine.fontSize * 1.3);
   });
 
   it('shrinks a single word that cannot be broken', async () => {

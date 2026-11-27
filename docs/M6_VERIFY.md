@@ -148,10 +148,28 @@ cache of them is both a leak and a pile of personal data held for no reason (§1
 per-character table survives only to choose where to break a line, where a bad guess moves a
 word and cannot cause an overflow.
 
-**Verified on Linux before pushing, not after.** The compositor and fitting suites were run
-inside a `node:22-bookworm` container with `fonts-dejavu-core` and `fonts-noto-core`
-installed — 310 font files, DejaVu among them — and 66 of 66 passed. That is the check that
-was missing the first time.
+**And then the same mistake again, one level down.** The measured fit was correct — all 42
+canvas-bounds assertions passed on CI — but two of my own assertions pinned an exact pixel
+size (`expect(fontSize).toBe(78)`), and those are numbers that depend on the installed
+font. On DejaVu, "Happy Birthday, Asha" at 78px is genuinely a couple of pixels over 920,
+so shrinking it to 76 is the CORRECT answer and the test's premise was false. Both now
+assert the property instead: a string with room to spare on any font keeps the exact
+assertion, and "wrapping buys a bigger font" is checked by comparing against the same text
+at `maxLines: 1` rather than against a constant.
+
+**The first "verified on Linux" claim was weaker than it sounded, and that is worth
+recording.** The container had `fonts-noto-core` installed, so the stack —
+`Noto Sans Devanagari, Noto Sans, DejaVu Sans, sans-serif` — resolved at *Noto Sans* and
+never reached DejaVu. It passed for the same reason macOS did: it was not drawing with the
+font CI draws with. A Linux container is not automatically the same environment as CI; the
+FONT SET is the variable, not the kernel.
+
+So it is now run in two configurations, and both are green at 66 of 66:
+
+| Configuration | Stack resolves to | Stands in for |
+|---|---|---|
+| `node:22-bookworm` + `fonts-dejavu-core` only | DejaVu Sans | **ubuntu-latest**, where the bug appeared |
+| `node:22-bookworm` + Noto and DejaVu | Noto Sans | the `node:22-alpine` runtime, which installs `font-noto` |
 
 ---
 
