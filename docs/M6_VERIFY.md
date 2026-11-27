@@ -171,6 +171,84 @@ So it is now run in two configurations, and both are green at 66 of 66:
 | `node:22-bookworm` + `fonts-dejavu-core` only | DejaVu Sans | **ubuntu-latest**, where the bug appeared |
 | `node:22-bookworm` + Noto and DejaVu | Noto Sans | the `node:22-alpine` runtime, which installs `font-noto` |
 
+### 0.7 A five-reviewer pass found 31 defects, and my previous summary was overconfident
+
+Before merge, the diff went through five independent reviewers — pipeline, tone safety,
+client, media/security, compositor — each given the diff and a dimension, none given my
+conclusions. They returned **31 findings**. I verified every significant one against the
+source myself; two I reproduced by measurement. Nine were real blockers and are fixed on
+this branch.
+
+**What it says about the verification above.** §2 said M6 was done bar the key and TBD-5.
+The tests and the device run were real, but they exercise the **fake-provider path almost
+exclusively**, and that is where the bugs were. The single clearest example: item 5's
+"a cache hit makes no model call and writes no ledger row" was asserted by a DB-backed test
+that always injected `FakeLlmProvider` (`isLive = false`). With a live text provider the
+copy call ran **before** the cache lookup, so every hit called a model and wrote a row. The
+claim was true of the configuration under test and false of the one that costs money.
+
+The nine blockers, and what each was:
+
+| # | Defect | Why it mattered |
+|---|---|---|
+| 1 | The model's headline was taken verbatim on a SOLEMN occasion; only its `themeId` was re-validated | **The failure this milestone was written around.** A model answering "Happy Birthday, Asha" for a death anniversary would have been composited at 72px and handed to WhatsApp |
+| 2 | Poster copy never saw `checkOutputText` | The one model-written string in the app that reached a user unmoderated, while M5's drafts were |
+| 3 | The copy call ran before the cache lookup | Item 5 false whenever the text provider is live |
+| 4 | The copy call passed neither spend cap nor limiter | §10 rule 6's global cap bounded only half the spend |
+| 5 | The library placeholder was cached under the generated-artwork key | Any key first served while `IMAGE_PROVIDER=fake` — the committed default — was pinned to a gradient for the deployment's life, with `cacheHit=true, degraded=false` so the metrics read healthy |
+| 6 | A 0.72 MB PNG decoded 256 megapixels: ~143 MB RSS, no limiter on the route | One signed-in account could OOM the container for 20 MB of traffic |
+| 7 | The raw body parser was global middleware, running before the auth guard | **Measured:** `POST /v1/auth/google` with `Content-Type: image/png` read 3,000,000 bytes before rejecting, where JSON was cut off at 2 MB. Pre-auth buffering raised from 2 MB to 8 MB app-wide |
+| 8 | `downloadMedia` was the one call skipping the status check | An expired-signature 403 body became `posterBytes`, with the hand-over buttons enabled on it |
+| 9 | `strongest()` let ALLOWED beat UNCHECKED; no poll cancellation on the client | A classifier timeout was recorded as an approval; a stale poll could paint one person's poster into another person's studio |
+
+Also fixed in the same pass: the `${'$'}` over-escaping **repeated** in the report dialog's
+test tags; `blobKeyFor` lowercasing before validating, so it sanitised where its own comment
+said it refused; `BLOB_SIGNING_SECRET` with no minimum length while being the sole
+authorisation for a `@Public` route; a 413 naming the 2 MB limit when the photo limit is
+8 MB; `parsePosterCopy` with no length bound; `maxStalledCount` left at its default of 1, so
+a killed worker re-ran the job and billed a second image while the row sat at RUNNING
+forever; the subline measured bold and drawn regular; and `OPENAI_IMAGE_QUALITY` being dead
+config the boot log claimed was live.
+
+### 0.8 The fix for §0.6 was itself a regression, by 8x
+
+The measured fit replaced the estimate, and the measure canvas was sized from the string at
+a 200px reference — so it grew with the length of the name. Timed on this machine:
+
+| headline | before | after |
+|---|---|---|
+| "Happy Birthday, Rohan Deshpande" (31 ch) | 229 ms | **68 ms** |
+| 120-character `displayName` (the field cap) | 1,172 ms | **76 ms** |
+
+Against a poster that otherwise takes about 150 ms end to end, the ordinary case was
+costing more in measurement than in everything else, and the cap case was costing eight
+times the whole poster. Past about 32,767px librsvg refused the document outright, and that
+landed in a bare `catch` that silently reinstated the estimate — the exact clipping §0.6
+exists to prevent, with no log line.
+
+Fixed by measuring at a 32px reference instead of 200 (the measurement is a ratio, so the
+only thing a large reference buys is hinting precision we do not need), clamping the canvas,
+and logging the fallback instead of swallowing it.
+
+**And the comment I wrote claimed it was cheap without measuring it** — "a measure canvas is
+small and monochrome … not the expensive part". `MILESTONE_CHECKLIST.md` bans exactly that:
+a comment that makes a performance claim carries the measurement or does not make the claim.
+
+### 0.9 Four comments asserted invariants the code did not hold
+
+Worth separating from the defect list, because it is the transferable part:
+
+- `text-fitting.ts` — "not the expensive part" (§0.8). It was 8x the poster.
+- `configure-app.ts` — "no existing route changes behaviour". Every route's pre-auth body
+  ceiling changed.
+- `blob-store.ts` — "Throwing rather than sanitising". It lowercased first, so it sanitised.
+- `moderation.service.ts` — the ALLOWED/UNCHECKED contract, stated 70 lines above a function
+  that implemented the opposite.
+
+Each reads as a reasoned decision, which is what makes it worse than silence: it tells the
+next reader the question has been settled. Three of the four were written in the same
+sitting as the code they describe, with no check in between.
+
 ---
 
 ## 1. The honest summary
@@ -216,7 +294,7 @@ not merge them.
 | 2 | The same for a **solemn** occasion, no celebratory theme reachable, hand-checked by Dipen | **PARTIAL / BLOCKED** | **The filter: PROVED five ways**, all with `is_deceased` still false on the server. On the handset: the person screen read "Send a message" and **"Make a remembrance poster"**, the studio was titled "Remembrance poster", and the picker's view tree held exactly `ph-stillwater`, `ph-dusk`, `ph-lamp` and **no celebratory node**; generating gave `family=SOLEMN, sentiment=SOLEMN` in 207ms. Asha, on the same handset, got exactly the four celebratory swatches and none of the solemn — so the gate is not answering SOLEMN to everything. Plus the server's 400 `THEME_NOT_ALLOWED`, the DB-backed pipeline test and the instrumented picker test. **The hand-check: BLOCKED on TBD-5** — the themes are placeholders and nobody has judged the art |
 | 3 | All three formats produced and inspected at full size | **PROVED** | 1080×1920, 1080×1080 and 1200×630 produced through the API and read back off disk at those exact dimensions. I opened the STATUS and LINK ones; §0.1 is what that found |
 | 4 | The no-photo path produces something good enough to send | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** The typographic template centres, wraps, keeps a rule above the headline and carries the attribution — and after §0.1 it is legible, which it was not. **"Good enough": BLOCKED on TBD-5.** That sentence is a judgement and the artwork is a placeholder gradient by design |
-| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED** | By curl: miss 136ms, hit 85ms, `cacheHit=true`, `ai_usage` count unchanged at 0, no `poster:*` key in Redis, `hit_count` 0→1. And by a DB-backed test with the provider reporting `isLive`, where the miss **does** write a row and **does** take a slot, so the hit's zero means something |
+| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED for the image call; the text call was NOT, and is now fixed** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. **That test has not run locally** — Postgres is read-only on this machine (§0.10) — so it is verified by CI only |
 | 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + store + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about |
 | 7 | A ledger row per generation with a non-zero **measured** INR, and image pricing in `pricing.ts` | **PARTIAL / BLOCKED** | **Pricing: PROVED present**, per image and per `(model, quality, size)`. **One row per call: PROVED** — including for a REFUSED image, where the call happened and produced nothing. **Non-zero measured: BLOCKED.** The fake is priced at ₹0 and the published rates in `pricing.ts` are unverified; TBD-1 is open. Arithmetic from a rate table is not a measurement, and M5 was right to refuse to call one the other |
 | 8 | The global spend cap observed degrading a poster request to cached themes | **PROVED** | Ledger seeded to ₹250 against a ₹200 cap; the request came back `SUCCEEDED`, `degraded=true`, with a poster, no `ai_usage` row and no rate-limit slot consumed — being capped is our budget, not the user's allowance |
@@ -396,13 +474,18 @@ a device:
 | §0.4 | Every share failed silently — FileProvider authority | **Tapping Share on the handset** |
 | §0.5 | The studio opened with every control below the fold | **Opening the studio on the handset** |
 | §0.6 | The headline fix was tuned against the wrong font and still clipped on Linux | **CI, on ubuntu** |
+| §0.7 | 31 defects, 9 of them blockers, including a live-path route to celebratory copy on a remembrance | **A five-reviewer pass before merge** |
+| §0.8 | The §0.6 fix cost 8x the poster's whole runtime | **Timing it, after a reviewer asked** |
 
 Two needed a device and one needed a different operating system. §0.4 cannot be caught
 off-device at all; §0.6 could not be caught on the developer's machine, and its fix is now
 verified in a Linux container rather than only in CI.
 
-Five bugs, and **not one of them was found by a passing test suite** — they were found by
-opening a PNG, tapping a button, and reading a CI log.
+Thirty-six bugs across this branch, and **not one was found by a passing test suite** —
+they were found by opening a PNG, tapping a button, reading a CI log, timing a function,
+and asking five reviewers who had not seen my conclusions. The suite went green on every
+one of them, because the suite and the code were written by the same person in the same
+sitting, against the same fake providers.
 
 The four existing `person.isDeceased || marksPersonDeceased(…)` expressions in
 `PersonDerivationService`, `SyncService` and `EventsService` were correct. They were
@@ -482,3 +565,27 @@ none ever should (`M6_PLAN.md` §1.2). The posters described in §3 carry invent
 generated gradient in place of a photograph; they were written to a scratch directory outside
 the repo and are not committed. What was on the screen is described in words above, as M5 §0.5
 had to for a screenshot it had to delete.
+
+---
+
+## 10. What this machine could not verify, and why
+
+Partway through the review fixes the host disk filled to 100% (247 MB free of 460 GB) and
+Docker's own metadata store went read-only. Postgres reports healthy and refuses
+connections; `docker rmi` fails on the same read-only filesystem.
+
+So, at the head this document describes:
+
+| Checked here | Not checked here |
+|---|---|
+| 535 server tests (every non-DB suite), three timezones | **69 DB-backed tests**, including the three new ones that guard §0.7's blockers |
+| `tsc`, lint, both client targets, the debug APK | The Linux font configurations from §0.6 |
+| The measured timings in §0.8 | Anything on the handset since the fixes |
+
+CI runs Postgres 17 and Redis as services, so the DB suites **are** exercised there — that
+is the verification of record for them until the disk is freed. It is weaker than running
+them here, because CI reports pass or fail rather than letting me look at the rows, and the
+new tests are the ones guarding the most expensive defect on the list.
+
+The disk is not something a session should resolve by deleting things on a personal
+machine, so it is recorded rather than fixed.
