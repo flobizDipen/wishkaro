@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   eventsCsv,
@@ -59,13 +59,31 @@ export interface ExportBundle {
 export class ExportService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * The email on the account, for FR-AUTH-08's typed confirmation.
+   *
+   * Here rather than in the controller so the controller holds no Prisma, and here rather than
+   * in `AccountDeletionService` so that the thing which performs the deletion is not also the
+   * thing that decides whether it was confirmed.
+   */
+  async emailOf(userId: string): Promise<string> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { email: true },
+    });
+    if (!user) {
+      throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'No such account' });
+    }
+    return user.email;
+  }
+
   async build(userId: string, now: Date = new Date()): Promise<ExportBundle> {
     const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
     if (!user) {
       // The caller is authenticated as this user, so this is a deleted account with a token
       // still inside its TTL — docs/M9_PLAN.md C8. An empty export would be worse than an
       // error: it reads as "we hold nothing about you", which is a different claim.
-      throw new Error(`No such user`);
+      throw new NotFoundException({ code: 'USER_NOT_FOUND', message: 'No such account' });
     }
 
     const [people, events, traits, wishes, posters, assets] = await Promise.all([

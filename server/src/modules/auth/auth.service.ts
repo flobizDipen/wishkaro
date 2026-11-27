@@ -211,14 +211,58 @@ export class AuthService {
     });
   }
 
+  /**
+   * Verifies the signature **and** that the account still exists.
+   *
+   * ## Why the database lookup is here (M9, `docs/M9_PLAN.md` C8)
+   *
+   * Until M9 this method checked the signature and nothing else, which was fine while nothing
+   * could remove an account. FR-SET-04 removes accounts, and a JWT does not know that: for up
+   * to `JWT_ACCESS_TTL` — fifteen minutes by default — a phone holding its last access token
+   * authenticated successfully on **every** guarded route after its owner had deleted
+   * everything.
+   *
+   * What that produced was not a privacy leak but something almost as bad: `POST /v1/sync`
+   * would try to upsert rows against a `user_id` that no longer exists, and a foreign-key
+   * violation surfacing as a 500 is not an answer to "my account is gone". `GET /v1/sync`
+   * already answered `USER_NOT_FOUND` because it looks the owner up first; this makes every
+   * other route agree with it, and makes the answer a 401 so the client knows to sign out.
+   *
+   * ## What it costs, without a claim about how much
+   *
+   * One lookup on the primary key, per authenticated request, on a connection the process
+   * already holds. That is the structural cost; **the latency has not been measured**, and
+   * `MILESTONE_CHECKLIST.md` (bought by M5 §5.2) says a comment that makes a performance claim
+   * carries the measurement or does not make the claim — so this one does not make it. It is
+   * recorded as unmeasured in `docs/M9_VERIFY.md`, and the alternative Dipen can still choose
+   * is a Redis denylist of deleted ids with the same TTL as the token.
+   *
+   * `deletedAt` is checked too, not only existence. The deletion soft-deletes before it hard-
+   * deletes, so a request arriving mid-deletion is refused rather than racing it.
+   */
   async verifyAccessToken(token: string): Promise<AccessTokenClaims> {
+    let claims: AccessTokenClaims;
     try {
-      return await this.jwt.verifyAsync<AccessTokenClaims>(token, {
+      claims = await this.jwt.verifyAsync<AccessTokenClaims>(token, {
         secret: this.env.JWT_ACCESS_SECRET,
       });
     } catch {
       throw new UnauthorizedException({ code: 'INVALID_ACCESS_TOKEN', message: 'Access token is not valid' });
     }
+
+    const user = await this.prisma.user.findFirst({
+      where: { id: claims.sub, deletedAt: null },
+      select: { id: true },
+    });
+    if (!user) {
+      /**
+       * `USER_GONE`, the same code `refresh()` already uses for the same situation, so the
+       * client has one thing to match on rather than two.
+       */
+      throw new UnauthorizedException({ code: 'USER_GONE', message: 'Account no longer exists' });
+    }
+
+    return claims;
   }
 
   private async issueTokens(userId: string, email: string): Promise<SessionTokens> {
