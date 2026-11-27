@@ -1,6 +1,10 @@
 # M9 Verification — Privacy (the half that needs no Play Console)
 
-> Branch `feat/m9-privacy`, PR #9, off `main` at `493f829`. **Not merged.**
+> Branch `feat/m9-privacy`, PR #9, off `main` at `493f829`. **MERGED `ff1119d` on 2026-11-27 — unfinished, by Dipen's explicit instruction ("Merge as-is"), with SIX of the ten items below NOT MET.**
+>
+> Verified here rather than taken on report: PR #9 state `MERGED`; `ff1119d` is a real merge commit whose parents are `1b3db4a` (the redaction, cherry-picked to `main` ahead of the merge) and `4f8723d` (this branch's head), and both are ancestors of `main`, so neither side was lost; `privacy`, `server` and `android` all report success on `ff1119d`; and `tools/check-no-pii.sh` run against `main`'s own tree reports clean.
+>
+> **Green CI on `main` does not mean this milestone is finished.** The code is merged and every workflow passes, and those two true statements together imply something false. §1 is the list that does not.
 >
 > Three different claims, kept apart throughout, as M5 and M6 did:
 >
@@ -92,11 +96,24 @@ know it has happened before.
 | 7 | The prominent disclosure shown before the contacts permission on the handset | **BLOCKED on a sign-in only Dipen can do.** The code, the copy and 7 tests are done; the APK installs and launches on the Pixel 9a with 0 fatal exceptions, and stops at the sign-in screen. §3 |
 | 8 | §12's checklist updated, each tick traceable to `M9_VERIFY.md` | **DONE.** 5 of 13 ticked, 8 left with a reason. §6 |
 | 9 | Nothing requires an API key, and this document says so explicitly | **DONE** — §0, and the caveat that decision 2 can falsify it |
-| 10 | Both targets compile, server suite green across three timezones, CI green on the exact head | **DONE.** Android compiles and installs; iOS compiles in CI; all four checks green on the head; and the **full 682-test suite, DB specs included**, green in UTC, Pacific/Chatham and Asia/Kolkata. §7 |
+| 10 | Both targets compile, server suite green across three timezones, CI green on the exact head | **DONE.** Android compiles and installs; iOS compiles in CI; **five** checks green on the merged head `4f8723d` — the fifth is the unfiltered `no-pii` guard, 6 s — and all three workflows green on the merge commit `ff1119d`; the **full 686-test suite, DB specs included**, green in UTC, Pacific/Chatham and Asia/Kolkata, and serially by default since §14.5. §7 |
 
-**Three proved or partly proved, three done, four blocked.** Of the four blocked, two wait on
-decision 1, one on decision 2, and one — item 7 — on a sign-in. Item 3 is the only one carrying
-a clause that was deliberately withdrawn rather than left waiting.
+**Counted against the definition of done rather than against effort: FOUR of ten met, SIX not
+met.**
+
+| | Items |
+|---|---|
+| **Met** | 5 (retention), 8 (§12 updated), 9 (no API key), 10 (compile, suites, CI) |
+| **NOT met** | 1, 2 (export against a real account, and *its* CSV) · 3 in part (the push) · 4 (public web deletion) · 6 (policy and terms) · 7 (disclosure on the handset) |
+
+Of the six: **two wait on decision 1**, **two on decision 2**, **one on a Google sign-in only
+Dipen can perform**, and **one — item 3's push clause — was deliberately withdrawn** after three
+candidate accounts proved unusable (§9.6).
+
+Item 2 is the one most likely to be miscounted, so it is stated twice: the round trip **is**
+proved through the real importer, with no mapping touched, under **both** settings of the dd/MM
+toggle — against a **fixture**. The item as worded is about the export produced in item 1, and
+that export does not exist. A fixture passing is not that item being met.
 
 ---
 
@@ -1120,7 +1137,37 @@ the fixture asserts it rather than demonstrates it, and because M3, M5 and M6 al
 
 ---
 
-## 15. What Dipen owes, and what each blocks
+## 15. What this close-out deliberately did NOT do
+
+Written down because each one is a thing a reader might reasonably expect to find, and its
+absence should be a decision rather than an oversight.
+
+**The definition of done in `docs/BUILD_PROMPT_M9.md` was not amended.** Item 3 still ends "and
+a push to that token no longer delivers", which is now a clause that was withdrawn rather than
+met. M6's close-out hit the same wall with its own item 5 and drew the same line: *amending a
+definition of done so that it matches the code is not a session's to do.* The withdrawal is
+recorded in §9.6 and in §16; the sentence it withdraws from is left standing, so the gap stays
+visible.
+
+**The four decisions were not resolved.** Two are answered (3 and 4); two are open and are
+Dipen's. Nothing in this close-out picks between them, and §16 states what each blocks.
+
+**No §16 row was written for the launch half.** M9's build prompt is explicit that the Data
+Safety form and the 14-day closed test with 12+ testers are calendar time on Dipen's account,
+not build time, and they are not ticked in §12 and not claimed here.
+
+**`main` was not pushed.** The close-out is committed locally. Pushing `main` has not been
+asked and is not assumed.
+
+**The two pre-existing findings in §14.2 were not both acted on.** The address was removed on
+instruction. The name in `docs/fixtures/name-tokens.json` that shares the owner's surname is
+**still unverified** — the fixture's header asserts every person in it is invented, which is the
+sentence that makes the file safe to commit, and nobody has confirmed it. M3, M5 and M6 all read
+that file. It is one question to Dipen and it has not been asked.
+
+---
+
+## 16. What Dipen owes, and what each blocks
 
 | # | Decision | Blocks |
 |---|---|---|
