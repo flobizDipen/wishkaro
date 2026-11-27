@@ -11,6 +11,12 @@ wrong place for the list: nobody reads six verification documents to find out wh
 outstanding. This file is the index. The verification documents stay authoritative — where they
 disagree with this file, they win and this file is stale.
 
+> **Re-scoped 2026-11-27.** Dipen moved all AI and all monetisation to v2. That did not just
+> reorder work — it **closed or deferred five of the rows below**, because most of them were
+> waiting on an API key or an affiliate network that v1 no longer needs. Struck rows are kept as
+> evidence. What remains is a much shorter list, and `B2` is now the only thing between a finished
+> v1 and a release.
+
 **What this file is not.** It is not a backlog of features, and it is not a bug list. Everything
 here is either a decision only Dipen can make, an external gate no amount of building clears, or
 work a milestone explicitly declined to do and named rather than dropped.
@@ -26,8 +32,9 @@ met. While they stay open, `main` delivers less than its presence suggests.
 |---|---|---|---|
 | **A1** | **Where the policy pages and the public deletion URL live** — and whether that means buying a domain. The Railway hostname is generated, not stable, so it cannot be the answer. | M9 items 4 and 6; §12 box 1; the text of the policy page; FR-SET-04's web half and FR-SET-05 entirely | Money and DNS propagation. **Needed before Play submission regardless**, which is why it is first. |
 | **A2** | **How the export is delivered.** FR-SET-03 says email. Email means a new vendor and a new key, and **makes M9 definition-of-done item 9 false**, since M9's whole premise was that it needs no API key. An in-app signed URL adds nothing new and is a weaker reading of FR-SET-03. | M9 items 1 and 2; §12 box 5 | Nothing but the decision. The signed-URL path is already built; the honest cost is recording FR-SET-03 as partially met rather than quietly redefining it. |
-| **A3** | **TBD-5 — visual identity**: palette, type, icon, poster template art direction. Open since **M4**. | Three M6 items. Every theme on `main` is a visible placeholder, so **nobody has yet judged whether a poster is one anybody would want to send** — which is the product. | Taste and time, or money for a designer. |
-| **A4** | **TBD-4 / M5 definition-of-done item 4** — a real remembrance draft, recorded verbatim and **read by Dipen**. Neither done nor deferred: M6 did not touch it, M9 did not touch it. | The solemn path's only human check. FR-EVT-05 exists to prevent a tone failure no test can see. | Ten minutes, once B1 exists. |
+| ~~**A3**~~ | ~~**TBD-5 — visual identity**~~ | **ANSWERED 2026-11-27: "Warm paper".** Ivory `#FDFBF7`, ink `#15131C`, saffron accent `#C8742A`, Fraunces + Inter, 12dp shapes, settled 300ms motion. Solemn is the **same** design with the accent desaturated to `#8A8578` — chosen precisely so a death anniversary is not a second design system. Open since **M4**; built in **M7**, poster templates in **M8**. | — |
+| **A4** | **TBD-4 / M5 definition-of-done item 4** — a real remembrance draft, read by Dipen. Neither done nor deferred across M6 and M9. **No longer blocked:** with curated content there is no generated draft to review — Dipen *writes* the solemn templates in **M8**, which is a stronger version of the same check. | The solemn path's only human check. FR-EVT-05 exists to prevent a tone failure no test can see. | Moves into M8's content work. No longer waits on B1. |
+| **A5** | **Does anything moderate a user's uploaded photo in v1?** With curated templates, `MODERATION_PROVIDER` stays `fake` — so the poster pipeline's input moderation, built in M6, runs against nothing. The counter-argument is that WishKaro has **no user-to-user surface**: a photo is the user's own, of their own family, and leaves only when they share it themselves. | §10 rule 7's input moderation; `ContentReport` has no live source. | Nothing, if the answer is "accept it" — but it has to be a decision rather than a side effect of deferring AI, because a real moderation provider would reintroduce the API key v1 was re-scoped to avoid. |
 
 ---
 
@@ -37,10 +44,10 @@ No decision clears these. They cost money, an account, or calendar time.
 
 | # | Gate | Blocks | Clock |
 |---|---|---|---|
-| **B1** | **An AI provider key** (`OPENAI_API_KEY`, and whatever M8 needs). | **Four M5 items and four M6 items.** TBD-1 (verify live pricing, finalise credit economics) and TBD-3 (re-check the credit allowance against the measured cache-hit rate) cannot start. §10 rule 7's moderation is structurally built on both surfaces and **exercised on neither**. | None of its own, but it blocks more items than anything else here. |
-| **B2** | **Play Console account** — TBD-8, marked *Now*. | Everything about launch. | **The real one.** Closed testing requires **12 testers for 14 consecutive days** before production access. Every milestone merged so far took less time than that gate. Starting it late does not make it shorter. |
-| **B3** | **TBD-2** — choose and register with an affiliate network (`OD-7`). | M8. Deferred by decision; recorded here so it is not rediscovered as a surprise. | Post-launch. |
-| **B4** | **TBD-6** — licensed music library for video. | M10. | v1.1. |
+| ~~**B1**~~ | ~~**An AI provider key**~~ | **DEFERRED TO v2 (M13), 2026-11-27.** It blocked more items than anything else here, and the re-scope removed every one of them from v1: the eight M5/M6 definition-of-done items become **v2** items, and TBD-1 and TBD-3 go with them. The code is merged and tested; v2 is a key and an env var. | Gone from v1 entirely. |
+| **B2** | **Play Console account** — TBD-8, marked *Now*. | Everything about launch. | **The only external gate v1 still has, and now the critical path.** Closed testing requires **12 testers for 14 consecutive days** before production access. Every milestone merged so far took less time than that gate. The re-scope made the build shorter and did nothing to this clock — so it is now more likely than anything else to be what you are waiting on at the end. |
+| ~~**B3**~~ | ~~**TBD-2** — affiliate network~~ | **DEFERRED TO v2, 2026-11-27.** M8's gift ideas are a curated catalog with **no affiliate links**, so §12's affiliate-disclosure box has nothing to disclose in v1. | Gone from v1. |
+| **B4** | **TBD-6** — licensed music library for video. | M10. | ~~v1.1~~ → **v2**. |
 
 ---
 

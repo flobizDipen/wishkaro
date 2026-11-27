@@ -5,17 +5,27 @@
 > the `*_VERIFY.md` documents record what was proved. Where this file disagrees with them, they
 > win. Re-derive it rather than trusting it after the next milestone.
 
+> **Superseded in part on 2026-11-27**, hours after it was written. Dipen moved **all AI and all
+> monetisation to v2**: v1 is curated, v2 is generated. The measurements below are still accurate
+> about `main`. The *conclusions* about what is missing are not — read §"Not built at all" and
+> §"If I had to name three things" with the re-scope in mind, and `REQUIREMENTS.md` §3 and §16 for
+> the current ladder.
+
 ## The one-line answer
 
 **v1 is 8 of its 10 milestones merged.** Everything that makes the app *work* — people, events,
-reminders, import, the views, the widget, wish drafting, posters, and the privacy half — is on
-`main`. What is missing from v1 is **the two milestones that make it a business**: M7
-(monetisation) and M8 (gift suggestions). Nothing in the product can be charged for, and the
-gift half of the pitch does not exist.
+reminders, import, the views, the widget, the wish composer, posters, and the privacy half — is on
+`main`.
 
-The honest qualifier: a large part of what *is* merged has **never run against a real AI
-provider**, because there has never been an API key. It is built, tested against deliberate
-fakes, and unexercised.
+What was missing, when this was written, was the two milestones that make it a business. **That is
+no longer the plan.** M7 and M8 were re-scoped the same day: M7 is now **identity and first run**
+(the design system nine milestones deferred, plus a splash and `FR-AUTH-01`'s carousel), and M8 is
+**curated content** (wish templates, designed poster templates, a gift catalog — no affiliate
+links, no AI, no key). Monetisation and AI became v2.
+
+So the honest qualifier changed too. It used to be: a large part of what is merged has **never run
+against a real AI provider**. That is still true — and it now costs v1 nothing, because v1 ships
+the `curated` provider instead and v2 flips an env var.
 
 ---
 
@@ -67,19 +77,25 @@ misleading.
 
 ## Not built at all
 
-| Area | Requirements | Milestone |
+| Area | Requirements | Where it went |
 |---|---|---|
-| **Monetisation** — Play Billing, server verification, credit ledger, paywall, restore | 11 | M7, not started |
-| **Gift suggestions** — profile wizard, ideas, affiliate links, click logging, gift history | 12 | M8, not started |
-| **AI video** | 5 | M10 (v1.1) |
-| **Family tree** | 6 | M11 (v2) |
+| **Visual identity, splash, onboarding** | `FR-AUTH-01` + TBD-5 | **M7**, next — was never a milestone before |
+| **Gift suggestions** — curated catalog, no affiliate links | 12, minus the affiliate ones | **M8**, after M7 |
+| **Wish and poster templates** — replacing the fakes and placeholders | — | **M8** |
+| **Monetisation** — Play Billing, credit ledger, paywall, restore | 11 | **v2 (M12)**, was M7 |
+| **AI** — drafting, artwork, moderation | — | **v2 (M13)**, code already merged |
+| **AI video** | 5 | v2, was v1.1 |
+| **Family tree** | 6 | v2 (M11) |
 
-Two consequences worth stating plainly:
+What that re-scope actually bought, stated plainly:
 
-- **The app cannot take money.** Credits, Premium, the paywall and the margin guard are all M7.
-- **"Gift" is one of the three words in the value proposition** (*Remember · Wish · Gift*) and
-  none of it exists. `FR-HIS-02` (gift history) is unbuildable until M8, which also makes
-  `FR-HIS-03` — history feeding every prompt — half of what it is specified to be.
+- **The app no longer needs to take money, so it no longer needs to be able to.** v1 is free.
+- **"Gift" gets a real feature** — a curated catalog — instead of waiting on an affiliate network.
+  `FR-HIS-02` (gift history) becomes buildable in M8.
+- **Five blockers disappeared from v1**: the API key, live pricing, credit economics, the
+  affiliate network, and the moderation that was built on both surfaces and exercised on neither.
+- **One new question appeared**: with `MODERATION_PROVIDER=fake`, nothing moderates a
+  user-uploaded photo. Recorded as `OPEN_DECISIONS.md` A5.
 
 ---
 
@@ -115,10 +131,19 @@ A truer summary than any percentage: **the app works and cannot be sold.**
 
 ## If I had to name three things
 
+*(Written before the re-scope; item 2 has changed and is left visible rather than edited away.)*
+
 1. **The Play Console gate.** Twelve testers for fourteen consecutive days before production
    access. Every milestone merged so far took less time than that gate, and it has not started.
-2. **The API key.** It blocks more items than anything else, and one of them is the only
-   question that matters — whether a generated wish and a generated poster are *good*.
+   The re-scope shortened the build and did nothing to this clock — so it is now **more** likely
+   than anything else to be what you are waiting on at the end.
+2. ~~**The API key.**~~ **Deferred to v2 on 2026-11-27.** The question it was protecting is still
+   the real one, but it moved: with curated content, *"is a wish worth sending?"* and *"is a poster
+   worth sharing?"* stop being questions about a model and become questions about **what Dipen
+   writes and designs in M8**. That is a better place for them — it is answerable without a
+   vendor, and it is answerable now.
 3. **`FR-TREE-06`.** The one thing on this page that gets harder with every day of real data.
    It is a schema obligation, it was written down in v1 precisely so v2 would not need a
-   migration, and it was missed. Now in `OPEN_DECISIONS.md` as D6.
+   migration, and it was missed. Now in `OPEN_DECISIONS.md` as D6. **The re-scope does not touch
+   it** — deferring the tree UI was always the plan; keeping the edge table in the v1 schema was
+   the point.
