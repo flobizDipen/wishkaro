@@ -147,6 +147,22 @@ that could send one.
 If the answer is B, that is a new provider and a new key and it goes in this plan as added
 scope, not absorbed quietly.
 
+### Decision 3 — what does "irreversible" delete, and what survives? — **ANSWERED**
+
+> **Dipen's answer, 2026-11-27: ANONYMISE the ledger and the reports; erase everything else.**
+> `ai_usage`, `generation` and `content_report` keep their rows with `user_id` set to NULL.
+> Migration `20261127160000_m9_account_deletion` makes those three foreign keys
+> `ON DELETE SET NULL`, so **the database enforces it** rather than a service method
+> remembering to run in the right order — `account-deletion.db.spec.ts` deletes a user
+> directly, bypassing the service entirely, and asserts the rows survive.
+>
+> What it gives up, unchanged from the table below: per-user cost attribution for deleted
+> accounts. What it buys: §10 rule 2 and FR-POS-10 hold, DPDP erasure holds, and the policy
+> page can say one true thing instead of choosing between two.
+>
+> The original analysis is kept, because the reasoning is what anybody questioning this in
+> three months will want.
+
 ### Decision 3 — what does "irreversible" delete, and what survives?
 
 **This one is not open in the way it looks. The schema has already chosen, and it has chosen
@@ -192,6 +208,17 @@ text in decision 1 depends on this answer.
   the column must become nullable. A migration. It is additive — nullable columns and a
   relaxed FK action — and nothing destructive (checklist §C).
 - The policy page must state the answer in the user's words, because Play reads it.
+
+### Decision 4 — how is deletion tested, given the only live account is yours? — **ANSWERED**
+
+> **Dipen's answer, 2026-11-27: both A and B.** A DB-backed spec that runs on every future PR,
+> **plus** a throwaway Google account on the handset for the real FCM-token and push check.
+>
+> **B is done and green in CI** (`M9_VERIFY.md` §9). **A has not happened**: it needs a Google
+> account only Dipen can create, and this session does not create accounts. Item 3's push half
+> and item 4 wait on that address.
+>
+> The original analysis is kept.
 
 ### Decision 4 — how is deletion tested, given the only live account is yours?
 
@@ -362,9 +389,13 @@ This is the sync half of the prompt's warning and it needs a decision of its own
 | **B — a deleted-user denylist in Redis**, keyed by user id, TTL = `JWT_ACCESS_TTL` | No DB hit; one Redis GET, on a connection that already exists. Fails open if Redis is down — and the limiter next door deliberately fails *closed*. |
 | **C — accept the window** and make every write path tolerate a vanished user | Cheapest, and it means the 500 above is the behaviour. Not acceptable: a FK violation is not an answer to "my account is gone". |
 
-**I propose A**, and will measure the added latency rather than claim it is free (the checklist
-item bought by M5 §5.2: a comment making a performance claim carries the measurement or does not
-make the claim). The client half is separate and is C9.
+**A was taken**, once decision 3 made deletion real: a stale token could otherwise push rows
+against a vanished `user_id` and foreign-key-violate as a 500, which is not an answer to "my
+account is gone". `verifyAccessToken` now checks the account exists and is not soft-deleted and
+answers `USER_GONE` — the code `refresh()` already used, so the client has one string to match.
+**The latency is UNMEASURED and the comment on it makes no claim**, which is the checklist item
+bought by M5 §5.2; the Redis denylist stays available if the lookup ever shows up in a profile.
+The client half is C9, and is closed too.
 
 ### C9 — the client has no handling for "your account no longer exists"
 

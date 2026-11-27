@@ -585,8 +585,14 @@ and are credited to the milestone that built them.)*
       said *"It all happens on this phone"*, which is false of the contacts the user selects —
       they sync to the server. Left unticked because definition-of-done item 7 asks for it on
       the handset and the handset run needs a sign-in only Dipen can do.
-- [ ] In-app **and** public web account-deletion path (Play requirement). **Not built** —
-      blocked on decisions 1 and 3. The deletion inventory is written (`M9_PLAN.md` §6).
+- [ ] In-app **and** public web account-deletion path (Play requirement). **The in-app half is
+      BUILT and proved in CI** — `DELETE /v1/account` with a typed confirmation, every row,
+      every blob object and every Redis key asserted absent by name against real Postgres, a
+      real blob store and real Redis (`M9_VERIFY.md` §9). The **public web half is not built**,
+      and that is decision 1: an unauthenticated deletion page is the most attackable surface
+      this app would have, and it is not going up before somebody decides what URL it lives at
+      and how it proves who is asking (`M9_VERIFY.md` §10). The box stays unticked until both
+      halves exist, because Play requires both.
 - [ ] Data export (DPDP access right). **Produced in M9**, not delivered: FR-SET-03 says "by
       email link" and this app cannot send email. **BLOCKED on decision 2.** `M9_VERIFY.md` §4.
 - [x] Retention limits enforced by a scheduled job, not just stated in policy.

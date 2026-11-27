@@ -13,16 +13,20 @@
 
 ## 0. The honest summary, first
 
-**M9 is a third of itself, and the missing two thirds are blocked on four decisions that are
-Dipen's.** `docs/M9_PLAN.md` §3 states them, §4 says which definition-of-done items each one
-blocks, and that mapping was written on day one rather than discovered on day six, which is
-what the build prompt asked for.
+**Two of the four decisions are answered and built; two are not, and they are what is left.**
+`docs/M9_PLAN.md` §3 states all four, §4 maps each to the definition-of-done items it blocks,
+and that mapping was written on day one rather than discovered on day six, which is what the
+build prompt asked for.
 
-What is built and proved: **the retention job** (FR-SET-06), which is the only requirement in
-this milestone with a clock already running. What is built and partly proved: **the export**
-(produced, not delivered) and **the prominent disclosure** (code and tests, not the handset).
-What is written and not built: **account deletion** — its full inventory is in `M9_PLAN.md` §6,
-and its central question is decision 3.
+**Answered on 2026-11-27 and built:** decision 3 — anonymise the ledger and the reports, erase
+everything else — and decision 4 — a CI spec **and** a throwaway handset account, of which the
+CI half is done. **Still open:** decision 1 (where the policy pages and the public deletion URL
+live) and decision 2 (how the export is delivered).
+
+Built and proved: **the retention job** (FR-SET-06), the only requirement here with a clock
+already running, and **account deletion** — every row, every blob and every Redis key, in CI.
+Built and partly proved: **the export** (produced and saveable, delivery undecided) and **the
+prominent disclosure** (code and tests, not the handset).
 
 **Nothing in this milestone requires an API key.** Definition-of-done item 9, stated explicitly
 as the prompt asks: the retention sweep, the export, the disclosure and the breach note need no
@@ -69,10 +73,10 @@ know it has happened before.
 
 | # | Item | Verdict |
 |---|---|---|
-| 1 | An export produced for the 575-person account, opened, and checked to contain what is in it | **BLOCKED** — decisions 2 and 4. The producer is built and unit-proved; no export has been produced from the live account, and the live account is Dipen's with two real contacts in it. §4 |
+| 1 | An export produced for the 575-person account, opened, and checked to contain what is in it | **BLOCKED** — decision 2 for delivery, and the live account is Dipen's with two real contacts in it. Producer built and unit-proved; the app now saves both files through the user's own save dialog. §4 |
 | 2 | Its CSV re-imported through M3's importer without a mapping change | **PROVED, against a fixture — not against the 575-person account.** The real importer, the real guesser, no mapping touched, under both settings of the dd/MM toggle. §4.2 |
-| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **BLOCKED** — decision 3 (what "gone" means for `ai_usage`) and decision 4 (whose account). The inventory of 15 tables and 7 stores is written. `M9_PLAN.md` §6 |
-| 4 | The same deletion from the public web URL, with no app session | **BLOCKED** — decision 1 (where it lives) and decision 3 |
+| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **PARTLY PROVED.** Every row, every blob and every Redis key, in CI against real Postgres, a real blob store and real Redis — §9. The **push half is BLOCKED**: it needs a real FCM token on a throwaway account only Dipen can create (decision 4's half A) |
+| 4 | The same deletion from the public web URL, with no app session | **BLOCKED** — decision 1. The page is not built, deliberately: §10 |
 | 5 | The retention job run against seeded data of the right ages, keep-override honoured, 90/180 boundaries exact, a photo attached to a saved poster surviving | **PROVED — in CI, against real Postgres and a real blob store.** §2 |
 | 6 | Policy and terms reachable in-app and from a browser with no session | **BLOCKED** — decision 1. Not started, deliberately: a policy page describing a deletion that does not exist is the worst artifact this milestone could produce |
 | 7 | The prominent disclosure shown before the contacts permission on the handset | **BLOCKED on a sign-in only Dipen can do.** The code, the copy and 7 tests are done; the APK installs and launches on the Pixel 9a with 0 fatal exceptions, and stops at the sign-in screen. §3 |
@@ -80,8 +84,8 @@ know it has happened before.
 | 9 | Nothing requires an API key, and this document says so explicitly | **DONE** — §0, and the caveat that decision 2 can falsify it |
 | 10 | Both targets compile, server suite green across three timezones, CI green on the exact head | **PARTIAL.** Android compiles and installs; server CI green on the head. Three timezones covers the **non-DB** suites only. §7 |
 
-**Two of ten proved, one done, one partial, six blocked — four of those on decisions and two on
-a sign-in.**
+**Three proved or partly proved, two done, one partial, four blocked** — and the blocked set has
+halved since decisions 3 and 4 were answered.
 
 ---
 
@@ -471,7 +475,156 @@ fixture must pass `--rerun-tasks`, or it proves nothing.**
 
 ---
 
-## 9. Carried forward, named rather than quietly dropped
+## 9. FR-SET-04 — account deletion — PROVED, except the push
+
+### 9.1 Decision 3, and the conflict that was not hypothetical
+
+Dipen's answer: **anonymise `ai_usage`, `generation` and `content_report`; erase everything
+else.** `docs/M9_PLAN.md` decision 3 holds the reasoning.
+
+What matters about it is that the schema had **already** resolved this conflict, in §10 rule 2's
+disfavour, without anybody deciding: `AiUsage.user` has been `onDelete: Cascade` since M5. The
+first `user.delete()` anybody wrote would have destroyed the cost ledger that rule 2 and
+FR-POS-10 both call non-negotiable — silently, with every test green, because nothing deleted a
+user.
+
+The migration changes all three foreign keys to `ON DELETE SET NULL`, so **the database enforces
+it**. There is a test that deletes a user directly, bypassing `AccountDeletionService` entirely,
+and asserts the ledger rows survive with a null id. A deletion written in a later milestone that
+forgets to anonymise first cannot take the ledger with it.
+
+### 9.2 PROVED in CI — the absence of each thing, by name
+
+```
+build  Unit tests  PASS src/modules/account/account-deletion.db.spec.ts (6.674 s)
+build  Unit tests  PASS src/modules/account/deletion-coverage.spec.ts
+build  Unit tests  Test Suites: 46 passed, 46 total
+build  Unit tests  Tests:       682 passed, 682 total
+```
+
+The build prompt is explicit: *"make the test assert on the **absence** of each one rather than
+on the endpoint returning 204."* **There is no 204 anywhere in that suite.** Every assertion
+counts rows in a named table, asks the blob store whether an object exists, or reads a Redis key.
+The table list is **iterated from `DELETION_INVENTORY`**, not typed out, and each failure names
+the table it is about.
+
+What it asserts:
+
+- every inventory table has rows **before** the deletion (or the assertions after it pass for
+  the wrong reason) and none pointing at the user after it;
+- **`event_occurrence`**, which has no `user_id` at all and is the one table a
+  `WHERE user_id = ?` sweep cannot see, asserted by id through its parent;
+- the **blob objects** are gone, including a **tombstoned** asset's — a replaced photo is still
+  a photograph;
+- **no device row anywhere holds that FCM token**, asserted on the token rather than the user
+  id, because `fcm_token` is UNIQUE across the table, so this says nothing anywhere can push to
+  that device;
+- the four **Redis** rate-limit prefixes are gone;
+- `ai_usage`, `generation` and `content_report` **survive with `user_id` null**, and the money
+  is unchanged;
+- a raw `user.delete()` that never touched the service leaves them standing;
+- another account is **entirely untouched**, and `theme_cache` and its artwork with it;
+- a **failing blob store destroys nothing at all** and the retry finishes the job.
+
+### 9.3 The ordering, and the one direction it can fail in
+
+`BlobStore` has no `list()`. A row deleted before its object leaves those bytes unreachable by
+anything that will ever run — undiscoverable *and* undeleted. So: soft-delete and revoke every
+refresh token (the door shuts, and a crash after it is recoverable rather than half-erased),
+drain the user's poster jobs, **then** collect the keys — after the drain, because a job
+finishing in between writes a new object — delete the objects, and only then anonymise and
+hard-delete in one transaction. A failing store throws before the transaction and the request is
+safe to repeat.
+
+### 9.4 The guard against the table that does not exist yet
+
+`deletion-coverage.spec.ts` reads **Prisma's own DMMF**, finds every model carrying a `userId`,
+and fails if it is not named in the inventory. The failure this guards is not "somebody forgot a
+table today" — it is M7 adding a subscriptions table, M8 adding gift click-outs, and nobody
+adding either to the deletion.
+
+**Revert-check: adding a user-owned model to the schema fails it by name** (`"SubscriptionProbe"`
+in the diff), and removing a disposition or making a cascading column nullable fails the
+disposition check.
+
+### 9.5 BLOCKED — the push
+
+Definition-of-done item 3 ends *"and a push to that token no longer delivers"*. The device row
+is gone and no row anywhere holds the token, which is read-verified to be sufficient —
+`RemindersService.sendDue` reads devices by user. **Nobody has watched a push fail to arrive**,
+because that needs a real FCM token on a real handset signed into a real account, and the only
+account is Dipen's. Decision 4's half A covers it and waits on a throwaway address.
+
+---
+
+## 10. The public deletion page is NOT built, and that is the decision
+
+FR-SET-04 and §12 both require a deletion path reachable from a browser with no app session.
+It is not here.
+
+Not an omission: it is **decision 1**, and the build prompt names why it is the one to be
+careful with — *"the public deletion page is unauthenticated by definition. Whatever proves
+identity there is the single most attackable surface this app has."* Putting one up before
+somebody has decided (a) what URL it lives at and (b) how it proves who is asking would be
+shipping that surface by default.
+
+`DELETE /v1/account` exists and is authenticated. The web path needs decision 1 first.
+
+---
+
+## 11. C8 and C9 — the account that outlived itself on both sides
+
+Both raised in the plan, both closed once decision 3 made deletion real.
+
+**C8, the server.** `verifyAccessToken` checked the signature and nothing else, so for up to
+`JWT_ACCESS_TTL` — fifteen minutes — a phone holding its last token authenticated on **every**
+guarded route after its owner had deleted everything. `POST /v1/sync` would then upsert against
+a `user_id` that no longer exists and foreign-key-violate as a **500**, which is not an answer to
+"my account is gone". It now checks the account exists and is not soft-deleted, and answers
+`USER_GONE`. Two tests in the deletion suite: a token valid a moment ago is refused after the
+deletion, and refused **from the moment the deletion starts** rather than only when it finishes.
+
+**The cost is unmeasured and unclaimed.** One primary-key lookup per authenticated request is
+the structural fact; the latency has not been measured and the comment on it says so, which is
+the checklist item bought by M5 §5.2. The Redis-denylist alternative remains open.
+
+**C9, the client.** `onSessionExpired()` clears tokens and deliberately keeps the local
+database, because an expired session is reversible. A deleted account is not — and after a
+deletion from another device the phone would have gone on holding 566 people, offline, for ever.
+There are two callbacks now, and the error code is read **before** refreshing, because after a
+hard delete the `refresh_token` row is gone too, so `refresh()` answers
+`INVALID_REFRESH_TOKEN` and a deleted account would otherwise be indistinguishable from an
+ordinary expired session.
+
+---
+
+## 12. A test failure CI found that was not mine
+
+The deletion commit went red on three tests. Two were my own and dull: `event_occurrence` was
+missing from the deletion spec's row-count map — the one table with no `user_id`, which is
+exactly why it is in the inventory and exactly why it fell out of the code that counts.
+
+The third is worth recording. `drafting.db.spec.ts`'s *"lets a draft through while there is
+budget left"* failed in CI and passed locally. §10 rule 6's cap is **global by design** —
+`SpendCapService.spentToday()` sums every row in `ai_usage` for the day — and **jest runs suites
+in parallel workers against one database**. The deletion spec seeds ledger rows to prove they
+are anonymised rather than erased, and ₹7.12 a row was enough to push the day's total past the
+200 that test assumed it started below.
+
+The fix is not cheaper rows, though they are cheaper now. **Every test in that block hard-coded
+`cappedService(200)` on the assumption of an empty ledger**, and the five that assert the cap IS
+hit were never going to fail this way — extra spend only helps them — which is worse, not
+better: they would have passed for the wrong reason against a database that already held ₹250.
+All six now express their ceiling as **headroom above the live baseline**, read through
+`SpendCapService` itself, so each one tests the cap's behaviour rather than the database's
+emptiness.
+
+This is the fake-provider lesson in a different costume: a suite that is correct about the thing
+it names and wrong about the environment it assumes.
+
+---
+
+## 13. Carried forward, named rather than quietly dropped
 
 M9 closes none of these:
 
@@ -489,7 +642,7 @@ whether that is what happened again, and I am not going to guess.
 
 ---
 
-## 10. Test data
+## 14. Test data
 
 Invented people only, in every fixture, test and line of this document.
 `docs/fixtures/export-roundtrip.json` contains seven invented people. The two real contacts in
@@ -502,14 +655,17 @@ data; it lives in the session scratchpad, not in the repo.
 
 ---
 
-## 11. What Dipen owes, and what each blocks
+## 15. What Dipen owes, and what each blocks
 
 | # | Decision | Blocks |
 |---|---|---|
 | 1 | Where the policy pages and the public deletion URL live — and whether that means buying a domain | items 4, 6; §12 box 1 |
 | 2 | How the export is delivered: email (a new vendor, a new key, **and item 9 becomes false**) or an in-app signed URL (nothing new, weaker reading of FR-SET-03) | items 1, 2; §12 box 5 |
-| 3 | What deletion erases and what it anonymises, table by table — particularly `ai_usage`, where DPDP erasure and §10 rule 2 collide, and where **`onDelete: Cascade` has already chosen the option rule 2 forbids** | items 3, 4; §12 box 4; the policy page's text |
-| 4 | How deletion is tested, given the only live account is his | items 3, 4's *proof* |
+| 3 | ~~What deletion erases and what it anonymises~~ | **ANSWERED 2026-11-27: anonymise the ledger and the reports, erase everything else.** Built, proved in CI, enforced by the database. §9 |
+| 4 | ~~How deletion is tested~~ | **ANSWERED: both a CI spec and a throwaway handset account.** The CI half is done. **The throwaway Google account is Dipen's to create** — this session does not create accounts — and item 3's push half waits on that address |
+
+**So two decisions remain: 1 and 2.** Between them they block items 1, 2, 4 and 6, §12's boxes
+1, 4 and 5, and the text of the policy page.
 
 And four smaller ones, each taken as a default pending his answer and each one line to reverse:
 
@@ -517,5 +673,5 @@ And four smaller ones, each taken as a default pending his answer and each one l
 |---|---|---|
 | C2 | `asset.retention` + `asset.purge_warned_at` — FR-SET-06's warning clause had nowhere to live | a migration |
 | C3 | `poster.source_asset_id`, backfilled by the pipeline's own rule | a migration |
-| C8 | **Not taken.** The auth guard still never asks the database, so an access token outlives a deleted account by up to `JWT_ACCESS_TTL` | — |
+| C8 | **Taken**, once deletion made it load-bearing. One primary-key lookup in the guard; the latency is unmeasured and the comment makes no claim about it | the Redis denylist option |
 | C11 | `people.csv` is birthdays only | changing the header and teaching the importer a type column |
