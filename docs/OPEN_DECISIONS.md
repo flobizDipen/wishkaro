@@ -71,6 +71,7 @@ carried forward, it is being avoided.
 | **D3** | **Instrumented tests do not run in CI** — no device in CI. 21 pass on the handset when somebody runs them by hand, and every device-only bug M6 found was found that way. | Since M4 |
 | **D4** | **FR-POS-09's cache-hit target** is unmeasured and plausibly missed. The 85 ms figure in `M6_VERIFY` describes a code path the merged code no longer has. | M6 |
 | **D5** | **`docs/fixtures/name-tokens.json` contains a name nobody has verified is invented**, while the file's own header **asserts** every person in it is invented, and three milestones read that file. Recorded in `M9_VERIFY` §15. Dipen has seen this and left it; it stays listed because the header makes a claim the repository cannot currently support. | M9 |
+| **D6** | **`FR-TREE-06`'s schema obligation is half met.** It requires the relationship edge table **and** `calendar_system` to exist in the **v1** schema. `calendar_system` is there; **there is no relationship edge table** — no `Relationship` model, no `PARENT_OF` / `SPOUSE_OF` / `SIBLING_OF` anywhere in `schema.prisma`. The obligation was written into v1 precisely so that v2 would not need a migration on populated production data. Every day of real users makes it more expensive. Found 2026-11-27 while writing `STATUS.md`; no milestone had it on a list. | None — it was missed |
 
 ---
 
