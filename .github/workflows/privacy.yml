@@ -1,0 +1,42 @@
+name: privacy
+
+# **Deliberately NOT path-filtered.**
+#
+# Every other workflow in this repository is, and for good reason: an Android-only change must
+# not run the server suite. This one is the exception, because a guard that runs for some paths
+# is not a guard.
+#
+# The hole it closes was found by a peer session hours after the guard was written. The check
+# lived only in the server suite, `server.yml` is filtered to `server/**`,
+# `.github/workflows/server.yml` and `docs/fixtures/**` — and the leak it was written for was in
+# `docs/M0_PREREQUISITES.md`. A pull request adding an address to `docs/` and touching nothing
+# under `server/` would never have run it. See `docs/M9_VERIFY.md` §14.3.
+#
+# Widening `server.yml` to `docs/**` was the obvious alternative and was not taken: it makes
+# every docs-only pull request run the whole server suite, migrations and database and all, and
+# the filters exist because that was unwanted. This costs a checkout and under a second, with no
+# toolchain, no `npm ci` and nothing to install.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: privacy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-pii:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The script greps the working tree, not history, and says so in its own header. A
+          # shallow checkout is all it needs and all it should have: fetching history here would
+          # suggest this can find something already pushed, and it cannot.
+          fetch-depth: 1
+
+      - name: No real email address in the tree
+        run: ./tools/check-no-pii.sh

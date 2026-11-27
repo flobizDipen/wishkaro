@@ -30,6 +30,25 @@ import { DELETION_INVENTORY } from './deletion-inventory';
  * Every person below is invented. The repo is public (`MILESTONE_CHECKLIST.md` §F).
  */
 
+/**
+ * A marker unique to THIS run of THIS suite.
+ *
+ * Jest runs suites in parallel workers against **one** database, and the first version of this
+ * file used `pricingVersion: 'spec'` — which `poster-pipeline.db.spec.ts` also writes. Two
+ * consequences, and the second is the worse one:
+ *
+ * 1. `findMany({ where: { pricingVersion: 'spec' } })` here returned the other suite's rows too,
+ *    so `expect(usage).toHaveLength(1)` failed whenever the two overlapped.
+ * 2. The `afterEach` cleanup `deleteMany({ where: { pricingVersion: 'spec' } })` **deleted the
+ *    other suite's ledger rows mid-test** — which also moved the global spend total that
+ *    `drafting.db.spec.ts`'s cap tests read, and made those flake too.
+ *
+ * One marker bug, two flaky suites, two tests failing in five runs. Everything this file writes
+ * to a shared table now carries an id nothing else can collide with, and every query and every
+ * cleanup is scoped to it.
+ */
+const MARKER = `deletion-spec-${randomUUID()}`;
+
 const prisma = new PrismaClient();
 const db = prisma as unknown as PrismaService;
 const redis = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
@@ -109,7 +128,13 @@ async function seedAccount(label: string): Promise<Seeded> {
   });
 
   const generation = await prisma.generation.create({
-    data: { userId: user.id, feature: 'poster', status: 'SUCCEEDED', costInr: 0.0089 },
+    data: {
+      userId: user.id,
+      feature: 'poster',
+      status: 'SUCCEEDED',
+      costInr: 0.0089,
+      promptVersion: MARKER,
+    },
   });
   await prisma.aiUsage.create({
     data: {
@@ -137,11 +162,11 @@ async function seedAccount(label: string): Promise<Seeded> {
       costUsd: '0.0001',
       usdInrRate: '89',
       costInr: '0.0089',
-      pricingVersion: 'spec',
+      pricingVersion: MARKER,
     },
   });
   await prisma.contentReport.create({
-    data: { userId: user.id, feature: 'poster', reason: 'OTHER', detail: 'spec report' },
+    data: { userId: user.id, feature: 'poster', reason: 'OTHER', detail: MARKER },
   });
 
   // Two objects with real bytes: a source photo and a poster.
@@ -239,10 +264,15 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
-  // Anonymised rows survive the user and would otherwise accumulate across runs.
-  await prisma.aiUsage.deleteMany({ where: { pricingVersion: 'spec' } });
-  await prisma.generation.deleteMany({ where: { userId: null, feature: 'poster', costInr: 0.0089 } });
-  await prisma.contentReport.deleteMany({ where: { detail: 'spec report' } });
+  /**
+   * Anonymised rows survive the user and would otherwise accumulate across runs.
+   *
+   * **Scoped to THIS suite's marker.** A cleanup wider than the thing it seeded is a cleanup
+   * that deletes another suite's rows — which is how this file made two other suites flaky.
+   */
+  await prisma.aiUsage.deleteMany({ where: { pricingVersion: MARKER } });
+  await prisma.generation.deleteMany({ where: { promptVersion: MARKER } });
+  await prisma.contentReport.deleteMany({ where: { detail: MARKER } });
 });
 
 describe('what a deletion must leave behind: nothing', () => {
@@ -364,7 +394,7 @@ describe('what a deletion must keep: the ledger, anonymised', () => {
 
     expect(summary.rowsAnonymised).toBe(3);
 
-    const usage = await prisma.aiUsage.findMany({ where: { pricingVersion: 'spec' } });
+    const usage = await prisma.aiUsage.findMany({ where: { pricingVersion: MARKER } });
     expect(usage).toHaveLength(1);
     expect(usage[0]?.userId).toBeNull();
     // The money is the point. It survives intact.
@@ -380,7 +410,7 @@ describe('what a deletion must keep: the ledger, anonymised', () => {
 
     await service.deleteAccount(me.userId);
 
-    const reports = await prisma.contentReport.findMany({ where: { detail: 'spec report' } });
+    const reports = await prisma.contentReport.findMany({ where: { detail: MARKER } });
     expect(reports).toHaveLength(1);
     expect(reports[0]?.userId).toBeNull();
     // What was reported is the evidence; it stays.
@@ -400,7 +430,7 @@ describe('what a deletion must keep: the ledger, anonymised', () => {
 
     await prisma.user.delete({ where: { id: me.userId } });
 
-    const usage = await prisma.aiUsage.findMany({ where: { pricingVersion: 'spec' } });
+    const usage = await prisma.aiUsage.findMany({ where: { pricingVersion: MARKER } });
     expect(usage).toHaveLength(1);
     expect(usage[0]?.userId).toBeNull();
   });

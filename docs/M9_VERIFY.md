@@ -919,6 +919,103 @@ $ git diff main..HEAD | grep -niE "@gmail\.com|@yahoo\.com|<surname>|<surname>"
 (nothing)
 ```
 
+### 14.3 The guard was blind to exactly the case it was written for
+
+Found by a peer session hours after the guard was written, and it is the better half of this
+whole episode.
+
+`no-pii-in-repo.spec.ts` greps the **whole tree** — but it only **runs** when the server suite
+runs, and `.github/workflows/server.yml` is path-filtered to `server/**`,
+`.github/workflows/server.yml` and `docs/fixtures/**`. **The leak it was written for was in
+`docs/M0_PREREQUISITES.md`.** A pull request that adds an address to `docs/` and touches nothing
+under `server/` never runs the server suite, so the guard would have stayed silent on precisely
+the case that motivated it.
+
+It is the same shape as the thing it guards, one level up: the commit message for the guard
+argued that `--untracked` matters because a brand-new document is "exactly how M9 nearly did
+it" — and a brand-new document in `docs/` is also exactly what the path filter excludes. The
+reasoning was right and did not go far enough.
+
+**Verified before acting on it**, rather than taken on the peer's word: `server.yml`'s filter
+reads as reported, and the spec is reached only through that workflow.
+
+**The fix, and the one that was not taken.** Widening `server.yml` to `docs/**` is obvious and
+cheap, and it makes every docs-only pull request run the whole server suite — migrations,
+database, Redis and all — which is the thing those filters exist to prevent. Instead:
+
+- `tools/check-no-pii.sh` holds the check. Pure `git grep`, no toolchain, no `npm ci`, nothing
+  to install.
+- `.github/workflows/privacy.yml` runs it with **no path filter at all**, because a guard that
+  runs for some paths is not a guard. A checkout and under a second.
+- `no-pii-in-repo.spec.ts` now **calls that script** instead of reimplementing it, so a
+  developer running the server suite exercises the same code CI does and there is exactly one
+  definition of what counts as a real address. `MILESTONE_CHECKLIST.md` says a rule implemented
+  twice is held to one shared table of cases; where it is available, the cheaper answer is not
+  to implement it twice.
+
+**Revert-checked in all three shapes**, since the point is the paths it reaches:
+
+| Planted in | Caught |
+|---|---|
+| `docs/leak-probe.md` — the case the server filter misses | ✅ `docs/leak-probe.md:1` |
+| `PROBE.md`, untracked, at the root | ✅ `PROBE.md:1` |
+| nothing | ✅ `no-pii: clean`, exit 0 |
+
+And the output names the file and line and **never the match**, so the check cannot leak the
+address into a CI log while looking for it.
+
+### 14.3a One marker bug made two other suites flaky, and §0.2 nearly repeated itself
+
+Running the full suite ten times to confirm the guard change, two runs failed — **different
+tests each time**, and neither in the file I had just touched:
+
+```
+run 1: ● drafting — the global spend cap › degrades to the template path once the day is spent
+run 5: ● what a deletion must keep: the ledger, anonymised › keeps ai_usage and generation …
+```
+
+**The near-miss first.** My instinct was to note "flaky, did not reproduce" and move on — which
+is exactly what §0.2 records doing with 21 unexplained failures whose names I did not capture.
+This time the names were captured, and they were enough.
+
+**One bug, two suites.** `account-deletion.db.spec.ts` seeded ledger rows with
+`pricingVersion: 'spec'` — the same literal `poster-pipeline.db.spec.ts` uses — and jest runs
+suites in **parallel workers against one database**. Two consequences, the second much worse
+than the first:
+
+1. `findMany({ where: { pricingVersion: 'spec' } })` returned the other suite's rows as well, so
+   `expect(usage).toHaveLength(1)` failed whenever the two overlapped.
+2. The `afterEach` cleanup `deleteMany({ where: { pricingVersion: 'spec' } })` **deleted the
+   other suite's ledger rows mid-test** — and since §10 rule 6's cap is a sum over the whole
+   table for the day, that moved the global total `drafting.db.spec.ts`'s cap tests read. A
+   cleanup wider than the thing it seeded is a cleanup that destroys another suite's fixtures.
+
+So the fix I made in §12 — expressing the cap tests' ceiling as headroom above the live baseline
+— was correct and insufficient: it made them robust to rows being **added** by other suites and
+left them exposed to rows being **removed**, which is what my own cleanup was doing.
+
+**The fix.** Everything this suite writes to a shared table carries a `MARKER` unique to the run
+(`deletion-spec-<uuid>`), on `ai_usage.pricing_version`, `generation.prompt_version` and
+`content_report.detail`; every query and every cleanup is scoped to it.
+
+**Ten consecutive full-suite runs, 686 tests, no failures** — against two in five before.
+
+The generalisable rule, which is now the thing worth carrying out of this milestone: **a DB-backed
+suite sharing a database must own a unique marker, and must never delete by a predicate broader
+than what it wrote.** The first half is obvious once stated; the second is the one that bites,
+because a too-wide cleanup fails in a *different file*.
+
+### 14.4 `main` already carries the removal
+
+The commit that strips the two addresses was cherry-picked onto `main` as `1b3db4a` with `-x`,
+on Dipen's instruction, by the session that raised it. **Verified here rather than taken on
+report:** the trailer names the source commit, and `git grep` over `origin/main` returns nothing.
+
+PR #9 therefore carries a commit whose content is already on `main`; that part of the merge is a
+no-op. The work in §14.3 above is additive and is only on this branch.
+
+---
+
 ### 14.2 Two things the same scan found on `main`, which are NOT M9's
 
 Recorded rather than quietly fixed (`MILESTONE_CHECKLIST.md` §F: bugs found in earlier
