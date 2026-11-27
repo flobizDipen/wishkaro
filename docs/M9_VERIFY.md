@@ -34,9 +34,10 @@ as the prompt asks: the retention sweep, the export, the disclosure and the brea
 change that is decision 2 — **if the export is delivered by email, item 9 becomes false**, which
 is raised as C1 rather than discovered later.
 
-### 0.1 This machine could not run a database, and that shaped the verification
+### 0.1 This machine could not run a database for most of the milestone — **corrected**
 
-The host disk is at **100%** (1.1 GiB free of 460 GiB) and Docker's VM has gone read-only:
+For most of M9 the host disk was at **100%** (1.1 GiB free of 460 GiB) and Docker's VM had gone
+read-only:
 
 ```
 $ docker restart wishkaro-db-1
@@ -44,15 +45,24 @@ Error response from daemon: Cannot restart container wishkaro-db-1:
   open /var/lib/docker/.../hosts: read-only file system
 ```
 
-Postgres is running but its port is not published, and the container cannot be recreated. This
-is the same wall `M6_VERIFY.md` §10 hit, and I took M6's answer: **the DB-backed suites are
-verified by CI rather than here.** I did not prune Dipen's Docker images or build cache to make
+So the DB-backed suites were verified **by CI rather than here**, which is the answer
+`M6_VERIFY.md` §10 took at the same wall. I did not prune Dipen's images or build cache to make
 room — that is his machine's state, not mine to reclaim.
 
-It is worth saying what that costs, because "CI ran it" and "I ran it" are different claims.
-CI runs on a clean checkout in **one timezone (UTC)**, so the three-timezone requirement in
-definition-of-done item 10 covers the **non-DB** suites only. Nobody has run `retention.db.spec.ts`
-in `Pacific/Chatham`.
+**That changed late in the milestone and this section is corrected rather than left standing**
+(`MILESTONE_CHECKLIST.md` §F: an incident note that turns out to be wrong is corrected in
+place). The disk recovered to 6.4 GiB, Docker's daemon had stopped entirely, and starting it
+brought both containers back with the port published this time. Everything below that said "CI
+only" was then re-run here:
+
+- the **full 682-test suite**, including all four `.db.spec.ts` suites, green locally;
+- the same 682 in **three timezones** (§7.2), which closes the gap this section used to name —
+  previously only the 573 non-DB tests had been run in `Pacific/Chatham`;
+- and a **live end-to-end walkthrough over real HTTP** against a running server, which is
+  §9.5 and is a stronger claim than any of the specs.
+
+What is still true: **CI runs the DB suites in UTC only.** The three-timezone coverage of them
+is this machine's, not CI's.
 
 ### 0.2 A test run I could not explain, and did not capture
 
@@ -75,7 +85,7 @@ know it has happened before.
 |---|---|---|
 | 1 | An export produced for the 575-person account, opened, and checked to contain what is in it | **BLOCKED** — decision 2 for delivery, and the live account is Dipen's with two real contacts in it. Producer built and unit-proved; the app now saves both files through the user's own save dialog. §4 |
 | 2 | Its CSV re-imported through M3's importer without a mapping change | **PROVED, against a fixture — not against the 575-person account.** The real importer, the real guesser, no mapping touched, under both settings of the dd/MM toggle. §4.2 |
-| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **PARTLY PROVED.** Every row, every blob and every Redis key, in CI against real Postgres, a real blob store and real Redis — §9. The **push half is BLOCKED**: it needs a real FCM token on a throwaway account only Dipen can create (decision 4's half A) |
+| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **PARTLY PROVED.** Every row, every blob and every Redis key — in CI, locally, and **by hand over real HTTP against a running server** (§9.5), including the ledger anonymised and the still-valid access token refused. The **push half is BLOCKED**: it needs a real FCM token on a throwaway account only Dipen can create |
 | 4 | The same deletion from the public web URL, with no app session | **BLOCKED** — decision 1. The page is not built, deliberately: §10 |
 | 5 | The retention job run against seeded data of the right ages, keep-override honoured, 90/180 boundaries exact, a photo attached to a saved poster surviving | **PROVED — in CI, against real Postgres and a real blob store.** §2 |
 | 6 | Policy and terms reachable in-app and from a browser with no session | **BLOCKED** — decision 1. Not started, deliberately: a policy page describing a deletion that does not exist is the worst artifact this milestone could produce |
@@ -409,21 +419,27 @@ Server CI green on the branch head, including the migration applied to a clean P
 
 ### 7.2 Three timezones — PARTIAL, and honestly so
 
-Re-run after §7.3's DI-graph suite was added, so these are the final numbers:
+**The full suite, DB-backed specs included**, once Docker came back (§0.1):
 
 ```
-UTC                Tests: 573 passed, 573 total
-Pacific/Chatham    Tests: 573 passed, 573 total
-Asia/Kolkata       Tests: 573 passed, 573 total
+UTC                Tests: 682 passed, 682 total
+Pacific/Chatham    Tests: 682 passed, 682 total
+Asia/Kolkata       Tests: 682 passed, 682 total
 ```
 
-**573, not the full suite** — these exclude the four `.db.spec.ts` suites, which need the
-Postgres this machine cannot start (§0.1). CI runs those, in **UTC only**. So nobody has run a
-DB-backed suite in a second timezone, and item 10's three-timezone clause covers the pure
-suites alone.
+`--runInBand`, because the four DB suites share one database and jest's parallel workers are
+what §12 is about.
 
-An earlier three-zone run, before the DI-graph suite, was 565 in each zone — and was preceded
-by the unexplained 21-failure UTC run in §0.2.
+**682, not 573** — these now include `retention.db.spec.ts`, `account-deletion.db.spec.ts`,
+`photo.db.spec.ts`, `poster-pipeline.db.spec.ts`, `drafting.db.spec.ts` and
+`wish-sync.db.spec.ts`. Item 10's three-timezone clause is met for the whole suite rather than
+for the pure half, which is what this section said while the disk was full.
+
+CI still runs them in **UTC only**, so the other two zones are this machine's claim, not CI's.
+
+Earlier runs, kept rather than dropped: 573 in each zone before the DB suites could run, 565
+before the DI-graph suite existed, and the unexplained 21-failure UTC run in §0.2 — which has
+not recurred in any of the eleven runs since.
 
 ### 7.3 CI does not boot this app, and M9 added two modules to its graph
 
@@ -547,13 +563,173 @@ adding either to the deletion.
 in the diff), and removing a disposition or making a cascading column nullable fails the
 disposition check.
 
-### 9.5 BLOCKED — the push
+### 9.5 PROVED by hand, over real HTTP, against a running server
+
+The DB spec drives the service. This drives **the whole stack** — the HTTP layer, the auth
+guard, the Zod pipe, the controller, the confirmation check, the service, Postgres, the blob
+store on disk and Redis — with curl, against `npm run start:dev` on this machine. It is the
+strongest claim in this document and it needed no Google account, because
+`ALLOW_DEV_LOGIN=true` mints a session for an **invented** address.
+
+Seeded over the real API: a person (`Meera Iyer`, invented, with a birthday), a device with an
+FCM token, and a photo uploaded as real PNG bytes.
+
+**The export first**, because an export of an account about to be deleted is the one chance to
+see what was in it:
+
+```
+formatVersion 1
+people 2 -> ['M9 Walkthrough', 'Meera Iyer']
+events [('BIRTHDAY', 3, 5, 1990)]
+media [('SOURCE_PHOTO', 'AUTO', '2027-02-25')]
+no token leaked: True
+```
+
+The media row carries FR-SET-06's state — `AUTO`, expiring 90 days out — and the JSON contains
+**no FCM token and no `googleSub`**, which is asserted rather than assumed: an export is a file
+that leaves the system, and a device token in one is a capability to push to a phone.
+
+The CSV, byte for byte:
+
+```
+b'Name,Date,Relation,Phone,Notes\r\nMeera Iyer,3 May 1990,Friend,,'
+CRLF: True   BOM: False
+```
+
+`3 May 1990`, not `03/05/1990` — §4.3's whole argument, now visible in the bytes the server
+actually sends. CRLF as `Csv.write` produces, and **no BOM**, which is right for this route:
+the BOM is added by `saveCsv` on the device, where Excel needs it, and would be a syntax error
+in the JSON sibling.
+
+**The wrong confirmation is refused:**
+
+```
+HTTP 400  {"error":{"code":"CONFIRMATION_MISMATCH", ...}}
+```
+
+**Then the deletion**, with the database counted on both sides:
+
+```
+BEFORE  user=1 person=2 person_trait=0 event=1 event_occurrence=1 reminder=3 device=1
+        refresh_token=1 wish=0 poster=0 asset=1 generation=0 ai_usage=0 content_report=0
+        blobKeys: photos/f3/f39a101504e347068faaae9932e3a8a3.jpg
+        deviceTokens: m9-walkthrough-fake-token
+
+DELETE /v1/account  ->  HTTP 204
+
+AFTER   user=0 person=0 person_trait=0 event=0 event_occurrence=0 reminder=0 device=0
+        refresh_token=0 wish=0 poster=0 asset=0 generation=0 ai_usage=0 content_report=0
+        blobKeys: (none)
+        deviceTokens: (none)
+```
+
+And the bytes, which are the point:
+
+```
+$ ls .storage/photos/f3/f39a101504e347068faaae9932e3a8a3.jpg
+ls: No such file or directory
+```
+
+**C8, observed rather than unit-tested.** The access token minted before the deletion is still
+cryptographically valid. Every route refuses it:
+
+```
+GET /v1/people      -> HTTP 401   {"code":"USER_GONE","message":"Account no longer exists"}
+GET /v1/sync        -> HTTP 401
+GET /v1/account/export -> HTTP 401
+```
+
+**And the observation that justifies C9's design.** The refresh token answers something
+different:
+
+```
+POST /v1/auth/refresh -> {"code":"INVALID_REFRESH_TOKEN","message":"Unknown refresh token"}
+```
+
+Because the `refresh_token` row went with the user. That is exactly why the client reads the
+error code **before** refreshing: if it refreshed first, a deleted account would be
+indistinguishable from an ordinary expired session, and the local database would survive a
+deletion. The design decision in §11 was reasoned from the schema; this is the observation.
+
+**The log line, checked against §11's "nothing in a log, ever":**
+
+```
+Account deleted: 1 object(s), 0 row(s) anonymised, 0 job(s) dropped, 2 key(s)
+```
+
+Counts and nothing else. No key, no id, no filename, no email.
+
+**A second account for the anonymise half**, because the first had never called a model and
+`0 row(s) anonymised` proves nothing about decision 3. Seeded with a generation, an `ai_usage`
+row at ₹7.12 and a content report, then deleted through the same endpoint:
+
+```
+HTTP 204
+user rows           : 0
+ai_usage FOR user   : 0
+ai_usage KEPT       : [{"userId":null,"costInr":"7.12","model":"gpt-image-1"}]
+generation KEPT     : [{"userId":null,"feature":"poster","costInr":"7.12"}]
+content_report KEPT : [{"userId":null,"feature":"poster","reason":"OTHER"}]
+```
+
+**That is decision 3, working.** The user is gone, nothing points at them, and the ₹7.12 and
+the model name survive — which is what §10 rule 2 and FR-POS-10 need and what the schema's
+`onDelete: Cascade` would have destroyed.
+
+Every row created by this walkthrough was removed afterwards; the local database is back to
+what it was.
+
+### 9.6 BLOCKED — the push
 
 Definition-of-done item 3 ends *"and a push to that token no longer delivers"*. The device row
 is gone and no row anywhere holds the token, which is read-verified to be sufficient —
 `RemindersService.sendDue` reads devices by user. **Nobody has watched a push fail to arrive**,
 because that needs a real FCM token on a real handset signed into a real account, and the only
 account is Dipen's. Decision 4's half A covers it and waits on a throwaway address.
+
+---
+
+## 9b. The handset is set up and waiting on one sign-in
+
+Decision 4's half A. Dipen is creating the throwaway Google account; everything else is ready,
+so the only step left is his.
+
+What is in place on the Pixel 9a, checked by §E's procedure in order:
+
+```
+$ adb reverse tcp:3000 tcp:3000              3000
+$ adb install -r …/composeApp-debug.apk      Success
+$ adb shell am start -n in.wishkaro.app/.MainActivity
+$ adb shell dumpsys window | grep -m1 mCurrentFocus
+    …in.wishkaro.app/in.wishkaro.app.MainActivity
+$ adb logcat -d -t 300 | grep -c 'FATAL EXCEPTION'   0
+```
+
+The build points at **`http://127.0.0.1:3000`**, reached through `adb reverse`, because the
+Railway deployment runs `main` and has none of M9 in it — no `DELETE /v1/account`, no retention
+sweep, no `USER_GONE` guard, no migration. `local.properties` was edited to build it and
+**restored immediately afterwards**, within the same command; the URL is baked into the APK at
+compile time, so the installed build keeps pointing at localhost while Dipen's own config is
+untouched.
+
+That a local server is used rather than Railway is also the safer choice by some distance: the
+Railway database holds his real account with 566 invented people and **two real contacts** in
+it, and a deletion test belongs nowhere near it.
+
+### What happens when the address arrives
+
+In order, and the first step is the one that matters:
+
+1. He signs in on the handset with the throwaway account, and adds a person or two.
+2. **Prove the push DOES deliver first** — `POST /v1/reminders/test`, FR-REM-07's self-test,
+   watched arriving. Without this step "no longer delivers" proves nothing: a push that fails
+   for any other reason would read as success, which is the green-for-the-wrong-reason shape
+   this project keeps finding.
+3. Record the `device.fcm_token` the server now holds for that account.
+4. Delete the account from the app, through the typed confirmation.
+5. Assert the row counts, the blob objects and the token are gone — as §9.5 does, but for an
+   account whose token is real.
+6. Send to that token again and watch it **not** arrive.
 
 ---
 
