@@ -10,6 +10,20 @@ or a real family spreadsheet must never be committed, in whole or in part.
 | `messy-birthdays.csv` | Definition-of-done items 3, 6 and 7. Every date format in FR-IMP-06 in one file, an ambiguous row for the dd/MM toggle, a within-file duplicate, and five rows that are deliberately broken in five different ways |
 | `family-birthdays.xlsx` | The `.xlsx` path end to end. Written by a real spreadsheet library, so it carries a genuine date cell — a serial number whose only clue is a custom format two indirections away — plus blank cells that must not shift their rows |
 | `six-hundred-people.csv` | Definition-of-done item 8: an import larger than the server's 500-row sync cap, so the chunked push is exercised against a real server |
+| `poster-themes.json` | The ONE table of cases for the poster theme library, read by `theme-library.spec.ts` and `PosterThemesTest.kt`. See `docs/M6_PLAN.md` |
+| `wish-tones.json` | The ONE table of cases for the solemn/celebratory tone rules, read by `tone-rules.spec.ts` and `WishToneRulesTest.kt`. See `docs/M5_PLAN.md` §5.2 |
+| `export-roundtrip.json` | **M9.** The ONE table of cases for the export CSV's round trip, read by `export-csv.spec.ts` (the writer, TypeScript) and `ExportRoundTripTest.kt` (the reader, Kotlin). Definition-of-done item 2 is the claim that the two agree; the file itself records why the dates are written `3 May 1990` rather than `03/05/1990`, and why `people.csv` carries birthdays only |
+
+> ⚠️ **A local revert-check that edits a file in this directory proves nothing.**
+>
+> `docs/fixtures/` is not a declared input to `:composeApp:testDebugUnitTest`, so changing a
+> file here leaves the task `UP-TO-DATE` and the Kotlin half of a shared table does not run.
+> Found in M9 by a revert-check that reported success without executing a single test; see
+> `docs/M9_VERIFY.md` §8, which also records that three attempts to fix it did not work.
+>
+> Until it is fixed: **pass `--rerun-tasks`**, or edit the Kotlin source instead. CI is
+> unaffected — a clean checkout runs everything, and both workflows already path-filter on
+> `docs/fixtures/**`.
 
 ## The broken rows in `messy-birthdays.csv`, and why each one is there
 
