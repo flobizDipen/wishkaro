@@ -232,9 +232,11 @@ async function runFor(
   return { generationId: generation.id, result };
 }
 
-/** Poster rate-limit keys for this user, so "no slot consumed" is a measurement. */
-async function slotsUsed(): Promise<number> {
-  const keys = await redis.keys(`poster:*:${userId}:*`);
+/** IMAGE rate-limit keys for this user, so "no image slot consumed" is a measurement. */
+async function imageSlotsUsed(): Promise<number> {
+  // `poster:` only — `postercopy:` is the copy rail's own window (C8) and would otherwise
+  // be matched by the same glob, which is exactly the conflation this test is about.
+  const keys = await redis.keys(`poster:[hd]:${userId}:*`);
   if (keys.length === 0) return 0;
   const values = await redis.mget(...keys);
   return Math.max(...values.map((v) => Number(v ?? 0)));
@@ -309,7 +311,7 @@ describe('a cache hit costs nothing and consumes nothing', () => {
     // The miss DID call the provider and DID take a slot — otherwise the hit's zero below
     // would prove nothing.
     const usageAfterMiss = await prisma.aiUsage.count({ where: { userId } });
-    const slotsAfterMiss = await slotsUsed();
+    const slotsAfterMiss = await imageSlotsUsed();
     expect(usageAfterMiss).toBe(1);
     expect(slotsAfterMiss).toBe(1);
 
@@ -326,32 +328,33 @@ describe('a cache hit costs nothing and consumes nothing', () => {
 
     // Nothing new on the ledger, and no further slot.
     expect(await prisma.aiUsage.count({ where: { userId } })).toBe(usageAfterMiss);
-    expect(await slotsUsed()).toBe(slotsAfterMiss);
+    expect(await imageSlotsUsed()).toBe(slotsAfterMiss);
 
     // And a poster still came out of it.
     expect(second.result.posterId).not.toBeNull();
   });
 
-  it('makes NO call of either kind on a hit, even with a live TEXT provider', async () => {
+  it('a hit pays for no IMAGE and takes no image slot, with both providers live', async () => {
     /**
      * The case the original suite could not see.
      *
      * It always injected `FakeLlmProvider` (`isLive = false`), so the copy call never
-     * happened and "a hit writes no ledger row" was true for the wrong reason. With a
-     * live text provider the first version called the model BEFORE looking in the cache,
-     * so every hit billed for copy and wrote an `ai_usage` row — definition-of-done item
-     * 5, false in the only configuration that costs money.
+     * happened and "a hit writes no ledger row" was true for the wrong reason.
+     *
+     * **The contract changed at C8** and this test changed with it. A hit may now make
+     * one TEXT call — copy is per-person and the background cache is not, so coupling
+     * them meant the better the cache performed the less AI copy anyone got. What a hit
+     * must never do is pay for an IMAGE or take an image slot, which is the property
+     * worth ₹1–15 a time. `M6_VERIFY.md` §0.7b.
      */
     const liveLlm = new FakeLlmProvider();
     (liveLlm as unknown as { isLive: boolean }).isLive = true;
     const h = harness({}, true, liveLlm);
 
     await runFor(h, livingId);
-    const afterMiss = await prisma.aiUsage.count({ where: { userId } });
-    const slotsAfterMiss = await slotsUsed();
-    // The miss really did call both models, or the hit's zero below proves nothing.
-    expect(afterMiss).toBe(2);
-    expect(slotsAfterMiss).toBe(1);
+    // The miss called both models, or the counts below prove nothing.
+    expect(await prisma.aiUsage.count({ where: { userId } })).toBe(2);
+    expect(await imageSlotsUsed()).toBe(1);
 
     const second = await runFor(h, livingId);
     const row = await prisma.generation.findUniqueOrThrow({
@@ -359,10 +362,19 @@ describe('a cache hit costs nothing and consumes nothing', () => {
     });
 
     expect(row.cacheHit).toBe(true);
-    expect(Number(row.costInr)).toBe(0);
-    // Neither the image call NOR the copy call.
-    expect(await prisma.aiUsage.count({ where: { userId } })).toBe(afterMiss);
-    expect(await slotsUsed()).toBe(slotsAfterMiss);
+
+    // No IMAGE row and no IMAGE slot — the property that matters.
+    const imageRows = await prisma.aiUsage.count({
+      where: { userId, model: { startsWith: 'fake-image' } },
+    });
+    expect(imageRows).toBe(1); // still just the miss's
+    expect(await imageSlotsUsed()).toBe(1);
+
+    // And the copy DID run for this person, which is the point of the separate rail.
+    const copyRows = await prisma.aiUsage.count({
+      where: { userId, model: { startsWith: 'fake-model' } },
+    });
+    expect(copyRows).toBe(2);
   });
 
   it('does not let the copy call escape the global spend cap', async () => {
@@ -516,7 +528,7 @@ describe('the ledger and the rails', () => {
     // No image was called, so no poster row joined the ledger.
     expect(await prisma.aiUsage.count({ where: { generationId } })).toBe(0);
     // And being capped did not also cost the user one of their five.
-    expect(await slotsUsed()).toBe(0);
+    expect(await imageSlotsUsed()).toBe(0);
   });
 
   it('degrades once the per-user ceiling is reached, and does not fail', async () => {

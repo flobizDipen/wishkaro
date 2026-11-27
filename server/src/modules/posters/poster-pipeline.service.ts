@@ -208,9 +208,16 @@ export class PosterPipelineService {
      *    the poster limiter — was reachable only from the image path, so the copy call was
      *    bounded by nothing. Past the daily cap, every poster still billed for copy.
      *
-     * Now: resolve the theme from the user's pick (or the occasion's default), look in the
-     * cache FIRST, and return on a hit having called nothing. Only a miss reaches the one
-     * gate, and that gate covers both calls.
+     * Now each call has its OWN rail, and both rails start with the global cap (C8):
+     *
+     *  - `mayDraftCopy` governs the copy call and runs whatever the cache says, because
+     *    the background key is person-independent and the copy is not.
+     *  - `mayGenerateLive` governs the image call and is reached only on a cache MISS.
+     *
+     * So a hit pays for no image and takes no image slot — item 5's property for the call
+     * that costs ₹1–15 — while FR-POS-01's step (a) keeps happening for everyone rather
+     * than only the first person on each key. `M6_VERIFY.md` §0.7b records the trade and
+     * why it was Dipen's to make.
      */
     const resolved = await this.resolveArtwork(job, theme, occasion, person, copy);
     theme = resolved.theme;
@@ -325,45 +332,29 @@ export class PosterPipelineService {
       format: job.format,
     });
 
-    // --- the cache, BEFORE any model call ---------------------------------------------
-    const firstKey = this.themeCache.keyFor(partsFor(theme));
-    const hit = await this.themeCache.lookup(firstKey);
-    if (hit) {
-      return {
-        theme,
-        copy: templateCopy,
-        copyWasLive: false,
-        copyPromptHash: null,
-        background: {
-          png: hit.png,
-          cacheHit: true,
-          degraded: false,
-          promptHash: null,
-          promptVersion: null,
-        },
-      };
-    }
-
-    // --- a miss. ONE gate, covering both model calls ----------------------------------
-    const gate = await this.mayGenerateLive(job.userId);
-    const degraded = gate.reason === 'CAPPED' || gate.reason === 'RATE_LIMITED';
-
-    if (!gate.allowed) {
-      return {
-        theme,
-        copy: templateCopy,
-        copyWasLive: false,
-        copyPromptHash: null,
-        background: await this.libraryBackground(theme, job.format, degraded),
-      };
-    }
-
-    // --- FR-POS-01(a) ------------------------------------------------------------------
+    /**
+     * FR-POS-01(a), on its OWN rail — C8, decided by Dipen.
+     *
+     * The copy call runs whatever the background cache says, because the two have nothing
+     * in common. The background key is `(theme, event type, milestone, palette, aspect
+     * ratio)` and is deliberately person-independent — that is FR-POS-03's whole economic
+     * thesis, one image serving thousands. The copy is per-person: the name, the relation,
+     * the milestone. Coupling them, as the first fix for §0.7 did, dropped the personal
+     * half exactly when the shared half succeeded, so the better the cache performed the
+     * less AI copy anyone got.
+     *
+     * What that costs is item 5's literal wording: a cache hit may now make ONE text call.
+     * §10's own table puts that at "fractions of a paisa" against ₹1–15 for an image, and
+     * `mayGenerateLive` below is untouched, so the property that matters — a hit never
+     * pays for a picture and never takes an image slot — still holds. `M6_VERIFY.md`
+     * §0.7b records the trade.
+     */
     let copy = templateCopy;
     let copyWasLive = false;
     let copyPromptHash: string | null = null;
 
-    if (this.llm.isLive) {
+    const copyGate = await this.mayDraftCopy(job.userId);
+    if (copyGate.allowed) {
       const live = await this.draftCopy(job, person, occasion);
       if (live) {
         assertThemeAllowed(occasion.sentiment, live.copy.themeId);
@@ -371,10 +362,10 @@ export class PosterPipelineService {
         /**
          * The model's WORDS, held to the same rule as its theme.
          *
-         * The first version took the headline verbatim and re-validated only `themeId`,
-         * so a model answering "Happy Birthday, Asha" for a death anniversary would have
-         * composited that at 72px onto the poster the user sends. A violation falls back
-         * to the template rather than failing the job.
+         * Taking the headline verbatim and re-validating only `themeId` is how a model
+         * answering "Happy Birthday, Asha" for a death anniversary would have been
+         * composited at 72px onto the poster the user sends. A violation falls back to
+         * the template rather than failing the job.
          */
         const violation = solemnCopyViolation(
           occasion.sentiment,
@@ -396,27 +387,46 @@ export class PosterPipelineService {
     }
 
     /**
-     * The model may have changed the theme, which changes the cache key — so look again
-     * before paying for an image. One indexed read against a possible fifteen rupees.
+     * FR-POS-03's cache, consulted AFTER the copy call because the model may have chosen
+     * the theme, and the theme is part of the key.
+     *
+     * This is where item 5's property lives: a hit returns here having paid for no image
+     * and taken no image slot.
      */
-    const secondKey = this.themeCache.keyFor(partsFor(theme));
-    if (secondKey !== firstKey) {
-      const second = await this.themeCache.lookup(secondKey);
-      if (second) {
-        return {
+    const themeKey = this.themeCache.keyFor(partsFor(theme));
+    const hit = await this.themeCache.lookup(themeKey);
+    if (hit) {
+      return {
+        theme,
+        copy,
+        copyWasLive,
+        copyPromptHash,
+        background: {
+          png: hit.png,
+          cacheHit: true,
+          degraded: false,
+          promptHash: null,
+          promptVersion: null,
+        },
+      };
+    }
+
+    // --- the IMAGE rail, unchanged ----------------------------------------------------
+    const imageGate = await this.mayGenerateLive(job.userId);
+    if (!imageGate.allowed) {
+      return {
+        theme,
+        copy,
+        copyWasLive,
+        copyPromptHash,
+        background: await this.libraryBackground(
           theme,
-          copy,
-          copyWasLive,
-          copyPromptHash,
-          background: {
-            png: second.png,
-            cacheHit: true,
-            degraded: false,
-            promptHash: null,
-            promptVersion: null,
-          },
-        };
-      }
+          job.format,
+          // `degraded` only when a RAIL bit. The ordinary no-key path is FR-POS-04's main
+          // path, not a degradation.
+          imageGate.reason === 'CAPPED' || imageGate.reason === 'RATE_LIMITED',
+        ),
+      };
     }
 
     // --- FR-POS-01(b) ------------------------------------------------------------------
@@ -425,7 +435,7 @@ export class PosterPipelineService {
       theme,
       occasion.sentiment,
       occasion.milestone,
-      secondKey,
+      themeKey,
     );
     return { theme, copy, copyWasLive, copyPromptHash, background };
   }
@@ -535,20 +545,43 @@ export class PosterPipelineService {
   }
 
   /**
-   * Whether this request may make a live model call of EITHER kind.
+   * Whether this request may make a live COPY call (C8).
    *
-   * Reached only on a cache MISS, which is what keeps definition-of-done item 5 true: a
-   * hit never gets here, so it consumes no slot and makes no call of either kind.
+   * Its own rail, consulted on the cache-hit path as well as the miss path, because copy
+   * is per-person and the background cache is not. Same order as everywhere else in this
+   * app: the global cap first — a user nowhere near their own ceiling must not spend the
+   * last rupee of the day — then the per-user window, so being capped does not also cost
+   * them a slot.
+   */
+  private async mayDraftCopy(
+    userId: string,
+  ): Promise<{ allowed: boolean; reason: 'OK' | 'NOT_LIVE' | 'CAPPED' | 'RATE_LIMITED' }> {
+    if (!this.llm.isLive) return { allowed: false, reason: 'NOT_LIVE' };
+
+    if (await this.spendCap.isCapped()) {
+      this.logger.warn('Global spend cap reached; poster copy falls back to the template.');
+      return { allowed: false, reason: 'CAPPED' };
+    }
+
+    const verdict = await this.rateLimit.consumeCopy(userId);
+    if (!verdict.allowed) return { allowed: false, reason: 'RATE_LIMITED' };
+
+    return { allowed: true, reason: 'OK' };
+  }
+
+  /**
+   * Whether this request may generate a live IMAGE.
+   *
+   * Reached only on a cache MISS, which is what keeps item 5's property true for the
+   * expensive call: a hit never gets here, so it pays for no image and takes no image
+   * slot. Copy is bounded separately — see `mayDraftCopy` and `M6_VERIFY.md` §0.7b.
    */
   private async mayGenerateLive(
     userId: string,
   ): Promise<{ allowed: boolean; reason: 'OK' | 'NOT_LIVE' | 'CAPPED' | 'RATE_LIMITED' }> {
-    // NOT_LIVE only when NEITHER provider can spend. The gate covers the copy call as
-    // well as the image call now, so keying it on the image provider alone would let a
-    // text-only deployment make unbounded copy calls.
-    if (!this.images.isLive && !this.llm.isLive) {
-      return { allowed: false, reason: 'NOT_LIVE' };
-    }
+    // The IMAGE provider only. Copy has its own rail (`mayDraftCopy`) since C8, so a
+    // text-only deployment is bounded there rather than here.
+    if (!this.images.isLive) return { allowed: false, reason: 'NOT_LIVE' };
 
     if (await this.spendCap.isCapped()) {
       // §10 rule 6's "automatic degradation to the pre-approved theme library" — which M5

@@ -272,14 +272,29 @@ every request is a miss and the copy path always runs.
 
 | Option | What it gives up |
 |---|---|
-| **A — as shipped.** One gate; a background hit skips copy entirely | FR-POS-01's step (a) stops happening on the common path. Live copy becomes a first-request-per-key luxury, and the more successful the cache, the rarer it is |
-| **B — a separate rail for copy.** Its own gate (cap, then its own limiter) and its own cache decision, leaving the image path exactly as it is now | Item 5's literal wording. A hit would make one *text* call — which §10's own cost table puts at "fractions of a paisa" against ₹1–15 for an image, so the economic argument is barely touched; but the sentence in the definition of done would need rewording, and that is not a session's to reword |
+| **A — not chosen.** One gate; a background hit skips copy entirely | FR-POS-01's step (a) stops happening on the common path. Live copy becomes a first-request-per-key luxury, and the more successful the cache, the rarer it is |
+| **B — CHOSEN.** A separate rail for copy: its own gate (cap, then its own limiter), leaving the image path exactly as it was | Item 5's literal wording. A hit would make one *text* call — which §10's own cost table puts at "fractions of a paisa" against ₹1–15 for an image, so the economic argument is barely touched; but the sentence in the definition of done would need rewording, and that is not a session's to reword |
 
-**This is not mine to choose**: it decides what the product does, not how the code is
-arranged. Option A is what is on the branch because it fell out of fixing §0.7, not because
-it was selected. If B is wanted, the shape is a second rail beside `mayGenerateLive` —
-`mayDraftCopy`, consulted on both the hit and miss paths — which keeps item 5's property
-for the expensive call.
+**Dipen chose B, and B is what is on the branch.**
+
+`mayDraftCopy` is a second rail beside `mayGenerateLive`, consulted on the hit path as well
+as the miss path. Both rails take the global cap first and then their own per-user window,
+in the order this app has used since M5 — a user nowhere near their own ceiling must not
+spend the last rupee of the day, and being capped must not also cost them a slot. The copy
+window is separate and much higher (`POSTER_COPY_LIMIT_HOUR` 60, `POSTER_COPY_LIMIT_DAY`
+400, against 5 and 20 for images), because sharing one counter would ration a call costing
+fractions of a paisa to protect the budget for one costing ₹1–15.
+
+So the pipeline is now: copy rail → cache lookup → image rail on a miss. The cache is
+consulted *after* the copy call because the model may choose the theme and the theme is
+part of the key.
+
+**What item 5 means now.** Its literal wording — "makes no model call" — no longer holds: a
+hit may make one text call. What holds is the property the item exists for, and the one
+worth ₹1–15 a time: **a hit pays for no image and takes no image slot.** The DB test was
+rewritten to assert exactly that, and to assert the copy *did* run, which is the point of
+the separate rail. The wording of item 5 is Dipen's to adjust in the build prompt; this
+document does not quietly redefine it.
 
 ### 0.8 The fix for §0.6 was itself a regression, by 8x
 
@@ -365,7 +380,7 @@ not merge them.
 | 2 | The same for a **solemn** occasion, no celebratory theme reachable, hand-checked by Dipen | **PARTIAL / BLOCKED** | **The filter: PROVED five ways**, all with `is_deceased` still false on the server. On the handset: the person screen read "Send a message" and **"Make a remembrance poster"**, the studio was titled "Remembrance poster", and the picker's view tree held exactly `ph-stillwater`, `ph-dusk`, `ph-lamp` and **no celebratory node**; generating gave `family=SOLEMN, sentiment=SOLEMN` in 207ms. Asha, on the same handset, got exactly the four celebratory swatches and none of the solemn — so the gate is not answering SOLEMN to everything. Plus the server's 400 `THEME_NOT_ALLOWED`, the DB-backed pipeline test and the instrumented picker test. **The hand-check: BLOCKED on TBD-5** — the themes are placeholders and nobody has judged the art |
 | 3 | All three formats produced and inspected at full size | **PROVED** | 1080×1920, 1080×1080 and 1200×630 produced through the API and read back off disk at those exact dimensions. I opened the STATUS and LINK ones; §0.1 is what that found |
 | 4 | The no-photo path produces something good enough to send | **PARTIAL / BLOCKED** | **Mechanism: PROVED.** The typographic template centres, wraps, keeps a rule above the headline and carries the attribution — and after §0.1 it is legible, which it was not. **"Good enough": BLOCKED on TBD-5.** That sentence is a judgement and the artwork is a placeholder gradient by design |
-| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED, and see C8** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. That test **passed on CI** (it cannot run on this machine — §10), so item 5 now holds in the configuration that costs money. **But read §0.7b first**: the fix achieves it by skipping the copy call on a hit too, trading away FR-POS-01's step (a) on the common path. That trade is raised for Dipen, not settled |
+| 5 | A cache **hit** measured: no model call, no ledger row, no rate-limit slot | **PROVED for the image call; the wording needs amending — C8** | The original proof held only with `FakeLlmProvider` — with a live text provider the copy call ran before the cache lookup, so a hit called a model and wrote a row (§0.7 #3). Fixed, and a new DB test runs the whole pipeline with a live-reporting text provider and asserts a hit adds **no** `ai_usage` row of either kind. That test **passed on CI** (it cannot run on this machine — §10). Then C8 (§0.7b) changed the contract on Dipen's instruction: copy runs on its own rail, so a hit may make one text call and FR-POS-01's step (a) keeps happening for everyone. The test now asserts the property the item exists for — **a hit pays for no image and takes no image slot** — and that the copy did run. The item's literal wording is stale and is Dipen's to amend |
 | 6 | A cache **miss** measured end to end, p95 under 15s | **BLOCKED** | A miss *is* a live generation and there is no key. The library miss (render + store + composite) is 136ms, which is a measurement of the cheap path, not of the one the target is about |
 | 7 | A ledger row per generation with a non-zero **measured** INR, and image pricing in `pricing.ts` | **PARTIAL / BLOCKED** | **Pricing: PROVED present**, per image and per `(model, quality, size)`. **One row per call: PROVED** — including for a REFUSED image, where the call happened and produced nothing. **Non-zero measured: BLOCKED.** The fake is priced at ₹0 and the published rates in `pricing.ts` are unverified; TBD-1 is open. Arithmetic from a rate table is not a measurement, and M5 was right to refuse to call one the other |
 | 8 | The global spend cap observed degrading a poster request to cached themes | **PROVED** | Ledger seeded to ₹250 against a ₹200 cap; the request came back `SUCCEEDED`, `degraded=true`, with a poster, no `ai_usage` row and no rate-limit slot consumed — being capped is our budget, not the user's allowance |
@@ -608,10 +623,11 @@ Unchanged from `M6_PLAN.md` §9. Restated with what the work has since shown.
 7. **C3 — `Generation` as a second table**, and the §8 amendment note that goes with it.
 8. **C4 — FR-POS-01 still names Claude.** Same correction D20 got.
 9. **C5 — the theme library's split home.** Manifest in the app, artwork from the server.
-10. **C8 — does a background cache hit still get live COPY?** (§0.7b.) The fix for §0.7
-    couples the two calls, so today it does not, and FR-POS-01's step (a) stops happening
-    on the common path. Both options and what each costs are in §0.7b. **This one changes
-    what the product does and is not a session's to pick.**
+10. ~~C8 — does a background cache hit still get live COPY?~~ **Answered: yes, on its own
+    rail** (§0.7b). Implemented. The one thing left is the *wording* of definition-of-done
+    item 5 in `BUILD_PROMPT_M6.md`, which still says a hit makes "no model call" — true of
+    the image and no longer of the copy. That sentence is yours to adjust; this branch did
+    not rewrite it to match the code.
 11. ~~The handset's keyguard~~ — **done.** Unlocked and signed in; §3.1 is what that
     bought, including the two bugs at §0.4 and §0.5. The one thing left on the device is
     the final tap into WhatsApp, which is yours by the same rule M5 settled on.

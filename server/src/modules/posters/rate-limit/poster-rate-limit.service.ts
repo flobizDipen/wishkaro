@@ -52,8 +52,37 @@ export class PosterRateLimitService {
    * let a user whose every prompt trips a classifier spend without bound.
    */
   async consume(userId: string, now: Date = new Date()): Promise<RateLimitVerdict> {
-    const hourKey = `poster:h:${userId}:${now.toISOString().slice(0, 13)}`;
-    const dayKey = `poster:d:${userId}:${now.toISOString().slice(0, 10)}`;
+    return this.count('poster', userId, now, this.env.POSTER_LIMIT_HOUR, this.env.POSTER_LIMIT_DAY);
+  }
+
+  /**
+   * The COPY call's ceiling — a separate window, on purpose (C8).
+   *
+   * Copy and image are two rails because they cost three orders of magnitude apart and
+   * because a background cache hit serves everyone while copy is per-person. Sharing one
+   * counter would let five posters an hour exhaust the allowance for a call that costs
+   * fractions of a paisa, and would make a cache hit — which should cost nothing on the
+   * image side — consume the image budget.
+   */
+  async consumeCopy(userId: string, now: Date = new Date()): Promise<RateLimitVerdict> {
+    return this.count(
+      'postercopy',
+      userId,
+      now,
+      this.env.POSTER_COPY_LIMIT_HOUR,
+      this.env.POSTER_COPY_LIMIT_DAY,
+    );
+  }
+
+  private async count(
+    prefix: string,
+    userId: string,
+    now: Date,
+    perHour: number,
+    perDay: number,
+  ): Promise<RateLimitVerdict> {
+    const hourKey = `${prefix}:h:${userId}:${now.toISOString().slice(0, 13)}`;
+    const dayKey = `${prefix}:d:${userId}:${now.toISOString().slice(0, 10)}`;
 
     let hourCount: number;
     let dayCount: number;
@@ -82,10 +111,10 @@ export class PosterRateLimitService {
       return { allowed: false, retryAfterSeconds: 60, window: null };
     }
 
-    if (hourCount > this.env.POSTER_LIMIT_HOUR) {
+    if (hourCount > perHour) {
       return { allowed: false, retryAfterSeconds: secondsToNextHour(now), window: 'hour' };
     }
-    if (dayCount > this.env.POSTER_LIMIT_DAY) {
+    if (dayCount > perDay) {
       return { allowed: false, retryAfterSeconds: secondsToNextDay(now), window: 'day' };
     }
     return { allowed: true, retryAfterSeconds: 0, window: null };

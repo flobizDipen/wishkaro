@@ -232,6 +232,17 @@ const EnvSchema = z
     POSTER_LIMIT_DAY: z.coerce.number().int().positive().default(20),
 
     /**
+     * The COPY call's own ceilings, separate from the image ceilings above (C8).
+     *
+     * Much higher, because the two cost three orders of magnitude apart: §10's own table
+     * puts a text call at "fractions of a paisa" against ₹1–15 for an image. Sharing the
+     * image ceiling would ration the cheap call to protect the budget for the expensive
+     * one, which is the thing FR-POS-03 says not to do.
+     */
+    POSTER_COPY_LIMIT_HOUR: z.coerce.number().int().positive().default(60),
+    POSTER_COPY_LIMIT_DAY: z.coerce.number().int().positive().default(400),
+
+    /**
      * Moderation (§10 rule 7, FR-POS-12).
      *
      * `fake` records `UNCHECKED` and allows, which is honest: no verdict was reached. It does
