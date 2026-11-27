@@ -405,17 +405,21 @@ Server CI green on the branch head, including the migration applied to a clean P
 
 ### 7.2 Three timezones — PARTIAL, and honestly so
 
+Re-run after §7.3's DI-graph suite was added, so these are the final numbers:
+
 ```
-UTC                Tests: 565 passed, 565 total     (after §0.2's unexplained run)
-Pacific/Chatham    Tests: 565 passed, 565 total
-Asia/Kolkata       Tests: 565 passed, 565 total
+UTC                Tests: 573 passed, 573 total
+Pacific/Chatham    Tests: 573 passed, 573 total
+Asia/Kolkata       Tests: 573 passed, 573 total
 ```
 
-(573 after §7.3's DI-graph suite was added; the three-zone run above predates it.)
+**573, not the full suite** — these exclude the four `.db.spec.ts` suites, which need the
+Postgres this machine cannot start (§0.1). CI runs those, in **UTC only**. So nobody has run a
+DB-backed suite in a second timezone, and item 10's three-timezone clause covers the pure
+suites alone.
 
-**565, not 640** — these exclude the four `.db.spec.ts` suites, which need the Postgres this
-machine cannot start. CI runs all 640 in **UTC only**. So nobody has run a DB-backed suite in a
-second timezone, and item 10's three-timezone clause covers the pure suites alone.
+An earlier three-zone run, before the DI-graph suite, was 565 in each zone — and was preceded
+by the unexplained 21-failure UTC run in §0.2.
 
 ### 7.3 CI does not boot this app, and M9 added two modules to its graph
 
