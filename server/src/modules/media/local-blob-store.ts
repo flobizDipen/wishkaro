@@ -134,7 +134,9 @@ export class LocalBlobStore implements BlobStore {
   }
 
   private sign(key: string, expires: number): string {
-    return createHmac('sha256', this.signingSecret).update(`${key}\n${expires}`).digest('base64url');
+    return createHmac('sha256', this.signingSecret)
+      .update(`${key}\n${expires}`)
+      .digest('base64url');
   }
 
   logWhereItIs(): void {
@@ -157,5 +159,7 @@ export class LocalBlobStore implements BlobStore {
 const SAFE_KEY = /^(?!.*\.\.)[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/;
 
 function isNotFound(cause: unknown): boolean {
-  return typeof cause === 'object' && cause !== null && (cause as { code?: string }).code === 'ENOENT';
+  return (
+    typeof cause === 'object' && cause !== null && (cause as { code?: string }).code === 'ENOENT'
+  );
 }

@@ -3,6 +3,8 @@ import { APP_ENV, type AppEnv } from '../../config/env';
 import { BLOB_STORE, type BlobStore } from './blob-store';
 import { LocalBlobStore } from './local-blob-store';
 import { MediaController } from './media.controller';
+import { PhotoService } from './photo.service';
+import { PhotosController } from './photos.controller';
 
 /**
  * Where bytes live (FR-POS-01's compositing output, FR-POS-03's cache, FR-PPL-04's photo).
@@ -12,8 +14,9 @@ import { MediaController } from './media.controller';
  */
 @Global()
 @Module({
-  controllers: [MediaController],
+  controllers: [MediaController, PhotosController],
   providers: [
+    PhotoService,
     {
       provide: BLOB_STORE,
       inject: [APP_ENV],
@@ -48,7 +51,7 @@ import { MediaController } from './media.controller';
       },
     },
   ],
-  exports: [BLOB_STORE],
+  exports: [BLOB_STORE, PhotoService],
 })
 export class MediaModule implements OnModuleInit {
   private readonly logger = new Logger(MediaModule.name);
