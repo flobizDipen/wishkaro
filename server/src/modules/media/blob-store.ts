@@ -119,8 +119,18 @@ export const SIGNED_URL_TTL_SECONDS = 600;
 export type BlobNamespace = 'themes' | 'posters' | 'photos';
 
 export function blobKeyFor(namespace: BlobNamespace, id: string, extension: string): string {
-  const safeId = id.toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(safeId)) {
+  /**
+   * Validated BEFORE any normalisation.
+   *
+   * This used to lowercase first and then test, so an uppercase id never reached the throw
+   * — it was silently rewritten, which is precisely the behaviour the comment below says
+   * it refuses. `blobKeyFor('themes','AB12CD',...)` and `blobKeyFor('themes','ab12cd',...)`
+   * returned the same key. No caller collides today (all three pass lowercase hex), but
+   * the day one mints an id from a case-sensitive source — a base64url digest, a cuid, a
+   * mixed-case theme id — two distinct ids would resolve to one object, `put` would
+   * overwrite, and the unique constraint one layer up could not see it.
+   */
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     // uuid v7, a hex digest, nothing else. Throwing rather than sanitising: a caller that
     // reached here with something else has a bug, and silently rewriting its id would put
     // two of its objects in one place.
@@ -129,6 +139,7 @@ export function blobKeyFor(namespace: BlobNamespace, id: string, extension: stri
   if (!/^[a-z0-9]+$/.test(extension)) {
     throw new Error(`Refusing to mint a blob key with extension "${extension}"`);
   }
+  const safeId = id;
   // Two characters of fan-out. A flat directory of a hundred thousand posters is slow to
   // list on every filesystem and some object stores still shard on the first bytes of a key.
   return `${namespace}/${safeId.slice(0, 2)}/${safeId}.${extension}`;

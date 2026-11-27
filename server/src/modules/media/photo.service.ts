@@ -1,8 +1,17 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BLOB_STORE, SIGNED_URL_TTL_SECONDS, blobKeyFor, type BlobStore } from './blob-store';
+import { PhotoRateLimitService } from './photo-rate-limit.service';
 
 /**
  * A person's photo: upload, store, and hand to the compositor.
@@ -48,12 +57,16 @@ import { BLOB_STORE, SIGNED_URL_TTL_SECONDS, blobKeyFor, type BlobStore } from '
 /** Long edge. Comfortably above the largest photo box any format uses (760px). */
 const MAX_EDGE = 1600;
 
+/** See the `limitInputPixels` comment below. 50 MP is above any phone camera. */
+const MAX_INPUT_PIXELS = 50_000_000;
+
 @Injectable()
 export class PhotoService {
   private readonly logger = new Logger(PhotoService.name);
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly rateLimit: PhotoRateLimitService,
     @Inject(BLOB_STORE) private readonly blobs: BlobStore,
   ) {}
 
@@ -77,11 +90,68 @@ export class PhotoService {
       throw new NotFoundException({ code: 'PERSON_NOT_FOUND', message: 'No such person' });
     }
 
+    /**
+     * The ceiling, taken after ownership and before any decoding.
+     *
+     * After ownership so a 404 costs nothing; before `sharp` touches the bytes, because
+     * the decode is the expensive thing being bounded.
+     */
+    const verdict = await this.rateLimit.consume(userId);
+    if (!verdict.allowed) {
+      throw new HttpException(
+        {
+          code: 'RATE_LIMITED',
+          message: 'That is a lot of photos at once. Try again shortly.',
+          retryAfterSeconds: verdict.retryAfterSeconds,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    /**
+     * What the bytes ACTUALLY are, not what the header claimed.
+     *
+     * `configure-app.ts` gates on the `Content-Type`, which is the client's word for it.
+     * Without this check anything libvips can decode is accepted and stored — an SVG sent
+     * as `image/png` was verified to be rasterised and kept. Nothing worse followed in
+     * this build (librsvg refuses network refs and rejects XXE), but exposing the GIF,
+     * TIFF, AVIF and SVG decoders to arbitrary bytes for a feature that wants three
+     * formats is surface for nothing.
+     *
+     * `metadata()` reads the header only, so this costs no decode.
+     */
+    const ACCEPTED = new Set(['jpeg', 'png', 'webp']);
+    try {
+      const probed = await sharp(body, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
+      if (!probed.format || !ACCEPTED.has(probed.format)) {
+        throw new Error(`decoded as ${probed.format ?? 'nothing'}`);
+      }
+    } catch (cause) {
+      this.logger.warn(`Photo upload refused: ${String(cause)}`);
+      throw new BadRequestException({
+        code: 'NOT_AN_IMAGE',
+        message: "That file isn't a JPEG, PNG or WebP we can read",
+      });
+    }
+
     let jpeg: Buffer;
     let width: number;
     let height: number;
     try {
-      const pipeline = sharp(body)
+      const pipeline = sharp(body, {
+        /**
+         * A ceiling on DECODED pixels, well below sharp's default of 268 megapixels.
+         *
+         * Measured on this machine against the installed sharp: a 0.72 MB solid-colour PNG
+         * declaring 16000x16000 = 256 MP sits just under the default limit, decodes
+         * happily, and costs ~143 MB of RSS and ~220 ms. Thirty of those in flight from
+         * one signed-in account OOMs the container for 20 MB of upstream traffic.
+         *
+         * 50 MP is above any phone camera this app will meet — a 48 MP sensor is 48 MP —
+         * so it costs nothing real and turns the bomb into a 400.
+         */
+        limitInputPixels: MAX_INPUT_PIXELS,
+      })
         // Applies the EXIF orientation while that EXIF still exists. Everything after this
         // line is working with pixels whose top is the top.
         .rotate()

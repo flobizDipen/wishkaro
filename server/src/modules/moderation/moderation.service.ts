@@ -91,10 +91,23 @@ export class ModerationService {
   }
 }
 
-/** BLOCKED beats ALLOWED beats UNCHECKED. */
+/**
+ * BLOCKED beats UNCHECKED beats ALLOWED — **in that order, and the middle one is the fix.**
+ *
+ * This used to let ALLOWED win over UNCHECKED, which contradicted the contract stated at
+ * the top of this file ("ALLOWED only if a classifier actually allowed it") seventy lines
+ * above. `checkFreeTexts` returns ALLOWED whenever the deterministic rules pass, so
+ * `strongest(ALLOWED, UNCHECKED)` returned ALLOWED: a classifier that timed out was
+ * recorded as an approval, in the one column that exists to say whether moderation ran.
+ *
+ * `worst()` in `poster-pipeline.service.ts` already implements this lattice for the same
+ * three values; the two combinators in one flow disagreed.
+ */
 function strongest(a: ModerationCheck, b: ModerationCheck): ModerationCheck {
   if (a.verdict === 'BLOCKED') return a;
   if (b.verdict === 'BLOCKED') return b;
-  if (b.verdict === 'ALLOWED') return b;
-  return a.verdict === 'ALLOWED' ? a : b;
+  // UNCHECKED is the weaker CLAIM and therefore the stronger answer: it says nobody looked.
+  if (a.verdict === 'UNCHECKED') return a;
+  if (b.verdict === 'UNCHECKED') return b;
+  return a;
 }

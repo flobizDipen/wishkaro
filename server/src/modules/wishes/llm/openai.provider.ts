@@ -539,6 +539,11 @@ function posterCopySchema(themeIds: readonly string[]) {
  * the allowed set even though the schema is an enum, because the schema is a request and a
  * model is an untrusted input — the same reason `assertThemeAllowed` runs again afterwards.
  */
+/** Four long words and a little slack. A headline is set at 64-96px. */
+const MAX_HEADLINE = 80;
+/** A year count or a milestone, never a sentence. */
+const MAX_SUBLINE = 120;
+
 export function parsePosterCopy(
   outputText: string | null | undefined,
   themeIds: readonly string[],
@@ -555,7 +560,19 @@ export function parsePosterCopy(
   if (typeof body !== 'object' || body === null) return null;
   const { headline, subline, themeId } = body as Record<string, unknown>;
 
+  /**
+   * Length is validated HERE, not left to the schema's prose description.
+   *
+   * `strict: true` enforces shape, not semantics — "Three or four words" is a hint the
+   * model may ignore, and `max_output_tokens: 400` leaves room for well over a thousand
+   * characters. An over-long headline is the single most common way a copy model
+   * misbehaves, and unbounded it reached the compositor, where measuring a 300-character
+   * string costs about a second and then silently falls back to the width estimate.
+   * Rejecting it here makes it the MALFORMED retry rule 3 already describes.
+   */
   if (typeof headline !== 'string' || headline.trim() === '') return null;
+  if (headline.trim().length > MAX_HEADLINE) return null;
+  if (typeof subline === 'string' && subline.trim().length > MAX_SUBLINE) return null;
   if (typeof themeId !== 'string' || !themeIds.includes(themeId)) return null;
   if (subline !== null && typeof subline !== 'string') return null;
 

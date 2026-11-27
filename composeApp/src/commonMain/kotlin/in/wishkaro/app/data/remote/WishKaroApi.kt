@@ -224,7 +224,27 @@ class WishKaroApi(
      * fetches it as itself with no session of ours. Sending a bearer token to a route that
      * ignores it would be a token in one more place for no benefit.
      */
-    suspend fun downloadMedia(absoluteUrl: String): ByteArray = client.get(absoluteUrl).body()
+    suspend fun downloadMedia(absoluteUrl: String): ByteArray {
+        /**
+         * Status-checked like every other call here.
+         *
+         * This was `client.get(url).body()`, and the client is built with
+         * `expectSuccess = false` — so a non-2xx body came back as bytes. A signed media
+         * URL lives ten minutes and the poll can run nearly thirty seconds before the
+         * fetch, so an expired signature returns a 403 JSON body; those forty-odd bytes
+         * became `posterBytes`, which enabled both hand-over buttons and would have
+         * written the error JSON to `poster.png` and handed it to a contact.
+         */
+        val response = client.get(absoluteUrl)
+        if (response.status.value !in 200..299) {
+            throw ApiException(
+                status = response.status.value,
+                code = "MEDIA_FETCH_FAILED",
+                message = "Could not fetch ${'$'}absoluteUrl",
+            )
+        }
+        return response.body()
+    }
 
     suspend fun deletePhoto(personId: String) {
         authed { token ->

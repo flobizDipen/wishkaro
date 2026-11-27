@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import sharp from 'sharp';
 
 /**
@@ -37,9 +38,18 @@ import sharp from 'sharp';
  * It is exact on whatever font is actually installed, which is the only question that
  * matters.
  *
- * **Cost.** One render per distinct string, memoised. A measure canvas is small and
- * monochrome; against a ~150ms poster the two measurements a headline and a subline need
- * are not the expensive part, and `composePoster` already awaits several `sharp` pipelines.
+ * **Cost, measured — and the first version of this comment claimed it without measuring.**
+ * It said the canvas was "small" and the measurements "not the expensive part". Both were
+ * false: the canvas was sized from the string, so a long name rendered at 200px produced a
+ * canvas tens of thousands of pixels wide. Timed on this machine, `fitText` on the STATUS
+ * no-photo path cost **229 ms for an ordinary name** and **1,172 ms at the 120-character
+ * `displayName` cap** — against a poster that otherwise takes about 150 ms end to end.
+ *
+ * Fixed by measuring at a size that makes the canvas small instead of large, and clamping
+ * it. `REF_SIZE` is now 32 rather than 200: text width scales linearly with font size, so
+ * a smaller reference is the same arithmetic on a canvas roughly forty times smaller in
+ * area. The clamp bounds the pathological case rather than letting librsvg refuse the
+ * document at 32,767px and silently hand back the estimate.
  */
 
 /**
@@ -67,10 +77,27 @@ export function estimateWidth(text: string, fontSize: number): number {
 }
 
 /**
- * The size the text is measured at. Large enough that hinting and rounding are a fraction
- * of a percent, small enough that the measure canvas is cheap.
+ * The size the text is measured at.
+ *
+ * Small on purpose. The measurement is a RATIO, so the only thing a larger reference buys
+ * is less hinting error; at 32px the error against a 200px render is well under a percent,
+ * which is far inside the margin `fitText` already leaves. What it costs is quadratic:
+ * see the measured numbers in the header.
  */
-const REF_SIZE = 200;
+const REF_SIZE = 32;
+
+/**
+ * The widest measure canvas we will ever ask librsvg for.
+ *
+ * Past roughly 32,767px it refuses the document outright, which used to land in the bare
+ * `catch` below and silently reinstate the estimate — the exact clipping this module
+ * exists to prevent, with no log line. Clamping instead means a pathological string is
+ * measured on a bounded canvas and merely truncated, which is visible and correct.
+ */
+const MAX_MEASURE_WIDTH = 16_000;
+
+/** Module-level: this file is pure and has no injected logger. */
+const MEASURE_LOG = new Logger('TextFitting');
 
 /**
  * Memoised, because the same name is measured for the headline of every format and every
@@ -88,8 +115,16 @@ const MEASURE_CACHE_MAX = 500;
  * step that can throw must not be the thing that stops a poster being made, and the
  * estimate is what the first version shipped, so falling back to it is no worse than that.
  */
-export async function measureEm(text: string, fontStack: string): Promise<number> {
-  const key = `${fontStack}\u0000${text}`;
+export async function measureEm(
+  text: string,
+  fontStack: string,
+  fontWeight: number = 700,
+): Promise<number> {
+  // The weight is part of the key: the subline is DRAWN at 400 and was being MEASURED at
+  // 700, which is the "measuring in one font and drawing in another" mistake this module
+  // names as the bug it exists to prevent. Harmless in direction today (bold is wider, so
+  // the text shrank rather than overflowed) and not harmless the moment a layout changes.
+  const key = `${fontStack}\u0000${fontWeight}\u0000${text}`;
   const cached = MEASURE_CACHE.get(key);
   if (cached !== undefined) return cached;
 
@@ -97,12 +132,15 @@ export async function measureEm(text: string, fontStack: string): Promise<number
   try {
     // Generous canvas: wide enough that nothing is clipped before it is measured, which
     // would make an over-long line measure as exactly the canvas width and "fit".
-    const width = Math.ceil(estimateWidth(text, REF_SIZE) * 2 + REF_SIZE * 4);
+    const width = Math.min(
+      MAX_MEASURE_WIDTH,
+      Math.ceil(estimateWidth(text, REF_SIZE) * 2 + REF_SIZE * 4),
+    );
     const height = REF_SIZE * 3;
     const svg =
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
       `<text x="${REF_SIZE}" y="${REF_SIZE * 2}" font-family="${fontStack}" ` +
-      `font-size="${REF_SIZE}" font-weight="700" fill="#000">${escapeXml(text)}</text></svg>`;
+      `font-size="${REF_SIZE}" font-weight="${fontWeight}" fill="#000">${escapeXml(text)}</text></svg>`;
 
     const { info } = await sharp(Buffer.from(svg))
       .png()
@@ -112,7 +150,17 @@ export async function measureEm(text: string, fontStack: string): Promise<number
     em = info.width / REF_SIZE;
     // A string that draws nothing — all spaces, or a glyph the font lacks entirely.
     if (!Number.isFinite(em) || em <= 0) em = estimateWidth(text, 1);
-  } catch {
+  } catch (cause) {
+    /**
+     * The fallback is the ESTIMATE — the number this module exists to stop trusting — so
+     * it is logged rather than taken silently. A quiet fallback here reinstates the
+     * clipping bug with a green suite and a clean log, which is how it survived the first
+     * time.
+     */
+    MEASURE_LOG.warn(
+      `Could not measure a ${text.length}-character string; falling back to the width ` +
+        `ESTIMATE, which may clip. ${String(cause)}`,
+    );
     em = estimateWidth(text, 1);
   }
 
@@ -141,6 +189,8 @@ export interface FitOptions {
   /** The size the layout wants. Never exceeded — fitting only ever shrinks. */
   nominalSize: number;
   maxLines: number;
+  /** The weight the text will be DRAWN at. Measured at the same weight. */
+  fontWeight?: number;
   /**
    * The font the text will actually be drawn in — the same stack `compositor.ts` puts in
    * the SVG. Passed in rather than imported, because measuring in one font and drawing in
@@ -172,6 +222,7 @@ export interface FitOptions {
  */
 export async function fitText(text: string, options: FitOptions): Promise<FittedText> {
   const { maxWidth, nominalSize, maxLines, fontStack } = options;
+  const fontWeight = options.fontWeight ?? 700;
   const minSize = options.minSize ?? 28;
   const trimmed = text.trim();
   if (trimmed === '') return { lines: [''], fontSize: nominalSize };
@@ -181,14 +232,14 @@ export async function fitText(text: string, options: FitOptions): Promise<Fitted
     if (!lines) continue;
 
     // MEASURED, not estimated. The break point above is a guess; this is not.
-    const widestEm = await widestEmOf(lines, fontStack);
+    const widestEm = await widestEmOf(lines, fontStack, fontWeight);
     if (widestEm * nominalSize <= maxWidth) return { lines, fontSize: nominalSize };
   }
 
   // Nothing fits at the nominal size. Wrap as far as allowed, then take the size straight
   // from the measurement. `floor`, because rounding up is how a fit becomes a crop.
   const lines = wrapInto(trimmed, maxLines, nominalSize, maxWidth) ?? [trimmed];
-  const widestEm = await widestEmOf(lines, fontStack);
+  const widestEm = await widestEmOf(lines, fontStack, fontWeight);
   const needed = Math.floor(maxWidth / widestEm);
 
   if (needed >= minSize) {
@@ -199,13 +250,20 @@ export async function fitText(text: string, options: FitOptions): Promise<Fitted
   // always inside the canvas.
   const fontSize = Math.min(minSize, nominalSize);
   const shortened: string[] = [];
-  for (const line of lines) shortened.push(await truncateTo(line, maxWidth, fontSize, fontStack));
+  for (const line of lines)
+    shortened.push(await truncateTo(line, maxWidth, fontSize, fontStack, fontWeight));
   return { lines: shortened, fontSize };
 }
 
-async function widestEmOf(lines: readonly string[], fontStack: string): Promise<number> {
+async function widestEmOf(
+  lines: readonly string[],
+  fontStack: string,
+  fontWeight: number,
+): Promise<number> {
   let widest = 0;
-  for (const line of lines) widest = Math.max(widest, await measureEm(line, fontStack));
+  for (const line of lines) {
+    widest = Math.max(widest, await measureEm(line, fontStack, fontWeight));
+  }
   // A line of pure whitespace measures zero ink; never divide by it.
   return widest > 0 ? widest : 1;
 }
@@ -221,13 +279,14 @@ async function truncateTo(
   maxWidth: number,
   fontSize: number,
   fontStack: string,
+  fontWeight: number,
 ): Promise<string> {
-  if ((await measureEm(line, fontStack)) * fontSize <= maxWidth) return line;
+  if ((await measureEm(line, fontStack, fontWeight)) * fontSize <= maxWidth) return line;
 
   let chars = [...line];
   for (let attempt = 0; attempt < 12 && chars.length > 1; attempt++) {
     const candidate = `${chars.join('').trimEnd()}\u2026`;
-    const width = (await measureEm(candidate, fontStack)) * fontSize;
+    const width = (await measureEm(candidate, fontStack, fontWeight)) * fontSize;
     if (width <= maxWidth) return candidate;
     const keep = Math.max(1, Math.floor(chars.length * (maxWidth / width)) - 1);
     chars = chars.slice(0, keep);

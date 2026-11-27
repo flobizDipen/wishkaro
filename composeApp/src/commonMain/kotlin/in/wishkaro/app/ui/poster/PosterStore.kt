@@ -16,10 +16,12 @@ import `in`.wishkaro.app.domain.upcomingFor
 import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.platform.MessageSender
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.todayIn
@@ -99,6 +101,7 @@ data class PosterState(
                 stage == other.stage &&
                 poster == other.poster &&
                 posterBytes?.size == other.posterBytes?.size &&
+                posterBytes?.firstOrNull() == other.posterBytes?.firstOrNull() &&
                 cacheHit == other.cacheHit &&
                 problem == other.problem &&
                 photoUrl == other.photoUrl &&
@@ -141,6 +144,27 @@ class PosterStore(
     val state: StateFlow<PosterState> = _state.asStateFlow()
 
     /**
+     * The generation currently being polled, so a new one can cancel it.
+     *
+     * Without this the store leaked a poll per Generate. Two ways it showed:
+     *
+     *  - **Another person's poster.** Open Alice, Generate, go back, open Bob. `open()`
+     *    resets the state; Alice's poll — up to ~27 seconds — then wrote her poster and
+     *    her bytes into Bob's studio, with the hand-over buttons live on it.
+     *  - **The older poll winning.** Tapping a swatch sets `stage = IDLE`, which re-enables
+     *    Generate while a poll is still running; whichever finished last wrote the state,
+     *    and an exhausted older poll could stamp FAILED over a newer READY.
+     */
+    private var inFlight: Job? = null
+
+    /**
+     * Which person the in-flight work belongs to. A cancelled coroutine can still be
+     * between its last suspension point and its next write, so cancellation alone is not
+     * enough — every write checks it is still writing about the person on screen.
+     */
+    private var inFlightPersonId: String? = null
+
+    /**
      * Open on a person, and optionally a specific event.
      *
      * Takes a [Person] rather than an id, as `WishStore.open` does: the screen has already
@@ -153,6 +177,11 @@ class PosterStore(
      * disagree about which occasion a person is about to be greeted for.
      */
     fun open(person: Person, eventId: String?) {
+        // Whatever was being polled belongs to the previous screen.
+        inFlight?.cancel()
+        inFlight = null
+        inFlightPersonId = person.id
+
         val zone = TimeZone.currentSystemDefault()
         val today = Clock.System.todayIn(zone)
         val upcoming = upcomingFor(person, zone, today)
@@ -220,7 +249,9 @@ class PosterStore(
             reported = false,
         )
 
-        scope.launch {
+        inFlight?.cancel()
+        inFlightPersonId = person.id
+        inFlight = scope.launch {
             val accepted = try {
                 api.requestPoster(
                     RequestPosterRequest(
@@ -234,14 +265,18 @@ class PosterStore(
                     ),
                 )
             } catch (cause: ApiException) {
-                _state.value = _state.value.copy(stage = PosterStage.FAILED, problem = problemFor(cause))
+                finish(person.id) {
+                    it.copy(stage = PosterStage.FAILED, problem = problemFor(cause))
+                }
                 return@launch
             } catch (_: Exception) {
-                _state.value = _state.value.copy(stage = PosterStage.FAILED, problem = PosterProblem.OFFLINE)
+                finish(person.id) {
+                    it.copy(stage = PosterStage.FAILED, problem = PosterProblem.OFFLINE)
+                }
                 return@launch
             }
 
-            poll(accepted.generationId)
+            poll(accepted.generationId, person.id)
         }
     }
 
@@ -253,7 +288,7 @@ class PosterStore(
      * that is merely slow rather than broken. Without a ceiling a job that never completes
      * leaves a spinner on screen for ever, which is the one outcome worse than an error.
      */
-    private suspend fun poll(generationId: String) {
+    private suspend fun poll(generationId: String, personId: String) {
         repeat(MAX_POLLS) { attempt ->
             delay(if (attempt == 0) FIRST_POLL_MS else POLL_MS)
 
@@ -268,40 +303,82 @@ class PosterStore(
                 "SUCCEEDED" -> {
                     val poster = status.poster
                     if (poster == null) {
-                        _state.value = _state.value.copy(
-                            stage = PosterStage.FAILED,
-                            problem = PosterProblem.UNAVAILABLE,
-                        )
+                        finish(personId) {
+                            it.copy(stage = PosterStage.FAILED, problem = PosterProblem.UNAVAILABLE)
+                        }
                         return
                     }
-                    _state.value = _state.value.copy(
-                        stage = PosterStage.READY,
-                        poster = poster,
-                        cacheHit = status.cacheHit,
-                        posterBytes = poster.url?.let { fetchBytes(it) },
-                    )
+
+                    /**
+                     * The bytes are fetched into a LOCAL first.
+                     *
+                     * This used to be `_state.value = _state.value.copy(..., posterBytes =
+                     * poster.url?.let { fetchBytes(it) })`. Kotlin evaluates the receiver
+                     * before the arguments, so `_state.value` was read, then the download
+                     * suspended for seconds, then the pre-download snapshot was written
+                     * back — silently discarding every tap the user made meanwhile
+                     * (format, theme, even a whole `open()` for another person).
+                     */
+                    val bytes = poster.url?.let { fetchBytes(it) }
+                    if (bytes == null) {
+                        /**
+                         * A generation that succeeded but whose image we cannot fetch is a
+                         * FAILURE on this screen, not a READY with two dead buttons and no
+                         * message — which is what it used to render.
+                         */
+                        finish(personId) {
+                            it.copy(
+                                stage = PosterStage.FAILED,
+                                problem = PosterProblem.OFFLINE,
+                                poster = poster,
+                            )
+                        }
+                        return
+                    }
+
+                    finish(personId) {
+                        it.copy(
+                            stage = PosterStage.READY,
+                            poster = poster,
+                            cacheHit = status.cacheHit,
+                            posterBytes = bytes,
+                            problem = null,
+                        )
+                    }
                     return
                 }
 
                 "BLOCKED" -> {
-                    _state.value = _state.value.copy(
-                        stage = PosterStage.FAILED,
-                        problem = PosterProblem.BLOCKED,
-                    )
+                    finish(personId) {
+                        it.copy(stage = PosterStage.FAILED, problem = PosterProblem.BLOCKED)
+                    }
                     return
                 }
 
                 "FAILED" -> {
-                    _state.value = _state.value.copy(
-                        stage = PosterStage.FAILED,
-                        problem = PosterProblem.UNAVAILABLE,
-                    )
+                    finish(personId) {
+                        it.copy(stage = PosterStage.FAILED, problem = PosterProblem.UNAVAILABLE)
+                    }
                     return
                 }
             }
         }
 
-        _state.value = _state.value.copy(stage = PosterStage.FAILED, problem = PosterProblem.UNAVAILABLE)
+        finish(personId) {
+            it.copy(stage = PosterStage.FAILED, problem = PosterProblem.UNAVAILABLE)
+        }
+    }
+
+    /**
+     * Apply a state change, but only if it still belongs to the person on screen.
+     *
+     * `update` rather than `value =`, so a concurrent writer cannot be clobbered by a
+     * read-modify-write across a suspension.
+     */
+    private fun finish(personId: String, change: (PosterState) -> PosterState) {
+        _state.update { current ->
+            if (current.person?.id != personId) current else change(current)
+        }
     }
 
     private suspend fun fetchBytes(url: String): ByteArray? =
@@ -384,7 +461,9 @@ class PosterStore(
 
     private suspend fun refreshPhoto(personId: String) {
         val url = runCatching { api.photoUrl(personId) }.getOrNull()
-        _state.value = _state.value.copy(photoUrl = url?.let { api.absoluteUrl(it) })
+        // Guarded for the same reason the poll is: `open()` for another person can land
+        // while this is in flight, and person A's photo must not appear on person B.
+        finish(personId) { it.copy(photoUrl = url?.let { raw -> api.absoluteUrl(raw) }) }
     }
 
     private fun problemFor(cause: ApiException): PosterProblem =

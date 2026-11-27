@@ -184,7 +184,11 @@ interface Harness {
   moderator: FakeModerationProvider;
 }
 
-function harness(over: Partial<Record<string, unknown>> = {}, live = true): Harness {
+function harness(
+  over: Partial<Record<string, unknown>> = {},
+  live = true,
+  llm?: FakeLlmProvider,
+): Harness {
   const env = envWith(over);
   const generations = new GenerationService(db);
   const images = new FakeImageProvider();
@@ -200,7 +204,8 @@ function harness(over: Partial<Record<string, unknown>> = {}, live = true): Harn
     new ModerationService(moderator),
     store,
     live ? asLive(images) : images,
-    new FakeLlmProvider(),
+    llm ?? new FakeLlmProvider(),
+    env,
   );
 
   return { pipeline, generations, images, moderator };
@@ -325,6 +330,95 @@ describe('a cache hit costs nothing and consumes nothing', () => {
 
     // And a poster still came out of it.
     expect(second.result.posterId).not.toBeNull();
+  });
+
+  it('makes NO call of either kind on a hit, even with a live TEXT provider', async () => {
+    /**
+     * The case the original suite could not see.
+     *
+     * It always injected `FakeLlmProvider` (`isLive = false`), so the copy call never
+     * happened and "a hit writes no ledger row" was true for the wrong reason. With a
+     * live text provider the first version called the model BEFORE looking in the cache,
+     * so every hit billed for copy and wrote an `ai_usage` row — definition-of-done item
+     * 5, false in the only configuration that costs money.
+     */
+    const liveLlm = new FakeLlmProvider();
+    (liveLlm as unknown as { isLive: boolean }).isLive = true;
+    const h = harness({}, true, liveLlm);
+
+    await runFor(h, livingId);
+    const afterMiss = await prisma.aiUsage.count({ where: { userId } });
+    const slotsAfterMiss = await slotsUsed();
+    // The miss really did call both models, or the hit's zero below proves nothing.
+    expect(afterMiss).toBe(2);
+    expect(slotsAfterMiss).toBe(1);
+
+    const second = await runFor(h, livingId);
+    const row = await prisma.generation.findUniqueOrThrow({
+      where: { id: second.generationId },
+    });
+
+    expect(row.cacheHit).toBe(true);
+    expect(Number(row.costInr)).toBe(0);
+    // Neither the image call NOR the copy call.
+    expect(await prisma.aiUsage.count({ where: { userId } })).toBe(afterMiss);
+    expect(await slotsUsed()).toBe(slotsAfterMiss);
+  });
+
+  it('does not let the copy call escape the global spend cap', async () => {
+    // The cap used to guard only the image path, so a capped deployment still billed for
+    // copy on every poster — section 10 rule 6's ceiling bounded half the spend.
+    await prisma.aiUsage.create({
+      data: {
+        userId,
+        feature: 'wish_draft',
+        provider: 'fake',
+        model: 'fake-model',
+        outcome: 'OK',
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 1,
+        usdInrRate: 89,
+        costInr: 250,
+        pricingVersion: 'spec',
+        promptVersion: 'spec',
+      },
+    });
+
+    const liveLlm = new FakeLlmProvider();
+    (liveLlm as unknown as { isLive: boolean }).isLive = true;
+    const h = harness({ AI_DAILY_SPEND_CAP_INR: 200 }, true, liveLlm);
+
+    const { generationId } = await runFor(h, livingId);
+    const row = await prisma.generation.findUniqueOrThrow({ where: { id: generationId } });
+
+    expect(row.degraded).toBe(true);
+    // No copy row either — that is the fix.
+    expect(await prisma.aiUsage.count({ where: { generationId } })).toBe(0);
+  });
+
+  it('does not cache the library placeholder under the generated-artwork key', async () => {
+    /**
+     * The poisoning. The placeholder used to be stored under the same `theme_cache` key
+     * the real artwork would use, and `lookup()` does not filter on provenance — so every
+     * key first requested while the provider was fake, or while a rail was biting, was
+     * pinned to a gradient for the life of the deployment and the premium path for it was
+     * dead.
+     */
+    const h = harness({}, false); // not live: the committed default
+    await runFor(h, livingId);
+    await runFor(h, livingId);
+
+    expect(await prisma.themeCache.count()).toBe(0);
+
+    // And once a provider IS live, that same key generates for real.
+    const live = harness({}, true);
+    await runFor(live, livingId);
+    const rows = await prisma.themeCache.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].provider).not.toBeNull();
   });
 
   it('keeps one theme_cache row per key and counts the hits', async () => {

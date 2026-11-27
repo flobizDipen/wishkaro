@@ -3,6 +3,7 @@ import { APP_ENV, type AppEnv } from '../../config/env';
 import { BLOB_STORE, type BlobStore } from './blob-store';
 import { LocalBlobStore } from './local-blob-store';
 import { MediaController } from './media.controller';
+import { PhotoRateLimitService } from './photo-rate-limit.service';
 import { PhotoService } from './photo.service';
 import { PhotosController } from './photos.controller';
 
@@ -17,6 +18,7 @@ import { PhotosController } from './photos.controller';
   controllers: [MediaController, PhotosController],
   providers: [
     PhotoService,
+    PhotoRateLimitService,
     {
       provide: BLOB_STORE,
       inject: [APP_ENV],

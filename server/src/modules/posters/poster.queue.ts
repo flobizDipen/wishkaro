@@ -62,15 +62,39 @@ export class PosterQueue implements OnModuleInit, OnApplicationShutdown {
       },
       {
         connection: this.redis.duplicate(),
+        /**
+         * **Zero, and `attempts: 1` is not what controls this.**
+         *
+         * BullMQ's stall recovery is governed by `maxStalledCount` (default 1), not by
+         * `attempts`. A worker killed mid-`images.generate` — a deploy, an OOM — left the
+         * job to be re-queued and re-processed once, running the whole pipeline again on
+         * the same `generationId` and billing a SECOND image. The comment at the top of
+         * this file said there was deliberately no retry; this is the line that makes
+         * that true.
+         */
+        maxStalledCount: 0,
         // One at a time. Compositing is CPU-bound in `sharp` and this process also serves
         // HTTP; a concurrency that made posters fast would make every other request slow.
         concurrency: 1,
       },
     );
 
-    this.worker.on('failed', (job, err) =>
-      this.logger.error(`Poster job ${job?.id} failed: ${err.message}`),
-    );
+    /**
+     * A job that died OUTSIDE the pipeline's own catch — stalled, killed, dropped by
+     * BullMQ — still has to close its `Generation` row. Nothing else transitions a row out
+     * of RUNNING, so without this the app polls `GET /v1/ai/generation/:id` and spins on a
+     * progress state that will never change (FR-POS-09).
+     */
+    this.worker.on('failed', (job, err) => {
+      this.logger.error(`Poster job ${job?.id} failed: ${err.message}`);
+      const payload = job?.data as (PosterJob & { queuedAtMs?: number }) | undefined;
+      if (!payload?.generationId) return;
+      void this.generations.fail(
+        payload.generationId,
+        'JOB_FAILED',
+        new Date(payload.queuedAtMs ?? Date.now()),
+      );
+    });
     this.logger.log('Poster queue started');
   }
 

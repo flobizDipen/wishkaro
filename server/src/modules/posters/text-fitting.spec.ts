@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { FORMATS, THEMES, type PosterTheme } from './theme-library';
 import { renderTextLayer, type CompositeRequest } from './compositor';
 import { FONT_STACK } from './compositor';
-import { estimateWidth, fitText } from './text-fitting';
+import { estimateWidth, fitText, measureEm } from './text-fitting';
 
 /**
  * "Are the words inside the picture?"
@@ -167,5 +167,50 @@ describe('the subline stays inside the canvas too', () => {
     );
     const box = await inkBox(png);
     expect(box.right).toBeLessThanOrEqual(FORMATS.LINK.width - 8);
+  });
+});
+
+describe('the measurement stays a measurement, and stays affordable', () => {
+  it('measures a pathologically long string instead of silently using the estimate', async () => {
+    /**
+     * The guard for §0.6's second half. Past roughly 32,767px librsvg refuses the
+     * document, which used to land in a bare `catch` and reinstate the width ESTIMATE —
+     * the number this module exists to stop trusting — with no log line. The canvas is
+     * clamped now, so even an absurd string comes back MEASURED.
+     *
+     * `displayName` is capped at 120 characters, so this is well past anything reachable.
+     */
+    const absurd = 'W'.repeat(400);
+    const measured = await measureEm(absurd, FONT_STACK);
+    const estimated = estimateWidth(absurd, 1);
+
+    expect(measured).toBeGreaterThan(0);
+    // Exact equality is what "fell back to the estimate" looks like.
+    expect(measured).not.toBeCloseTo(estimated, 6);
+  });
+
+  /**
+   * **There is deliberately no test that bold measures wider than regular.**
+   *
+   * I wrote one and deleted it. On this machine the stack resolves to a face with no
+   * separate bold, so both weights measure identically (11.5625 em either way) and the
+   * assertion failed — while on a box with a real bold face it would pass. That is a
+   * platform-pinned assertion, which is the mistake this file already records twice
+   * (§0.6, and the two `toBe(78)` assertions CI caught). A test I cannot make mean the
+   * same thing on the developer's machine and on the server is worse than no test.
+   *
+   * The fix it would have guarded — `measureEm` taking the weight the text is DRAWN at,
+   * and keying its memo on it — is covered by type-checking and by the compositor suite
+   * continuing to pass. The risk it leaves is that a future edit drops the weight
+   * argument and nothing goes red on a font where it makes no difference.
+   */
+  it('keys the memo on the weight, so two weights cannot share one entry', async () => {
+    // Observable regardless of whether the faces differ: distinct keys must both resolve
+    // to a finite measurement rather than one poisoning the other.
+    const regular = await measureEm('25th Silver anniversary', FONT_STACK, 400);
+    const bold = await measureEm('25th Silver anniversary', FONT_STACK, 700);
+    expect(regular).toBeGreaterThan(0);
+    expect(bold).toBeGreaterThan(0);
+    expect(Number.isFinite(regular) && Number.isFinite(bold)).toBe(true);
   });
 });

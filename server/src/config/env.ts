@@ -179,7 +179,17 @@ const EnvSchema = z
      */
     BLOB_SIGNING_SECRET: z
       .string()
+      /**
+       * The same floor the JWT secrets carry, and for a stronger reason: this one is the
+       * SOLE authorisation for a `@Public` route. Without it `BLOB_SIGNING_SECRET=changeme`
+       * booted cleanly, and theme blob keys are fully predictable from shipped data — the
+       * key is `sha256(themeKey)` over ids and enum values anyone can read in this repo —
+       * so a guessable secret is immediately usable there. The empty-string fallback to
+       * `JWT_ACCESS_SECRET` is unaffected; it is the EXPLICIT short value this stops.
+       */
+      .min(32, 'BLOB_SIGNING_SECRET must be at least 32 characters')
       .optional()
+      .or(z.literal(''))
       .transform((v) => (v && v.trim() !== '' ? v : undefined)),
 
     /**
@@ -328,7 +338,9 @@ export function loadDotEnv(): void {
 export function parseEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const result = EnvSchema.safeParse(source);
   if (!result.success) {
-    const lines = result.error.issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`);
+    const lines = result.error.issues.map(
+      (i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`,
+    );
     throw new Error(`Invalid environment configuration:\n${lines.join('\n')}`);
   }
   return result.data;

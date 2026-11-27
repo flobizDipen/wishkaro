@@ -448,7 +448,7 @@ private fun ReportDialog(onDismiss: () -> Unit, onReport: (String) -> Unit) {
                 REPORT_REASONS.forEach { (code, label) ->
                     TextButton(
                         onClick = { onReport(code) },
-                        modifier = Modifier.fillMaxWidth().testTag("poster_report_${'$'}code"),
+                        modifier = Modifier.fillMaxWidth().testTag("poster_report_" + code),
                     ) {
                         Text(label, modifier = Modifier.fillMaxWidth())
                     }

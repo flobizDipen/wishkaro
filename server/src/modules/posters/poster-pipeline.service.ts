@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { EventType, ModerationVerdict, PosterFormat } from '@prisma/client';
+import { APP_ENV, type AppEnv } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BLOB_STORE, blobKeyFor, type BlobStore } from '../media/blob-store';
 import { ModerationService } from '../moderation/moderation.service';
@@ -12,7 +13,7 @@ import { FEATURE_POSTER, GenerationService } from './generation.service';
 import { IMAGE_PROVIDER, type ImageProvider } from './image/image-provider';
 import { renderLibraryArtwork } from './library-artwork';
 import { resolveOccasion } from './occasion';
-import { buildPosterCopy } from './poster-copy';
+import { buildPosterCopy, solemnCopyViolation } from './poster-copy';
 import {
   POSTER_ART_PROMPT_VERSION,
   POSTER_COPY_PROMPT_VERSION,
@@ -98,6 +99,7 @@ export class PosterPipelineService {
     @Inject(BLOB_STORE) private readonly blobs: BlobStore,
     @Inject(IMAGE_PROVIDER) private readonly images: ImageProvider,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
+    @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
   async run(job: PosterJob, startedAt: Date): Promise<PosterJobResult> {
@@ -172,29 +174,62 @@ export class PosterPipelineService {
       return { posterId: null, status: 'BLOCKED' };
     }
 
-    // --- FR-POS-01(a): copy and theme -------------------------------------------------
+    // The template copy. The live path may replace it inside `resolveArtwork`, and only
+    // if it passes the solemn gate and output moderation.
     let copy = buildPosterCopy({
       personName: person.displayName,
       eventType: job.eventType,
       sentiment: occasion.sentiment,
       milestone: occasion.milestone,
     });
-    let copyPromptHash: string | null = null;
 
-    if (this.llm.isLive) {
-      const live = await this.draftCopy(job, person, occasion);
-      if (live) {
-        copy = { headline: live.copy.headline, subline: live.copy.subline };
-        copyPromptHash = live.promptHash;
-        // Re-checked, because a model is an untrusted input like any other even when the
-        // schema it was given was an enum over the allowed set.
-        assertThemeAllowed(occasion.sentiment, live.copy.themeId);
-        theme = themeById(live.copy.themeId) ?? theme;
+    /**
+     * FR-POS-01 (a) and (b), resolved together — and the ORDER is the fix.
+     *
+     * The first version ran the copy call unconditionally at step (a), before anything
+     * looked at the cache, and gated only the image call. Two rules broke:
+     *
+     *  - **Definition-of-done item 5.** With a live text provider a cache HIT still made a
+     *    model call and wrote an `ai_usage` row. The DB suite passed because it injects
+     *    `FakeLlmProvider` (`isLive = false`), so the live configuration was never run.
+     *  - **Section 10 rule 6.** `mayGenerateLive()` — the only caller of the spend cap and
+     *    the poster limiter — was reachable only from the image path, so the copy call was
+     *    bounded by nothing. Past the daily cap, every poster still billed for copy.
+     *
+     * Now: resolve the theme from the user's pick (or the occasion's default), look in the
+     * cache FIRST, and return on a hit having called nothing. Only a miss reaches the one
+     * gate, and that gate covers both calls.
+     */
+    const resolved = await this.resolveArtwork(job, theme, occasion, person, copy);
+    theme = resolved.theme;
+    copy = resolved.copy;
+    const copyPromptHash = resolved.copyPromptHash;
+    const background = resolved.background;
+
+    /**
+     * Section 10 rule 7, on the WORDS — not only on the picture.
+     *
+     * `drafting.service.ts` has run `checkOutputText` on every model-written wish since
+     * M5. Poster copy was the one model-written string in this app that reached a user
+     * unmoderated in either direction. Skipped when the words came from the template,
+     * because the template is ours.
+     */
+    if (resolved.copyWasLive) {
+      const copyCheck = await this.moderation.checkOutputText(
+        [copy.headline, copy.subline].filter(Boolean).join(' '),
+      );
+      if (copyCheck.verdict === 'BLOCKED') {
+        this.logger.warn(`Poster copy blocked by moderation: ${copyCheck.reasonCode}`);
+        // Falls back to the template rather than failing: the user still gets a poster,
+        // and rule 3's "then falls back to a template" is the same answer.
+        copy = buildPosterCopy({
+          personName: person.displayName,
+          eventType: job.eventType,
+          sentiment: occasion.sentiment,
+          milestone: occasion.milestone,
+        });
       }
     }
-
-    // --- FR-POS-03 / FR-POS-01(b): the background -------------------------------------
-    const background = await this.background(job, theme, occasion.milestone);
 
     // --- FR-POS-01(c): compositing ----------------------------------------------------
     const photo = await this.photoFor(person.id, job.userId);
@@ -257,63 +292,197 @@ export class PosterPipelineService {
    * the last rupee of the day; then the **per-user limiter**, because being capped should
    * not also cost them one of their five.
    */
-  private async background(
+  private async resolveArtwork(
     job: PosterJob,
-    theme: PosterTheme,
-    milestone: string | null,
-  ): Promise<Background> {
-    const parts = { theme, eventType: job.eventType, milestone, format: job.format };
-    const themeKey = this.themeCache.keyFor(parts);
+    initialTheme: PosterTheme,
+    occasion: { sentiment: 'SOLEMN' | 'CELEBRATORY'; milestone: string | null },
+    person: { displayName: string; relationToOwner: string | null; isMinor: boolean },
+    templateCopy: { headline: string; subline: string | null },
+  ): Promise<{
+    theme: PosterTheme;
+    copy: { headline: string; subline: string | null };
+    copyWasLive: boolean;
+    copyPromptHash: string | null;
+    background: Background;
+  }> {
+    let theme = initialTheme;
+    const partsFor = (t: PosterTheme) => ({
+      theme: t,
+      eventType: job.eventType,
+      milestone: occasion.milestone,
+      format: job.format,
+    });
 
-    const hit = await this.themeCache.lookup(themeKey);
+    // --- the cache, BEFORE any model call ---------------------------------------------
+    const firstKey = this.themeCache.keyFor(partsFor(theme));
+    const hit = await this.themeCache.lookup(firstKey);
     if (hit) {
       return {
-        png: hit.png,
-        cacheHit: true,
-        degraded: false,
-        promptHash: null,
-        promptVersion: null,
+        theme,
+        copy: templateCopy,
+        copyWasLive: false,
+        copyPromptHash: null,
+        background: {
+          png: hit.png,
+          cacheHit: true,
+          degraded: false,
+          promptHash: null,
+          promptVersion: null,
+        },
       };
     }
 
-    // A miss. Everything below this line is the premium edge.
-    const live = await this.mayGenerateLive(job.userId);
+    // --- a miss. ONE gate, covering both model calls ----------------------------------
+    const gate = await this.mayGenerateLive(job.userId);
+    const degraded = gate.reason === 'CAPPED' || gate.reason === 'RATE_LIMITED';
 
-    if (!live.allowed) {
-      const png = await renderLibraryArtwork(theme, job.format);
-      await this.themeCache.store(parts, themeKey, png, {
-        provider: null,
-        model: null,
-        promptVersion: null,
-      });
+    if (!gate.allowed) {
       return {
-        png,
-        cacheHit: false,
-        // `degraded` only when a RAIL bit. The ordinary no-key path is not a degradation,
-        // it is FR-POS-04's main path, and conflating the two would make the degradation
-        // metric read 100% on a healthy deployment.
-        degraded: live.reason !== 'NOT_LIVE',
-        promptHash: null,
-        promptVersion: null,
+        theme,
+        copy: templateCopy,
+        copyWasLive: false,
+        copyPromptHash: null,
+        background: await this.libraryBackground(theme, job.format, degraded),
       };
     }
 
+    // --- FR-POS-01(a) ------------------------------------------------------------------
+    let copy = templateCopy;
+    let copyWasLive = false;
+    let copyPromptHash: string | null = null;
+
+    if (this.llm.isLive) {
+      const live = await this.draftCopy(job, person, occasion);
+      if (live) {
+        assertThemeAllowed(occasion.sentiment, live.copy.themeId);
+
+        /**
+         * The model's WORDS, held to the same rule as its theme.
+         *
+         * The first version took the headline verbatim and re-validated only `themeId`,
+         * so a model answering "Happy Birthday, Asha" for a death anniversary would have
+         * composited that at 72px onto the poster the user sends. A violation falls back
+         * to the template rather than failing the job.
+         */
+        const violation = solemnCopyViolation(
+          occasion.sentiment,
+          live.copy.headline,
+          live.copy.subline,
+        );
+        if (violation) {
+          this.logger.error(
+            `Model returned celebratory copy ("${violation}") for a SOLEMN occasion; ` +
+              'using the template. This is the failure FR-POS-13 exists for.',
+          );
+        } else {
+          copy = { headline: live.copy.headline, subline: live.copy.subline };
+          copyWasLive = true;
+          copyPromptHash = live.promptHash;
+        }
+        theme = themeById(live.copy.themeId) ?? theme;
+      }
+    }
+
+    /**
+     * The model may have changed the theme, which changes the cache key — so look again
+     * before paying for an image. One indexed read against a possible fifteen rupees.
+     */
+    const secondKey = this.themeCache.keyFor(partsFor(theme));
+    if (secondKey !== firstKey) {
+      const second = await this.themeCache.lookup(secondKey);
+      if (second) {
+        return {
+          theme,
+          copy,
+          copyWasLive,
+          copyPromptHash,
+          background: {
+            png: second.png,
+            cacheHit: true,
+            degraded: false,
+            promptHash: null,
+            promptVersion: null,
+          },
+        };
+      }
+    }
+
+    // --- FR-POS-01(b) ------------------------------------------------------------------
+    const background = await this.generateBackground(
+      job,
+      theme,
+      occasion.sentiment,
+      occasion.milestone,
+      secondKey,
+    );
+    return { theme, copy, copyWasLive, copyPromptHash, background };
+  }
+
+  /**
+   * FR-POS-04's pre-approved library, rendered on demand and **deliberately not cached**.
+   *
+   * The first version stored this gradient in `theme_cache` under the same key the real
+   * artwork would use, and `lookup()` does not filter on provenance — so any key first
+   * requested while `IMAGE_PROVIDER=fake` (the committed default), or while the cap or the
+   * limiter was biting, was pinned to a placeholder for the life of the deployment. The
+   * premium path for that key was dead, and the rows still reported `cacheHit = true,
+   * degraded = false`, so the health metrics read fine.
+   *
+   * `theme_cache` is FR-POS-03's cache of **generated** artwork. The library is a different
+   * thing — pre-approved themes that ship with the app — and conflating them is what caused
+   * the poisoning. Rendering a gradient costs tens of milliseconds on the path that by
+   * design spends nothing.
+   */
+  private async libraryBackground(
+    theme: PosterTheme,
+    format: PosterFormat,
+    degraded: boolean,
+  ): Promise<Background> {
+    return {
+      png: await renderLibraryArtwork(theme, format),
+      cacheHit: false,
+      // `degraded` only when a RAIL bit. The ordinary no-key path is not a degradation, it
+      // is FR-POS-04's main path, and conflating the two would make the metric read 100%
+      // on a healthy deployment.
+      degraded,
+      promptHash: null,
+      promptVersion: null,
+    };
+  }
+
+  private async generateBackground(
+    job: PosterJob,
+    theme: PosterTheme,
+    sentiment: 'SOLEMN' | 'CELEBRATORY',
+    milestone: string | null,
+    themeKey: string,
+  ): Promise<Background> {
+    // The gate allowed a live call, but it may have allowed it for the COPY only.
+    if (!this.images.isLive) {
+      return this.libraryBackground(theme, job.format, false);
+    }
+
+    const parts = { theme, eventType: job.eventType, milestone, format: job.format };
     const prompt = buildArtPrompt({
       theme,
       eventType: job.eventType,
-      sentiment: theme.family === 'SOLEMN' ? 'SOLEMN' : 'CELEBRATORY',
+      // From the OCCASION, not re-derived from `theme.family`. They are one-to-one today
+      // and `theme-library.ts` is explicit they may not stay so; on the day they diverge,
+      // re-deriving here would hand a solemn occasion the celebratory register and drop
+      // the BANNED_ON_SOLEMN negative list.
+      sentiment,
       milestone,
     });
     const size = imageSizeFor(job.format);
-    const result = await this.images.generate({ prompt, size, quality: 'low' });
+    const result = await this.images.generate({
+      prompt,
+      size,
+      quality: this.env.OPENAI_IMAGE_QUALITY,
+    });
 
     /**
-     * The ledger row, whatever happened.
-     *
-     * "Every model call writes a ledger row. A call that cannot write one is a bug, not an
-     * optimisation." A refusal and an error write rows too — `imageCount` is zero on those,
-     * so they cost ₹0 and still say that a call was made, which is the distinction a ledger
-     * with gaps cannot express.
+     * The ledger row, whatever happened. A refusal and an error write rows too, with
+     * `imageCount` zero, so they cost nothing and still say a call was made.
      */
     await this.ledger.record({
       userId: job.userId,
@@ -333,15 +502,9 @@ export class PosterPipelineService {
     });
 
     if (result.outcome !== 'OK' || !result.png) {
-      // §10 rule 3's equivalent for bytes: fall back to the library rather than fail.
+      // Rule 3's equivalent for bytes: fall back to the library rather than fail.
       this.logger.warn(`Image generation ${result.outcome}; using the library artwork.`);
-      const png = await renderLibraryArtwork(theme, job.format);
-      await this.themeCache.store(parts, themeKey, png, {
-        provider: null,
-        model: null,
-        promptVersion: null,
-      });
-      return { png, cacheHit: false, degraded: true, promptHash: null, promptVersion: null };
+      return this.libraryBackground(theme, job.format, true);
     }
 
     await this.themeCache.store(parts, themeKey, result.png, {
@@ -360,15 +523,20 @@ export class PosterPipelineService {
   }
 
   /**
-   * Whether this request may make a live image call.
+   * Whether this request may make a live model call of EITHER kind.
    *
-   * Reached only on a cache MISS, which is what keeps definition-of-done item 5 true: a hit
-   * never gets here, so it never consumes a rate-limit slot.
+   * Reached only on a cache MISS, which is what keeps definition-of-done item 5 true: a
+   * hit never gets here, so it consumes no slot and makes no call of either kind.
    */
   private async mayGenerateLive(
     userId: string,
   ): Promise<{ allowed: boolean; reason: 'OK' | 'NOT_LIVE' | 'CAPPED' | 'RATE_LIMITED' }> {
-    if (!this.images.isLive) return { allowed: false, reason: 'NOT_LIVE' };
+    // NOT_LIVE only when NEITHER provider can spend. The gate covers the copy call as
+    // well as the image call now, so keying it on the image provider alone would let a
+    // text-only deployment make unbounded copy calls.
+    if (!this.images.isLive && !this.llm.isLive) {
+      return { allowed: false, reason: 'NOT_LIVE' };
+    }
 
     if (await this.spendCap.isCapped()) {
       // §10 rule 6's "automatic degradation to the pre-approved theme library" — which M5

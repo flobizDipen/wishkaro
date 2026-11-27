@@ -73,7 +73,13 @@ afterAll(async () => {
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'wishkaro-photo-spec-'));
-  service = new PhotoService(db, new LocalBlobStore(root, 'spec-signing-secret'));
+  service = new PhotoService(
+    db,
+    // A limiter that always allows: this suite is about the upload pipeline, and the
+    // ceiling has its own behaviour. Real Redis is not needed for either.
+    { consume: async () => ({ allowed: true, retryAfterSeconds: 0, window: null }) } as never,
+    new LocalBlobStore(root, 'spec-signing-secret'),
+  );
 
   const user = await prisma.user.create({
     data: { googleSub: `photo-spec-${randomUUID()}`, email: 'nobody@example.invalid' },

@@ -315,6 +315,8 @@ async function textLayerSvg(
         nominalSize: layout.sublineSize,
         maxLines: 1,
         fontStack: FONT_STACK,
+        // The subline's <text> sets no font-weight, so it renders at 400.
+        fontWeight: 400,
       })
     : null;
 

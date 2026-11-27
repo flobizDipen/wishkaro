@@ -1,4 +1,5 @@
 import type { EventType, Sentiment } from '@prisma/client';
+import { BANNED_ON_SOLEMN } from './theme-library';
 
 /**
  * The words on a poster when no model wrote them (FR-POS-01a, FR-POS-04).
@@ -84,4 +85,46 @@ export function buildPosterCopy(input: PosterCopyInput): PosterCopy {
        */
       return { headline: `Remembering ${name}`, subline: input.milestone };
   }
+}
+
+// ---------------------------------------------------------------------------------------
+// Holding a MODEL's words to the same rule the table above is built around
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Whether copy is safe to put on a poster for this occasion.
+ *
+ * **This exists because the live path had no equivalent of the branch at the top of
+ * `buildPosterCopy`.** The deterministic table cannot produce "Happy Birthday" for a
+ * remembrance — the SOLEMN branch returns before the event type is ever consulted. The
+ * live path took the model's headline verbatim, re-validating only its `themeId` with a
+ * comment saying "a model is an untrusted input like any other", and then composited
+ * whatever came back at 72px onto the picture the user sends. A model answering
+ * "Happy Birthday, Asha" for a death anniversary would have shipped.
+ *
+ * So the same `BANNED_ON_SOLEMN` list the picker and the art prompt are held to is applied
+ * to the WORDS, which is where it always mattered most: FR-POS-13 names "balloons,
+ * confetti, cake, party motifs", and REQUIREMENTS.md §11 files "no SOLEMN event ever
+ * produces celebratory copy" under correctness rather than content preference.
+ *
+ * Returns the offending term, or null when the copy is acceptable. Word-boundary matched,
+ * so "Partha" is not "party" and "Cakrabarti" is not "cake" — a name-mangling false
+ * positive here would silently replace a model's good headline with the template, which is
+ * a quieter failure but still a wrong one.
+ */
+export function solemnCopyViolation(
+  sentiment: Sentiment,
+  ...parts: readonly (string | null | undefined)[]
+): string | null {
+  if (sentiment !== 'SOLEMN') return null;
+
+  const text = parts.filter((p): p is string => typeof p === 'string').join(' ');
+  if (text.trim() === '') return null;
+
+  // "happy" is not in BANNED_ON_SOLEMN — that list is about motifs — and it is the single
+  // most likely way a copy model gets this wrong, so it is named here explicitly.
+  for (const term of ['happy', 'congratulations', ...BANNED_ON_SOLEMN]) {
+    if (new RegExp(`\\b${term}\\b`, 'i').test(text)) return term;
+  }
+  return null;
 }
