@@ -85,17 +85,18 @@ know it has happened before.
 |---|---|---|
 | 1 | An export produced for the 575-person account, opened, and checked to contain what is in it | **BLOCKED** — decision 2 for delivery, and the live account is Dipen's with two real contacts in it. Producer built and unit-proved; the app now saves both files through the user's own save dialog. §4 |
 | 2 | Its CSV re-imported through M3's importer without a mapping change | **PROVED, against a fixture — not against the 575-person account.** The real importer, the real guesser, no mapping touched, under both settings of the dd/MM toggle. §4.2 |
-| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **PARTLY PROVED.** Every row, every blob and every Redis key — in CI, locally, and **by hand over real HTTP against a running server** (§9.5), including the ledger anonymised and the still-valid access token refused. The **push half is BLOCKED**: it needs a real FCM token on a throwaway account only Dipen can create |
+| 3 | An account deleted from the app and verified gone: no rows, no blob objects, no device token, no push | **PARTLY PROVED.** Every row, every blob and every Redis key — in CI, locally, and **by hand over real HTTP against a running server** (§9.5), including the ledger anonymised and the still-valid access token refused. The **push half is BLOCKED by decision** — half A withdrawn after three candidate accounts proved unusable. §9.6 |
 | 4 | The same deletion from the public web URL, with no app session | **BLOCKED** — decision 1. The page is not built, deliberately: §10 |
-| 5 | The retention job run against seeded data of the right ages, keep-override honoured, 90/180 boundaries exact, a photo attached to a saved poster surviving | **PROVED — in CI, against real Postgres and a real blob store.** §2 |
+| 5 | The retention job run against seeded data of the right ages, keep-override honoured, 90/180 boundaries exact, a photo attached to a saved poster surviving | **PROVED — against real Postgres and a real blob store**, in CI and then locally in three timezones once Docker came back. §2, §0.1 |
 | 6 | Policy and terms reachable in-app and from a browser with no session | **BLOCKED** — decision 1. Not started, deliberately: a policy page describing a deletion that does not exist is the worst artifact this milestone could produce |
 | 7 | The prominent disclosure shown before the contacts permission on the handset | **BLOCKED on a sign-in only Dipen can do.** The code, the copy and 7 tests are done; the APK installs and launches on the Pixel 9a with 0 fatal exceptions, and stops at the sign-in screen. §3 |
 | 8 | §12's checklist updated, each tick traceable to `M9_VERIFY.md` | **DONE.** 5 of 13 ticked, 8 left with a reason. §6 |
 | 9 | Nothing requires an API key, and this document says so explicitly | **DONE** — §0, and the caveat that decision 2 can falsify it |
-| 10 | Both targets compile, server suite green across three timezones, CI green on the exact head | **PARTIAL.** Android compiles and installs; server CI green on the head. Three timezones covers the **non-DB** suites only. §7 |
+| 10 | Both targets compile, server suite green across three timezones, CI green on the exact head | **DONE.** Android compiles and installs; iOS compiles in CI; all four checks green on the head; and the **full 682-test suite, DB specs included**, green in UTC, Pacific/Chatham and Asia/Kolkata. §7 |
 
-**Three proved or partly proved, two done, one partial, four blocked** — and the blocked set has
-halved since decisions 3 and 4 were answered.
+**Three proved or partly proved, three done, four blocked.** Of the four blocked, two wait on
+decision 1, one on decision 2, and one — item 7 — on a sign-in. Item 3 is the only one carrying
+a clause that was deliberately withdrawn rather than left waiting.
 
 ---
 
