@@ -5,13 +5,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -163,15 +164,38 @@ fun PosterScreen(
     }
 }
 
+/**
+ * How tall the preview may get.
+ *
+ * **Found on the handset.** The first version was `fillMaxWidth().aspectRatio(ratio)`, which
+ * for STATUS (9:16) makes the preview 1.78x as tall as it is wide — taller than the
+ * viewport on a 20:9 phone. Opening the studio showed the title, the person's name and a
+ * full screen of empty gradient: the theme picker, the size chips and the "Make the poster"
+ * button were all below the fold, and nothing on screen suggested they existed. The
+ * instrumented test did not catch it because `assertExists` passes for a node that is
+ * composed but off-screen, which is the correct behaviour for that assertion and the wrong
+ * thing to rely on here.
+ *
+ * 380dp leaves the picker and the button visible on a 640dp-tall phone without making the
+ * preview too small to judge. `M6_VERIFY.md` §0.5.
+ */
+private val PREVIEW_MAX_HEIGHT = 380.dp
+
 @Composable
 private fun PosterPreview(state: PosterState) {
     val theme = state.selectedTheme
     val ratio = state.format.width.toFloat() / state.format.height.toFloat()
 
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+    // Fit INSIDE both bounds rather than letting one win: a 9:16 poster is height-bound and
+    // a 1.91:1 one is width-bound, and picking either rule alone overflows the other case.
+    val height = minOf(this@BoxWithConstraints.maxWidth / ratio, PREVIEW_MAX_HEIGHT)
+
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(ratio)
+            .align(Alignment.Center)
+            .height(height)
+            .width(height * ratio)
             .background(
                 // The theme's own gradient while there is nothing to show, so the preview
                 // is the shape and the palette of what is coming rather than a grey box.
@@ -236,6 +260,7 @@ private fun PosterPreview(state: PosterState) {
                 modifier = Modifier.padding(24.dp),
             )
         }
+    }
     }
 }
 

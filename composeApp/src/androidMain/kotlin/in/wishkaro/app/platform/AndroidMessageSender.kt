@@ -150,19 +150,7 @@ class AndroidMessageSender(private val appContext: Context) : MessageSender {
         mimeType: String,
         caption: String,
     ): Boolean {
-        val uri = try {
-            val dir = java.io.File(appContext.cacheDir, "posters").apply { mkdirs() }
-            val file = java.io.File(dir, "poster.png")
-            file.writeBytes(bytes)
-            androidx.core.content.FileProvider.getUriForFile(
-                appContext,
-                "${'$'}{appContext.packageName}.posters",
-                file,
-            )
-        } catch (cause: Exception) {
-            Log.w(TAG, "Could not stage the poster for sharing", cause)
-            return false
-        }
+        val uri = stagePosterForSharing(appContext, bytes) ?: return false
 
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = mimeType
@@ -234,3 +222,40 @@ internal fun whatsAppNumber(phone: String?): String? {
         else -> null
     }
 }
+
+/**
+ * The authority the poster FileProvider is declared under.
+ *
+ * It must equal `android:authorities` in the manifest, which the merger resolves from
+ * `${applicationId}.posters`. There is no compile-time link between the two — a mismatch is
+ * an `IllegalArgumentException` at the moment the user taps Share, and nowhere earlier.
+ *
+ * **That is not hypothetical: it shipped on this branch and the handset found it.** The
+ * string was written with an over-escaped interpolation and became the LITERAL
+ * `${'$'}{appContext.packageName}.posters`, so every share failed with "Couldn't find
+ * meta-data for provider with authority …" — silently, because `shareImage` returns false
+ * rather than throwing, and false means "the other app could not be opened", which is
+ * exactly what the screen then said. See `M6_VERIFY.md` §0.4.
+ */
+internal fun posterAuthority(context: Context): String = "${context.packageName}.posters"
+
+/**
+ * Write the poster where another app can read it, and return the content URI.
+ *
+ * Split out of [AndroidMessageSender] so an instrumented test can assert the authority
+ * resolves — the part that broke — without starting an Activity. Returns null on any
+ * failure, which the caller reports as "could not open that app".
+ *
+ * One fixed filename, overwritten. Not a timestamped one: the alternative fills the cache
+ * with every poster a user has ever previewed and nothing deletes them.
+ */
+internal fun stagePosterForSharing(context: Context, bytes: ByteArray): Uri? =
+    try {
+        val dir = java.io.File(context.cacheDir, "posters").apply { mkdirs() }
+        val file = java.io.File(dir, "poster.png")
+        file.writeBytes(bytes)
+        androidx.core.content.FileProvider.getUriForFile(context, posterAuthority(context), file)
+    } catch (cause: Exception) {
+        Log.w("WishKaroSend", "Could not stage the poster for sharing", cause)
+        null
+    }
