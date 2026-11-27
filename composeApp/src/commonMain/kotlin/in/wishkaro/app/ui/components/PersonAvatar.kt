@@ -1,5 +1,6 @@
 package `in`.wishkaro.app.ui.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -47,10 +50,37 @@ fun PersonAvatar(
     displayName: String,
     modifier: Modifier = Modifier,
     size: Dp = AvatarDefaults.Size,
+    /**
+     * Their photo, when there is one.
+     *
+     * The initials are the FALLBACK, which is what the build prompt asked for and what this
+     * app will show most of the time: a photo has to be set one person at a time, and
+     * `FR-PPL-04`'s fields are *"progressively collected"*. A photo is drawn edge to edge in
+     * the circle and the initials are not drawn at all — not layered behind it, where a
+     * transparent PNG would show letters through somebody's face.
+     */
+    photo: ImageBitmap? = null,
 ) {
     val solemn = LocalSolemn.current
     val accent = MaterialTheme.accent
     val initials = initialsOf(displayName).uppercase()
+
+    if (photo != null) {
+        Image(
+            bitmap = photo,
+            // Decorative: the name is in the row beside it. Same reasoning as the initials.
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                // A hairline ring, so a photo whose edges are near-white still reads as a
+                // disc on ivory rather than bleeding into the card.
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .clearAndSetSemantics { },
+        )
+        return
+    }
 
     Box(
         modifier = modifier

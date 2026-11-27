@@ -56,6 +56,7 @@ import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
 import `in`.wishkaro.app.ui.person.EventEditorScreen
 import `in`.wishkaro.app.ui.person.PersonDetailScreen
+import `in`.wishkaro.app.ui.person.PersonPhotoStore
 import `in`.wishkaro.app.ui.PrivacyBusy
 import `in`.wishkaro.app.ui.settings.PrivacyState
 import `in`.wishkaro.app.ui.settings.SettingsScreen
@@ -418,6 +419,14 @@ private fun wishKaroEntryProvider(
 
     entry<Screen.PersonDetail>(metadata = TwoPaneScene.detailPane()) { key ->
         val person = store.personOf(key.personId)
+        /**
+         * FR-PPL-04's photo. Opened on the KEY, so moving from one person's screen to
+         * another's re-fetches and a recomposition does not — the same shape the composer
+         * and the poster studio use, and for the same reason.
+         */
+        val photoStore: PersonPhotoStore = koinInject()
+        val photo by photoStore.state.collectAsState()
+        LaunchedEffect(key) { photoStore.open(key.personId) }
         // "Not read yet" is not "deleted". Both are a null person, and telling the user
         // their person is gone is the worse half to guess at — a widget tap into a cold
         // process lands here before the first database emission, and that frame used to
@@ -442,6 +451,13 @@ private fun wishKaroEntryProvider(
             // restarts from empty and the history flashes. See AppStore.wishesOf.
             wishes = remember(key.personId) { store.wishesOf(key.personId) }
                 .collectAsState(emptyList()).value,
+            // Guarded on the id: the store is a singleton and a fetch for the PREVIOUS
+            // person can still be in flight, which in a two-pane layout means their photo
+            // would land on this person's screen.
+            photo = photo.bytes.takeIf { photo.personId == key.personId },
+            photoBusy = photo.uploading && photo.personId == key.personId,
+            onPickPhoto = photoStore::pick,
+            onRemovePhoto = photoStore::remove,
             modifier = inner,
         )
     }

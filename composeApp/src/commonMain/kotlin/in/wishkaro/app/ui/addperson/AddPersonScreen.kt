@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,6 +24,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
@@ -118,6 +121,14 @@ fun AddPersonScreen(
                 onValueChange = { name = it.take(FieldLimits.NAME) },
                 label = { Text("Name") },
                 singleLine = true,
+                // Words, not Sentences. A name is capitalised at every word, and the
+                // difference is "meera kulkarni" on every screen that person appears on —
+                // on a phone keyboard, with autocapitalisation off by default in many Indic
+                // layouts, this is the whole of whether names look entered or typed.
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Words,
+                    imeAction = ImeAction.Next,
+                ),
                 modifier = Modifier.fillMaxWidth().testTag("add_person_name"),
             )
 
@@ -127,11 +138,16 @@ fun AddPersonScreen(
             if (needsLabel) {
                 OutlinedTextField(
                     value = label,
-                    onValueChange = { label = it },
+                    onValueChange = { label = it.take(FieldLimits.RELATION) },
                     label = { Text("Call it what?") },
                     placeholder = { Text("Shop anniversary") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next,
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        .testTag("add_person_label"),
                 )
             }
 

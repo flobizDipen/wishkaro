@@ -32,11 +32,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -61,9 +64,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.decodeToImageBitmap
 import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.Wish
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
@@ -99,6 +106,11 @@ fun PersonDetailScreen(
     onMakePoster: (String?) -> Unit = {},
     /** FR-PPL-07's wish history, read from the local mirror so it draws offline. */
     wishes: List<Wish> = emptyList(),
+    /** FR-PPL-04's photo, already fetched. Null means none, or not fetched yet. */
+    photo: ByteArray? = null,
+    photoBusy: Boolean = false,
+    onPickPhoto: () -> Unit = {},
+    onRemovePhoto: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     if (person == null) {
@@ -170,7 +182,34 @@ fun PersonDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PersonAvatar(person.displayName, size = AvatarDefaults.Large)
+                    /**
+                     * FR-PPL-04's photo, with the initials as the fallback.
+                     *
+                     * Decoded here rather than in the store, and `remember`ed on the bytes:
+                     * `decodeToImageBitmap` allocates a bitmap, and doing it on every
+                     * recomposition of a scrolling screen is a bitmap per frame.
+                     *
+                     * `runCatching` because the bytes came off a network and a truncated
+                     * response should fall back to the initials rather than take the screen
+                     * down — the same guard `PosterScreen` puts around the identical call.
+                     */
+                    val image: ImageBitmap? = remember(photo) {
+                        photo?.let { runCatching { it.decodeToImageBitmap() }.getOrNull() }
+                    }
+                    Box(contentAlignment = Alignment.Center) {
+                        PersonAvatar(
+                            person.displayName,
+                            size = AvatarDefaults.Large,
+                            photo = image,
+                        )
+                        if (photoBusy) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.accent,
+                                modifier = Modifier.size(AvatarDefaults.Large),
+                            )
+                        }
+                    }
                     Spacer(Modifier.width(16.dp))
                     Column(Modifier.weight(1f)) {
                         val next = card.nextEvent
@@ -235,6 +274,34 @@ fun PersonDetailScreen(
              * somebody who wants to send a message to a person they have stored should not
              * have to add a date first.
              */
+            /**
+             * Setting the photo (FR-PPL-04).
+             *
+             * A `TextButton` rather than a tap on the avatar: an avatar that opens a picker
+             * is an affordance nothing on screen declares, and this screen's whole job is to
+             * be legible. "Remove" appears only when there IS one, so the row does not offer
+             * to delete something that does not exist.
+             */
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onPickPhoto,
+                    enabled = !photoBusy,
+                    modifier = Modifier.testTag("person_pick_photo"),
+                ) {
+                    Text(if (photo == null) "Add a photo" else "Change photo")
+                }
+                if (photo != null) {
+                    TextButton(
+                        onClick = onRemovePhoto,
+                        enabled = !photoBusy,
+                        modifier = Modifier.testTag("person_remove_photo"),
+                    ) { Text("Remove photo") }
+                }
+            }
+
             ActionPair(
                 // FR-WSH-01, from the person screen. The LABEL comes from the tone, not from
                 // the feature's name: FR-REM-11 already makes the solemn notification say
@@ -485,6 +552,16 @@ private fun TraitSection(
                 onValueChange = { draft = it.take(FieldLimits.TRAIT) },
                 label = { Text("Add ${kind.label.lowercase()}") },
                 singleLine = true,
+                // Done on the keyboard adds the trait, so entering three hobbies is three
+                // taps of the action key rather than reaching for the button each time.
+                // This is the one field in the app a user fills in repeatedly.
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { if (draft.isNotBlank()) { onAdd(draft); draft = "" } },
+                ),
                 modifier = Modifier.weight(1f),
             )
             TextButton(

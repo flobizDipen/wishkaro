@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -22,9 +23,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.EventDate
 import `in`.wishkaro.app.domain.EventType
+import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.ui.components.DateFieldsSaver
 import `in`.wishkaro.app.ui.components.enumSaver
@@ -102,10 +106,14 @@ fun EventEditorScreen(
             if (needsLabel) {
                 OutlinedTextField(
                     value = label,
-                    onValueChange = { label = it },
+                    onValueChange = { label = it.take(FieldLimits.RELATION) },
                     label = { Text("Call it what?") },
                     placeholder = { Text("Shop anniversary") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next,
+                    ),
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
             }

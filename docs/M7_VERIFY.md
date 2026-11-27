@@ -42,9 +42,9 @@ destinations and there are **17** screen-level composables; 14 was most likely t
 M5 added the composer and M6 added the poster studio, and it was carried into `REQUIREMENTS.md`
 and then into the build prompt without being recounted.
 
-Shooting 14 would have meant choosing three screens not to show. **23 were shot, in both themes,
-for 46 images** — every screen, plus the two empty states nobody has ever seen, plus the
-celebratory/solemn pair, plus a type specimen.
+Shooting 14 would have meant choosing three screens not to show. **24 were shot, in both themes,
+for 48 images** — every screen, plus the two empty states nobody has ever seen, plus the
+celebratory/solemn pair, plus a type specimen, plus the off-list form case §15 added.
 
 ### 0.2 What this milestone did not touch
 
@@ -60,7 +60,7 @@ are untouched.
 | # | Item | Status |
 |---|---|---|
 | 1 | `Theme.kt` applies colour, type, shape and motion, and honours `isSystemInDarkTheme()` | **MET** — PROVED |
-| 2 | Screenshots of every screen in both themes | **MET** — PROVED, 46 images |
+| 2 | Screenshots of every screen in both themes | **MET** — PROVED, 48 images |
 | 3 | Fonts render from the bundle with airplane mode on; licences committed | **MET** — PROVED, byte-identical offline |
 | 4 | `FR-AUTH-01`: three screens, skippable, shown once, surviving restart **and process death** | **MET** — PROVED on the handset |
 | 5 | Cold start shows no white flash | **MET** — PROVED, frame by frame, both themes |
@@ -154,6 +154,7 @@ verified is invented.
 | 21 | Composer — **solemn** | `21-composer-solemn-light.png` | `21-composer-solemn-dark.png` |
 | 22 | Poster studio | `22-poster-studio-light.png` | `22-poster-studio-dark.png` |
 | 23 | Type specimen | `23-type-scale-light.png` | `23-type-scale-dark.png` |
+| 24 | Edit person — **off-list** relation and gender | `24-edit-person-custom-light.png` | `24-edit-person-custom-dark.png` |
 
 **Two screens in the import flow are shot as the state the user actually meets**, not as the
 whole `when`: 17 is `PermissionRationale` (`FR-AUTH-06`'s prominent disclosure, which is a
@@ -235,7 +236,7 @@ $ for f in build/design-shots/*.png; do cmp -s "$f" "baseline/$(basename $f)" ..
 identical: 46   different: 0
 ```
 
-**All 46 identical.** If a single glyph had come over the network, the offline render would
+**All 46 identical** (the run that proved it; §15 later added two more screens). If a single glyph had come over the network, the offline render would
 differ. This is a stronger claim than "the app looked right in airplane mode", which is what the
 item asks for and what a screenshot would have given.
 
@@ -853,3 +854,164 @@ The one email address that appears on screen — in the Settings delete-account 
 deliberately does not match. No screenshot was taken of the handset's own account, and the only
 handset screenshots in this document's evidence are the launcher tile cropped to WishKaro alone
 and the carousel, which has no data in it at all.
+
+---
+
+## 15. After the definition of done — Dipen's form pass
+
+Everything above was complete and the PR was open when Dipen asked for a second round:
+
+> *"in form we can have some dropdown like gender, for phone we can have +91 and for relation
+> we can have dropdown as well with other as last option and we can have the textinput. Also we
+> are not taking photopicker for photo. And check more improvement in all the flows if we can
+> make."*
+
+This section is that work. It is on the same branch because these screens are the ones M7 had
+just restyled — a second PR touching the same files would conflict with the first before
+either merged — and because every screenshot above would otherwise have been stale on arrival.
+
+### 15.1 Two things the audit found before any code was written
+
+Both changed what got built, so they are first.
+
+**Gender is deliberately not an enum, and that decision stands.** `schema.prisma`, on the
+column:
+
+> *Free text, deliberately not an enum: an enum of genders is a product decision this app has
+> no reason to make, and gift logic in M8 reads traits rather than this field.*
+
+So the stored value is still a string, "Other" opens a free-text box, and a value written
+before this existed still loads into it. **Only the input changed.** A dropdown that closed the
+set would have overturned a recorded decision to save a few taps.
+
+**Nothing in this product reads a person's gender.** Checked rather than assumed: it is in no
+wish template, no poster prompt and no model call. The only thing that touches it is
+`derived.ts`, where filling it in is worth **5 points** of the completeness score. Worth
+knowing, because it is the difference between a data-entry nicety and a feature — and it is the
+former.
+
+### 15.2 The photo was already built, except for the part the user could reach
+
+**No server change was needed and none was made.** Every piece has existed for milestones:
+
+| Piece | Since |
+|---|---|
+| `person.photo_key` in `schema.prisma` | **M1**, under *"the column exists now so the feature is a code change later rather than a migration"* |
+| `POST` / `GET` / `DELETE /v1/people/:id/photo` | M6 — and `WishKaroApi.uploadPhoto`'s own comment names **FR-PPL-04** first, FR-POS-01 second |
+| the system photo picker, needing no permission | M6, in `MainActivity` |
+| the retention sweep clearing `photo_key` | M9 |
+
+A photo could be set only by opening the **poster studio**, and seen only on a **poster**. M7
+put it on the person's own screen, where `FR-PPL-04` always had it, with
+`ui/person/PersonPhotoStore.kt` and an optional `photo` on `PersonAvatar` — initials stay the
+fallback.
+
+**PROVED on the handset**, without browsing anybody's gallery:
+
+```
+focus before:  in.wishkaro.app/in.wishkaro.app.MainActivity
+ok    tapped id:person_pick_photo
+focus after:   com.google.android.photopicker/com.android.photopicker.MainActivity
+--- backing out without choosing anything ---
+focus:         in.wishkaro.app/in.wishkaro.app.MainActivity
+FATAL EXCEPTION count: 0
+clickable="true"  enabled="true"
+```
+
+That is the control, the system picker, and the **cancel** path — which matters, because
+cancelling is the branch that has to clear `uploading` and did not in an early draft. The
+upload itself goes through the identical `files.pickPhoto()` + `api.uploadPhoto()` call the
+poster studio has used since M6; it is **READ-VERIFIED here**, not re-proved, and no photo was
+uploaded to the owner's account.
+
+### 15.3 Phone: a country code, not a hardcoded `+91`
+
+The obvious reading of *"for phone we can have +91"* is a fixed prefix. That would have **taken
+away a working case**: `whatsAppNumber()` already handles `+44 7700 900123` and is tested on
+it, and this is an app for remembering the birthdays of families, which in this country are
+spread across the Gulf, the UK, the US and Singapore. So `+91` is the default and the first
+entry; the rest of the list is where Indian families are.
+
+`PhoneNumbers.split` applies **exactly the rules `whatsAppNumber()` applies**, so the country
+the field shows is the country WhatsApp would open — where those two disagreed, the field would
+say one thing and the chat would be another, which is the worst possible version of this.
+`PhoneNumberTest` is written against the same shapes `WhatsAppNumberTest` uses, and its last
+case round-trips every one of them and asserts **which chat would open** rather than what the
+string looks like.
+
+Two cases worth naming:
+
+- **Longest code first.** `+977` is Nepal; matched shortest-first it reads as `+91` and a wrong
+  national part. Tested.
+- **An empty number stores NULL, not `"+91"`.** Otherwise every person edited after this change
+  acquires a phone consisting of a country code, the completeness score counts it as filled, and
+  `whatsAppNumber("+91")` returns `"91"` and opens a chat with nobody. Tested.
+
+### 15.4 Relation and gender: one component, after the first version got it wrong twice
+
+Both are the same problem — a curated list that must not become a closed one — so they are one
+component, `DropdownWithOther`. They were not, at first, and the screenshot showed what that
+cost:
+
+1. **Two fields labelled "Relation"** stacked on each other, and two labelled "Gender", because
+   each screen named its text box after the thing rather than after what it is for. Now
+   "What do you call them?" and "How do they describe it?".
+2. **The free-text box appeared on a fresh form** with nothing chosen — two controls for one
+   value, which is the exact thing replacing the chip row was meant to stop. It now appears only
+   when "Other" is the answer.
+3. **`+44  United Kingdom` rendered as `+44  Unite`** in a 110dp field. The menu shows the
+   country; the closed field shows the code.
+
+All three were found by looking at `24-edit-person-custom-light.png`, which exists because the
+case it covers is the one these dropdowns must not break: **"Chachi" is a real relation**, and
+`FR-PPL-02` says so in as many words — *"an enum of relations would make 'Mama' or 'Chachi'
+unrepresentable in an India-first app."* That person opens with the dropdown on **Other**, the
+word still in the box, and a `+44` number intact.
+
+### 15.5 The month is a dropdown, which is the biggest of these
+
+A birthday was three numeric boxes side by side, so entering one meant deciding unprompted
+whether `06` in the middle was June. `ImportDates` has a whole date-order toggle and a
+paragraph explaining that WishKaro *"never guesses this from the file"*, because exactly this
+ambiguity costs real data — and the manual form had the same ambiguity with none of the
+explanation. A month picked by name cannot be ambiguous.
+
+`DateFieldsState` is untouched: strings, a half-typed year still legal, and 29 February with no
+year still valid.
+
+### 15.6 The rest of the flows
+
+| Change | Why |
+|---|---|
+| Name fields capitalise **words** | `Words`, not `Sentences`. The difference is "meera kulkarni" on every screen that person ever appears on, and many Indic keyboard layouts have autocapitalisation off |
+| Phone / email / number keyboards | the fields had no `keyboardType` at all, so a phone number was typed on a QWERTY |
+| `imeAction` across every form | Next through the fields, Done on the last |
+| Trait entry submits from the keyboard | the one field a user fills in repeatedly — three hobbies is now three taps of the action key |
+| People search: `ImeAction.Search`, and a **clear button** | with 575 people a stale query is the difference between an empty list and an app that looks broken. M4 also found that swiping to scroll with this field focused types into it |
+| The redundant "Relation" section header is gone | the dropdown's own label says Relation |
+
+### 15.7 Suites after this round
+
+```
+$ ./gradlew :composeApp:testDebugUnitTest --rerun-tasks
+unit tests: 418 failures: 0
+
+$ adb shell am instrument -w -r in.wishkaro.app.test/...
+OK (46 tests)
+
+$ ./gradlew :composeApp:compileKotlinIosSimulatorArm64
+BUILD SUCCESSFUL
+```
+
+418 unit (up from 408: `PhoneNumberTest` adds 10) and 46 instrumented (up from 45: the off-list
+screenshot). **All 21 pre-M7 instrumented tests still pass.** Both guards clean before the push.
+
+### 15.8 What this round did NOT do
+
+- **No server change**, and none was needed — §15.2.
+- **No schema change**, client or server. `gender` is still free text, `phone` is still one
+  string, `photo_key` already existed.
+- **No new permission.** The system photo picker needs none, which is why M6 chose it over
+  `READ_MEDIA_IMAGES`.
+- **The contacts-review and column-mapping screens are still not adopted** into the component
+  set — unchanged from §11, and still named rather than implied.

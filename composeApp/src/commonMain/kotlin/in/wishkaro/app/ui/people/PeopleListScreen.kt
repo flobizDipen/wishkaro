@@ -24,7 +24,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -42,7 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import `in`.wishkaro.app.domain.BirthdayMath
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.domain.PersonCard
@@ -50,6 +57,7 @@ import `in`.wishkaro.app.domain.Sentiment
 import `in`.wishkaro.app.domain.toneFor
 import `in`.wishkaro.app.ui.PeopleFilter
 import `in`.wishkaro.app.ui.components.EmptyState as SharedEmptyState
+import `in`.wishkaro.app.ui.components.CloseGlyph
 import `in`.wishkaro.app.ui.components.PersonAvatar
 import `in`.wishkaro.app.ui.components.WishKaroCard
 import `in`.wishkaro.app.ui.components.WishKaroTopBar
@@ -118,6 +126,7 @@ fun PeopleListScreen(
             )
         },
     ) { padding ->
+        val keyboard = LocalSoftwareKeyboardController.current
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             // ---- search and filter (FR-PPL-10) ----
             OutlinedTextField(
@@ -125,6 +134,24 @@ fun PeopleListScreen(
                 onValueChange = onQueryChange,
                 label = { Text("Search by name") },
                 singleLine = true,
+                // Search, not Done: the list filters as you type, so the keyboard's action
+                // key should close the keyboard and show the results rather than suggest
+                // there is something left to submit.
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                // A way out that is not "select all and delete". With 575 people a stale
+                // query is the difference between an empty list and an app that looks broken,
+                // and M4 found that a swipe-to-scroll with this field focused types into it.
+                trailingIcon = {
+                    if (filter.query.isNotEmpty()) {
+                        IconButton(
+                            onClick = { onQueryChange("") },
+                            modifier = Modifier
+                                .semantics { contentDescription = "Clear search" }
+                                .testTag("people_search_clear"),
+                        ) { CloseGlyph(MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     .testTag("people_search"),
             )

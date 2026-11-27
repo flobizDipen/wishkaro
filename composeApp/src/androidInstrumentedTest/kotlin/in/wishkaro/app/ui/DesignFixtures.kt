@@ -201,7 +201,25 @@ object DesignFixtures {
         events = listOf(event("e-ishaan-b", "f-ishaan", EventType.BIRTHDAY, 14, 3, 2019)),
     )
 
-    val everyone = listOf(meera, devika, jyoti, arjun, nanaji, ishaan)
+    /**
+     * The off-list case, which is the one the new dropdowns exist to not break.
+     *
+     * "Chachi" is not in `RELATION_CHIPS` and never will be — FR-PPL-02 is explicit that an
+     * enum of relations *"would make 'Mama' or 'Chachi' unrepresentable in an India-first
+     * app"*. Her gender is off-list too, and her phone carries a `+44`, which is the country
+     * code a hardcoded `+91` prefix would have silently rewritten.
+     */
+    val chachi = person(
+        id = "f-chachi",
+        name = "Sunita Deshmukh",
+        relation = "Chachi",
+        gender = "Prefers not to say",
+        phone = "+44 7700 900123",
+        notes = "Sends sweets every Diwali.",
+        events = listOf(event("e-chachi-b", "f-chachi", EventType.BIRTHDAY, 2, 8, 1966)),
+    )
+
+    val everyone = listOf(meera, devika, jyoti, arjun, nanaji, ishaan, chachi)
 
     private fun entry(p: Person, e: PersonEvent, days: Int, turningAge: Int? = null) =
         UpcomingEntry(

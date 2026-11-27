@@ -372,6 +372,23 @@ class DesignScreenshotTest {
         )
     }
 
+    /**
+     * The same screen for somebody whose relation and gender are NOT on either list.
+     *
+     * This is the case the dropdowns have to get right and the one a chip row got wrong by
+     * accident rather than by design: "Chachi" is a real relation in an India-first app
+     * (FR-PPL-02 says so in as many words), and it must open with the dropdown on **Other**
+     * and the word still in the box — not with an empty picker that discards it on save.
+     */
+    @Test
+    fun editPersonWithCustomValues() = both("24-edit-person-custom") {
+        EditPersonScreen(
+            person = DesignFixtures.chachi,
+            onBack = {},
+            onSave = { _, _, _, _, _, _, _ -> },
+        )
+    }
+
     @Test
     fun eventEditor() = both("13-event-editor") {
         EventEditorScreen(
