@@ -252,19 +252,26 @@ definition of done follow, rather than discovering the contradiction in `M9_VERI
 `poster-pipeline.service.ts:694` says, in a comment: *"M9's retention job is what reads it, so
 M9 is a job rather than a job and a migration."* M6_PLAN §3.6 says the same.
 
-**That is not true**, and it is exactly the shape the checklist's newest entry warns about — *a
-comment that asserts an invariant the code does not hold is worse than silence.* FR-SET-06 has
-three clauses, not one:
+**Corrected in place, after reading `schema.prisma:761-767` rather than only the service
+comment.** My first draft of this section said the keep override had nowhere to live at all.
+That was an overstatement and a wrong note is worse than none (checklist §F). The schema
+comment on `expires_at` says: *"A null means 'keep' — the user-overridable case FR-SET-06
+names."* So clause 2 is **half** expressible today. Walking FR-SET-06 as its three clauses:
 
 1. purge after 90/180 days — `expires_at` carries this. ✅
-2. **"both user-overridable to *keep*"** — there is no column anywhere that can hold "keep".
-3. **"with a warning"** before generated media is purged — there is nothing that records
-   having warned, so a sweep would either warn every night until it deleted, or not warn.
+2. **"both user-overridable to *keep*"** — expressible as `expires_at = NULL`, and **nothing
+   has ever written a NULL**. It works one way only: once an asset is kept, the date it would
+   otherwise have expired on is gone, so un-keeping has to re-derive it from `created_at` and
+   the kind. It is also indistinguishable from "no policy was ever set". ⚠️
+3. **"with a warning"** before generated media is purged — **nothing records having warned**,
+   so a sweep would either warn every night until it deleted, or not warn at all. ❌
 
-So M9 **is** a job and a migration. My proposal, to be confirmed: `asset.retention` as an enum
-(`AUTO` | `KEEP`) rather than a nullable boolean, and `asset.purge_warned_at` as a nullable
-timestamp. Additive, nothing destructive. This is also an instance of the checklist item bought
-by M6 §4.7 — *a requirement clause carrying a number can be missed inside a rule that is
+So M9 is still a job **and** a migration, for clause 3 if nothing else. My proposal:
+`asset.retention` as an enum (`AUTO` | `KEEP`) rather than overloading a nullable date, so that
+un-keeping is a one-field change and "kept" is distinguishable from "unset"; and
+`asset.purge_warned_at` as a nullable timestamp, which is the only way clause 3 can be enforced
+rather than attempted. Additive, nothing destructive. This is an instance of the checklist item
+bought by M6 §4.7 — *a requirement clause carrying a number can be missed inside a rule that is
 otherwise honoured* — found by walking FR-SET-06 as three clauses rather than as one sentence.
 
 ### C3 — "unless attached to a saved poster" is not expressible in this schema
