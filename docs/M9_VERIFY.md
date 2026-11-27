@@ -679,13 +679,62 @@ the model name survive — which is what §10 rule 2 and FR-POS-10 need and what
 Every row created by this walkthrough was removed afterwards; the local database is back to
 what it was.
 
-### 9.6 BLOCKED — the push
+### 9.6 BLOCKED — the push, and the decision not to prove it
 
-Definition-of-done item 3 ends *"and a push to that token no longer delivers"*. The device row
-is gone and no row anywhere holds the token, which is read-verified to be sufficient —
-`RemindersService.sendDue` reads devices by user. **Nobody has watched a push fail to arrive**,
-because that needs a real FCM token on a real handset signed into a real account, and the only
-account is Dipen's. Decision 4's half A covers it and waits on a throwaway address.
+Definition-of-done item 3 ends *"and a push to that token no longer delivers"*.
+
+**What is established.** The device row is gone, and the assertion is made on the TOKEN rather
+than on the user id — `fcm_token` is `UNIQUE` across the table, so "no row anywhere holds that
+token" is a statement about the whole database rather than about one account's rows. That is
+**read-verified** to be sufficient: `RemindersService.sendDue` reaches a token only through a
+device row, and there is no other path from a token to a send.
+
+**What is not.** Nobody has watched a push fail to arrive. That is a different claim and it is
+not being rounded up into the first one — `MILESTONE_CHECKLIST.md`, bought by M2 items 1, 4 and
+5: *"scheduled correctly" and "watched arriving" are written as different claims.*
+
+**Why it stopped here — Dipen's call, 2026-11-27, and a reasonable one.** Decision 4's half A
+needed a throwaway Google account. Three candidates were considered and none was usable:
+
+1. **The owner's own Google account**, offered and refused by this session. It was already in
+   the local database from an earlier milestone, holding six people, six events, a wish, two
+   posters and three media files — and two of those names read as real family rather than as
+   fixtures, the same shape `M3_VERIFY.md` records for the deployed account. The feature under
+   test destroys an account irreversibly; that is not an account to point it at.
+2. **A second personal account** present on the handset, plainly somebody else's. Never a
+   candidate.
+3. **An address added for the purpose**, which went onto the phone as an IMAP mailbox inside
+   the mail app rather than as a device Google account — `type=com.google.android.gm.legacyimap`
+   instead of `type=com.google`. Credential Manager only offers the latter, so the sign-in sheet
+   would never have listed it. D5 and FR-AUTH-02 make Google Sign-In the only way in, and a
+   non-Gmail address is a Google identity only if a Google account was created under it. That
+   distinction is subtle and is the useful thing to carry forward.
+
+Rather than create a fourth account for one assertion, the push half is **BLOCKED and named**.
+Everything else about the deletion is proved three ways — in CI, locally, and by hand over real
+HTTP (§9.5).
+
+**What would close it**, for whoever picks it up: any genuine `type=com.google` account on the
+handset, then the six steps in §9b — of which **step 2 is the one that matters.** Prove the push
+DOES arrive before deleting anything. Without that baseline a push failing for any other reason
+reads as success, which is the green-for-the-wrong-reason shape this project keeps finding.
+
+### 9.7 The handset environment was built, and is recorded rather than wasted
+
+The setup worked; only the account was missing. It is in §9b so the next attempt starts from
+there, and the short version is that **Railway cannot be the target**: it runs `main`, has none
+of M9 in it, and its database holds the real account.
+
+The APK's own dex was checked rather than assumed:
+
+```
+$ unzip -p …/composeApp-debug.apk classes*.dex | strings | grep -E '^https?://'
+http://127.0.0.1:3000
+```
+
+That check mattered. Had the build still carried the deployed URL, a deletion driven from the
+app would have reached the account with 566 people in it — and the feature under test is
+irreversible by design.
 
 ---
 
@@ -716,7 +765,19 @@ That a local server is used rather than Railway is also the safer choice by some
 Railway database holds his real account with 566 invented people and **two real contacts** in
 it, and a deletion test belongs nowhere near it.
 
-### What happens when the address arrives
+### Outcome: withdrawn, and the environment torn down
+
+No usable account was available (§9.6), so the run did not happen and Dipen withdrew half A.
+The handset was left in a better state than it was found in, not the state it was borrowed in:
+
+- a debug build pointing at the **deployed** URL is installed, verified from its own dex, so
+  the app on the phone works without a server on this machine;
+- `adb reverse tcp:3000` removed;
+- the local dev server this session started is stopped. Postgres and Redis are left running,
+  because Docker was down when this session began and a working local stack is more useful to
+  the next one than an empty port.
+
+### What the six steps would have been
 
 In order, and the first step is the one that matters:
 
@@ -829,6 +890,56 @@ new third thing in that family and the most PII-dense artifact this project can 
 The one screenshot taken on the handset is the app's own sign-in screen and shows no personal
 data; it lives in the session scratchpad, not in the repo.
 
+### 14.1 The public-repo rule has a fourth half, and M9 nearly broke it
+
+M5 §0.5 extended the rule from fixtures to **screenshots**. §14 above extends it to **export
+files**. This milestone found a fourth, by being stopped on the way to doing it:
+
+**A verification document must not carry the identifiers the verification touched.**
+
+The first draft of §9.6 explained why three candidate accounts were unusable by naming all
+three email addresses, and explained why one of them was refused by quoting two of the names it
+held — names that read as real family. Every one of those strings is a real person's data, and
+`docs/` is in a public repository. The reasoning in §9.6 is worth keeping; the identifiers add
+nothing to it and could not be taken back once pushed.
+
+The shape is worth stating plainly because it is not obvious in the moment: **PII arrives in a
+verification document through the honesty, not through carelessness.** Explaining precisely why
+an account was refused is exactly the behaviour this project asks for, and it is what put three
+real addresses and two family names into a file about to be committed. The rule that covers it:
+describe the *reason* in full and the *identifier* never.
+
+Checked the same way across the rest of M9: no fixture, test, commit message, document or
+screenshot in this branch carries a real address, a real name, a real phone number, an FCM
+token or a `google_sub`. The scan:
+
+```
+$ git diff main..HEAD | grep -niE "@gmail\.com|@yahoo\.com|<surname>|<surname>"
+(nothing)
+```
+
+### 14.2 Two things the same scan found on `main`, which are NOT M9's
+
+Recorded rather than quietly fixed (`MILESTONE_CHECKLIST.md` §F: bugs found in earlier
+milestones' code are recorded). Neither is on this branch; both are already committed and
+public.
+
+**`docs/M0_PREREQUISITES.md:175` contains a real Gmail address**, in a table about which Google
+account is the default. It has been in the public repository since M0. It is not a credential,
+so the exposure is enumeration and spam rather than account access — but it is exactly the
+class of thing §11's public-repo rule exists for, and the same logic as a leaked secret applies:
+**deleting the line does not unpublish it.** Git history is permanent and public repositories
+are scraped continuously. Removing it is still worth doing for every reader after today; it is
+Dipen's call, and this document does not repeat the address.
+
+**One name in `docs/fixtures/name-tokens.json` may not be invented.** The fixture's own header
+states that every person in it is invented, and that claim is load-bearing — it is the sentence
+that makes the file safe to commit. One of the names shares the owner's surname, and the same
+name appears as a person row in his local account. That is entirely consistent with him having
+typed the *fixture's* name into the app as a test person, which would make it invented and the
+header true. It is also consistent with the reverse. **Unverified either way**, flagged because
+the fixture asserts it rather than demonstrates it, and because M3, M5 and M6 all read that file.
+
 ---
 
 ## 15. What Dipen owes, and what each blocks
@@ -838,7 +949,7 @@ data; it lives in the session scratchpad, not in the repo.
 | 1 | Where the policy pages and the public deletion URL live — and whether that means buying a domain | items 4, 6; §12 box 1 |
 | 2 | How the export is delivered: email (a new vendor, a new key, **and item 9 becomes false**) or an in-app signed URL (nothing new, weaker reading of FR-SET-03) | items 1, 2; §12 box 5 |
 | 3 | ~~What deletion erases and what it anonymises~~ | **ANSWERED 2026-11-27: anonymise the ledger and the reports, erase everything else.** Built, proved in CI, enforced by the database. §9 |
-| 4 | ~~How deletion is tested~~ | **ANSWERED: both a CI spec and a throwaway handset account.** The CI half is done. **The throwaway Google account is Dipen's to create** — this session does not create accounts — and item 3's push half waits on that address |
+| 4 | ~~How deletion is tested~~ | **ANSWERED: both a CI spec and a throwaway handset account**, then **half A withdrawn** on 2026-11-27 after three candidate accounts proved unusable (§9.6). The CI half is done, plus a live HTTP walkthrough (§9.5). Item 3's push half is **BLOCKED and named** |
 
 **So two decisions remain: 1 and 2.** Between them they block items 1, 2, 4 and 6, §12's boxes
 1, 4 and 5, and the text of the policy page.
