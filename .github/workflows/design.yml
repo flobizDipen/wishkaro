@@ -1,0 +1,78 @@
+name: design
+
+# **Deliberately NOT path-filtered**, and this is the second workflow in this repository to say
+# so in a comment. `privacy.yml` was the first, and M9 bought that lesson expensively:
+#
+#   A guard that runs on SOME paths is not a guard. `no-pii-in-repo.spec.ts` grepped the whole
+#   tree and ran only when `server/**` changed — and the leak it was written for was in `docs/`.
+#
+# The equivalent mistake here would be obvious and tempting: add the colour check as a step in
+# `android.yml`, which already builds the app. `android.yml` is filtered to `composeApp/**`,
+# `gradle/**`, the Gradle files and `docs/fixtures/**`. That filter would cover the colour check
+# **today**, because every Kotlin file it scans is under `composeApp/`. It would stop covering it
+# the first time a Compose file lands anywhere else — a `:widget` module, a shared `:design`
+# module, a sample — which is exactly the kind of move a design milestone makes likely.
+#
+# So it runs on everything, every time, and costs a checkout and under a second: no toolchain,
+# no Gradle, no `npm ci`, nothing to install.
+#
+# The OTHER half of M7's design gate — `ThemeContrastTest`, which fails the build when any
+# shipped foreground/background pair drops below its WCAG threshold — is a Kotlin unit test and
+# runs in `android.yml` with the rest of them. It needs the toolchain; this does not.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: design-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-raw-colors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The script greps the working tree, not history, and says so in its own header.
+          fetch-depth: 1
+
+      - name: No colour named outside ui/theme/
+        run: ./tools/check-no-raw-colors.sh
+
+      # The licence check is here rather than in `android.yml` for the same reason as above:
+      # it is about the contents of the repository, not about whether the app compiles.
+      #
+      # This repository is PUBLIC and ships two OFL font families. The OFL requires the licence
+      # to travel with the fonts. A font added later without its licence would compile, install,
+      # run and look right — there is no other signal.
+      - name: Every bundled font family has its licence committed
+        run: |
+          fonts="composeApp/src/commonMain/composeResources/font"
+          licenses="composeApp/src/commonMain/composeResources/files/licenses"
+          missing=0
+          for family in inter fraunces; do
+            if ! ls "$fonts"/"$family"_*.ttf >/dev/null 2>&1; then
+              echo "::error::no $family font files found under $fonts" && missing=1 && continue
+            fi
+            # Case-insensitive, because OFL files arrive named OFL.txt, LICENSE.txt and
+            # SIL-OFL.txt depending on the foundry, and the check should be about the licence
+            # being there rather than about what it was called upstream.
+            if ! ls "$licenses" | grep -qi "$family"; then
+              echo "::error::$family is bundled but no licence for it is in $licenses"
+              missing=1
+            fi
+          done
+          # And the reverse direction, which is the one that rots quietly: a family removed
+          # from the bundle leaves a licence behind claiming the app ships something it does not.
+          for license in "$licenses"/OFL-*.txt; do
+            family="$(basename "$license" .txt | sed 's/^OFL-//' | tr '[:upper:]' '[:lower:]')"
+            if ! ls "$fonts"/"$family"_*.ttf >/dev/null 2>&1; then
+              echo "::error::$license is committed but no $family font is bundled"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "fonts: every bundled family has its licence"
+          exit "$missing"

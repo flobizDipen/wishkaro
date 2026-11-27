@@ -1,5 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose draws everything; this only covers the window before the first frame. -->
-    <style name="Theme.WishKaro" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+        The window Compose draws into.
+
+        `android:windowBackground` is the whole of M7 item 5, and it is worth being precise
+        about why. The white flash on a cold start does NOT come from the splash screen — the
+        splash is the thing that prevents it. It comes from the window that the splash hands
+        over to: between the splash exiting and the first Compose frame being presented there
+        is a window on screen, and it is painted with whatever `windowBackground` says. The
+        platform's default for this theme's parent is white.
+
+        So this is the fix, and `@color/wk_ground` is ivory in `values/` and ink in
+        `values-night/`. It must equal `WishKaroPalette`'s `surface` for the live theme, because
+        the Compose `Surface` that `WishKaroTheme` wraps the app in paints exactly that colour
+        on top of it. Two values that have to agree, in two languages, with nothing to check
+        them — which is why `values/colors.xml` says so at the top.
+    -->
+    <style name="Theme.WishKaro" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/wk_ground</item>
+    </style>
+
+    <!--
+        The theme the activity is LAUNCHED with (FR — M7 item 4's neighbour, item 5).
+
+        `androidx.core:core-splashscreen` rather than the platform API: `android.window.
+        SplashScreen` arrives in API 31 and this app's minSdk is 26, so on a large share of the
+        handsets this product is for — the ones the whole reliability milestone was written
+        against — the platform one does not exist. The compat library backports it to 23.
+
+        `postSplashScreenTheme` is what `installSplashScreen()` swaps to in `onCreate`. Without
+        it the activity keeps the splash theme for its whole life, and the splash's icon stays
+        behind the content as a window background.
+
+        `windowSplashScreenAnimationDuration` is 0 and that is deliberate: the icon does not
+        animate. "Slow and settled" is about motion the user asked for, and an app that performs
+        for a third of a second before it will show you whose birthday it is has misunderstood
+        what it is for.
+    -->
+    <style name="Theme.WishKaro.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/wk_ground</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/Theme.WishKaro</item>
+    </style>
 </resources>

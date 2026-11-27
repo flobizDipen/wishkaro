@@ -1,6 +1,7 @@
 package `in`.wishkaro.app.ui.calendar
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +42,11 @@ import `in`.wishkaro.app.domain.monthGrid
 import `in`.wishkaro.app.domain.monthPlus
 import `in`.wishkaro.app.domain.monthTitle
 import `in`.wishkaro.app.domain.toneFor
+import `in`.wishkaro.app.ui.components.EmptyState
+import `in`.wishkaro.app.ui.components.Note
+import `in`.wishkaro.app.ui.components.SectionHeader
+import `in`.wishkaro.app.ui.theme.SolemnScope
+import `in`.wishkaro.app.ui.theme.accent
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.number
 
@@ -148,8 +154,8 @@ private fun MonthHeader(
 
         Text(
             title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.testTag("calendar_month"),
         )
 
@@ -179,6 +185,26 @@ private fun DayCell(
         if (date == null) return@Box
 
         val isToday = date == today
+        /**
+         * The ring is a CONTRAST fix, not decoration, and it is the one place in M7 where a
+         * measurement changed a layout.
+         *
+         * `primaryContainer` on `surface` measures **1.25:1** in light and 1.49:1 in dark.
+         * As the only thing distinguishing a selected day from an unselected one, that fails
+         * WCAG 1.4.11, which asks 3:1 of anything carrying a component's state. Darkening the
+         * fill was the wrong fix — "warm paper" is pale fills, and a selection at 3:1 against
+         * ivory is a block of colour rather than a highlight.
+         *
+         * So the state is carried by a border in the accent as well: 5.93:1 in light, 7.81:1
+         * in dark, both measured in `ThemeContrastTest`. The tint stays as the soft half of
+         * the signal and stops being load-bearing. Today's ring is thinner than the
+         * selection's, so the two states are told apart by weight as well as by fill.
+         */
+        val ring = when {
+            selected -> 2.dp to MaterialTheme.colorScheme.primary
+            isToday -> 1.dp to MaterialTheme.colorScheme.outline
+            else -> null
+        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -192,13 +218,18 @@ private fun DayCell(
                         else -> MaterialTheme.colorScheme.surface
                     },
                 )
+                .then(
+                    ring?.let { (width, color) -> Modifier.border(width, color, CircleShape) }
+                        ?: Modifier,
+                )
                 .clickable(onClick = onClick)
                 .testTag("day_${date.day}"),
         ) {
             Text(
                 date.day.toString(),
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface,
             )
             // A dot, not a number: the grid answers "is there anything that day", and the
             // list underneath answers "what". A tone-neutral colour for a day that holds
@@ -211,10 +242,15 @@ private fun DayCell(
                         .size(if (count > 1) 7.dp else 5.dp)
                         .clip(CircleShape)
                         .background(
+                            // A dot, not a number: the grid answers "is there anything that
+                            // day", and the list underneath answers "what". A tone-neutral
+                            // colour for a day that holds only remembrances — a bright accent
+                            // on a death anniversary is the kind of detail FR-EVT-05 exists
+                            // to prevent.
                             if (solemnOnly) {
                                 MaterialTheme.colorScheme.outline
                             } else {
-                                MaterialTheme.colorScheme.primary
+                                MaterialTheme.accent
                             },
                         )
                         .testTag("dot_${date.day}"),
@@ -235,34 +271,36 @@ private fun DaysEvents(
 ) {
     // FR-VIEW-05: never a blank screen. Three different nothings, three different sentences
     // — "pick a day", "nothing that day", and "nothing all month" are not the same message.
+    // FR-VIEW-05: never a blank screen. Three different nothings, three different sentences
+    // — "pick a day", "nothing that day", and "nothing all month" are not the same message.
     if (day == null) {
-        Text(
-            if (monthTotal == 0) {
-                "Nothing in ${monthTitle(year, month)}. Try the next month."
-            } else {
-                "Tap a day with a dot to see whose it is."
-            },
-            modifier = Modifier.padding(16.dp).testTag("calendar_hint"),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (monthTotal == 0) {
+            EmptyState(
+                title = "Nothing in ${monthTitle(year, month)}",
+                body = "Try the next month, or add a date to somebody.",
+                titleTag = "calendar_hint",
+            )
+        } else {
+            Note(
+                "Tap a day with a dot to see whose it is.",
+                modifier = Modifier.padding(16.dp),
+                tag = "calendar_hint",
+            )
+        }
         return
     }
 
-    Text(
-        "${BirthdayMath.formatDayMonth(day, month)}",
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
+    SectionHeader(
+        text = BirthdayMath.formatDayMonth(day, month),
+        trailing = entries.size.takeIf { it > 0 }?.toString(),
+        modifier = Modifier.padding(horizontal = 16.dp),
     )
 
     if (entries.isEmpty()) {
-        Text(
+        Note(
             "Nothing on this day.",
-            modifier = Modifier.padding(horizontal = 16.dp).testTag("calendar_day_empty"),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp),
+            tag = "calendar_day_empty",
         )
         return
     }
@@ -273,13 +311,18 @@ private fun DaysEvents(
     ) {
         items(entries, key = { it.event.id }) { entry ->
             val tone = toneFor(entry.person)
+            SolemnScope(entry.isSolemn) {
             Column(
                 Modifier
                     .fillMaxWidth()
                     .clickable { onOpenPerson(entry.personId) }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
-                Text(entry.displayName, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    entry.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 Text(
                     buildString {
                         append(entry.title)
@@ -291,6 +334,7 @@ private fun DaysEvents(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
             }
         }
     }

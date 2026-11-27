@@ -34,6 +34,8 @@ import `in`.wishkaro.app.ui.poster.PosterScreen
 import `in`.wishkaro.app.ui.poster.PosterStore
 import `in`.wishkaro.app.ui.wish.WishComposerScreen
 import `in`.wishkaro.app.ui.wish.WishStore
+import `in`.wishkaro.app.ui.onboarding.OnboardingScreen
+import `in`.wishkaro.app.ui.onboarding.OnboardingStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
 import `in`.wishkaro.app.ui.nav.showsTabs
@@ -54,6 +56,7 @@ import `in`.wishkaro.app.ui.person.DeletedPeopleScreen
 import `in`.wishkaro.app.ui.person.EditPersonScreen
 import `in`.wishkaro.app.ui.person.EventEditorScreen
 import `in`.wishkaro.app.ui.person.PersonDetailScreen
+import `in`.wishkaro.app.ui.person.PersonPhotoStore
 import `in`.wishkaro.app.ui.PrivacyBusy
 import `in`.wishkaro.app.ui.settings.PrivacyState
 import `in`.wishkaro.app.ui.settings.SettingsScreen
@@ -68,6 +71,7 @@ import org.koin.compose.koinInject
 fun App(modifier: Modifier = Modifier) {
     WishKaroTheme {
         val store: AppStore = koinInject()
+        val onboarding: OnboardingStore = koinInject()
         val importStore: ImportStore = koinInject()
         val wishStore: WishStore = koinInject()
         val posterStore: PosterStore = koinInject()
@@ -77,6 +81,7 @@ fun App(modifier: Modifier = Modifier) {
         val navigationKind = rememberNavigationKind()
 
         val authState by store.authState.collectAsState()
+        val onboardingSeen by onboarding.seen.collectAsState()
         val busy by store.busy.collectAsState()
         val message by store.message.collectAsState()
         val snackbar = remember { SnackbarHostState() }
@@ -146,7 +151,22 @@ fun App(modifier: Modifier = Modifier) {
             // there is no session, which makes two things structurally impossible: pressing
             // back out of a signed-in app onto a sign-in screen, and a sign-out leaving the
             // previous user's history standing behind it.
-            if (authState !is AuthState.SignedIn) {
+            if (!onboardingSeen) {
+                /**
+                 * FR-AUTH-01, M7. Shown once, BEFORE sign-in.
+                 *
+                 * Before, because the point of a value carousel is to be read by somebody
+                 * deciding whether to hand over a Google account — after sign-in it would be
+                 * a tour of an app they have already committed to.
+                 *
+                 * Checked before the auth branch rather than inside its `!SignedIn` arm, so
+                 * that it cannot reappear for a signed-in user whose session happens to
+                 * expire. `onboardingSeen` is read from disk, not from saved state, so it
+                 * survives process death, a swipe from Recents, a force-stop and a reboot —
+                 * which is what "once" has to mean (`ui/onboarding/OnboardingStore.kt`).
+                 */
+                OnboardingScreen(onDone = onboarding::markSeen, modifier = inner)
+            } else if (authState !is AuthState.SignedIn) {
                 SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
             } else {
                 val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, wishStore, posterStore, nav, inner))
@@ -399,6 +419,14 @@ private fun wishKaroEntryProvider(
 
     entry<Screen.PersonDetail>(metadata = TwoPaneScene.detailPane()) { key ->
         val person = store.personOf(key.personId)
+        /**
+         * FR-PPL-04's photo. Opened on the KEY, so moving from one person's screen to
+         * another's re-fetches and a recomposition does not — the same shape the composer
+         * and the poster studio use, and for the same reason.
+         */
+        val photoStore: PersonPhotoStore = koinInject()
+        val photo by photoStore.state.collectAsState()
+        LaunchedEffect(key) { photoStore.open(key.personId) }
         // "Not read yet" is not "deleted". Both are a null person, and telling the user
         // their person is gone is the worse half to guess at — a widget tap into a cold
         // process lands here before the first database emission, and that frame used to
@@ -423,6 +451,13 @@ private fun wishKaroEntryProvider(
             // restarts from empty and the history flashes. See AppStore.wishesOf.
             wishes = remember(key.personId) { store.wishesOf(key.personId) }
                 .collectAsState(emptyList()).value,
+            // Guarded on the id: the store is a singleton and a fetch for the PREVIOUS
+            // person can still be in flight, which in a two-pane layout means their photo
+            // would land on this person's screen.
+            photo = photo.bytes.takeIf { photo.personId == key.personId },
+            photoBusy = photo.uploading && photo.personId == key.personId,
+            onPickPhoto = photoStore::pick,
+            onRemovePhoto = photoStore::remove,
             modifier = inner,
         )
     }

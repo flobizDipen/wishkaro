@@ -3,6 +3,8 @@ package `in`.wishkaro.app.ui.importing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -53,7 +55,12 @@ import `in`.wishkaro.app.ui.components.DateFieldsSaver
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.RelationPicker
+import `in`.wishkaro.app.ui.components.EmptyState
+import `in`.wishkaro.app.ui.components.LoadingState
+import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
+import `in`.wishkaro.app.ui.components.WarningNote
+import `in`.wishkaro.app.ui.components.WishKaroCard
 import kotlinx.datetime.LocalDate
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
 
@@ -72,34 +79,30 @@ fun ImportStartScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = modifier.fillMaxSize().safeDrawingPadding().imePadding()
+            .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Bring people in", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Nothing is saved until you have looked at it and said yes.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        Text("Bring people in", style = MaterialTheme.typography.headlineMedium)
+        Note("Nothing is saved until you have looked at it and said yes.")
         Spacer(Modifier.height(8.dp))
 
-        Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onContacts)) {
+        WishKaroCard(onClick = onContacts) {
             Column(Modifier.padding(16.dp)) {
                 Text("From your contacts", style = MaterialTheme.typography.titleMedium)
-                Text(
+                Note(
                     "Reads the birthdays already on this phone. Everything stays on the " +
                         "phone, and only the people you tick are saved.",
-                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }
 
-        Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onFile)) {
+        WishKaroCard(onClick = onFile) {
             Column(Modifier.padding(16.dp)) {
                 Text("From a spreadsheet", style = MaterialTheme.typography.titleMedium)
-                Text(
+                Note(
                     "A .csv or .xlsx file. You choose which column is which, and you see " +
                         "the first few rows before anything is saved.",
-                    style = MaterialTheme.typography.bodySmall,
                 )
             }
         }
@@ -158,13 +161,13 @@ fun ImportContactsScreen(
         )
 
         ContactsState.Reading -> Column(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier.fillMaxSize().safeDrawingPadding(),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            CircularProgressIndicator()
+            LoadingState(modifier = Modifier.weight(1f, fill = false))
             Spacer(Modifier.height(12.dp))
-            Text("Reading your contacts…")
+            Note("Reading your contacts…")
         }
 
         is ContactsState.Review -> ContactsReview(
@@ -191,8 +194,17 @@ fun ImportContactsScreen(
  * the controls were simply below the fold and nobody could reach them. A disclosure the user
  * cannot read to the end is not a disclosure.
  */
+/**
+ * Public, and not only for the screenshot harness.
+ *
+ * This composable IS `FR-AUTH-06`'s prominent disclosure and §12's Play requirement. It is the
+ * one piece of the import flow that a reviewer may have to be shown on its own, it holds no
+ * store state, and it is what `ImportContactsScreen` renders before anything else happens.
+ * `M7_VERIFY.md`'s screenshot of "the contacts import screen" is this, because this is the
+ * screen a user meets.
+ */
 @Composable
-private fun PermissionRationale(
+fun PermissionRationale(
     busy: Boolean,
     onAsk: () -> Unit,
     onBack: () -> Unit,
@@ -206,7 +218,7 @@ private fun PermissionRationale(
             .testTag(ContactsDisclosure.TAG_SCREEN),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(ContactsDisclosure.TITLE, style = MaterialTheme.typography.headlineSmall)
+        Text(ContactsDisclosure.TITLE, style = MaterialTheme.typography.headlineMedium)
         Text(ContactsDisclosure.PURPOSE)
         for (point in ContactsDisclosure.POINTS) {
             Text("\u2022  $point", style = MaterialTheme.typography.bodyMedium)
@@ -240,10 +252,10 @@ private fun PermissionRefused(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
+        modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("No contacts, then", style = MaterialTheme.typography.headlineSmall)
+        Text("No contacts, then", style = MaterialTheme.typography.headlineMedium)
         if (canAskAgain) {
             Text("That is fine. You can add people by hand, or import a spreadsheet instead.")
             Button(onClick = onAsk) { Text("Actually, let me pick contacts") }
@@ -288,13 +300,12 @@ private fun ContactsReview(
     var datingContactId by rememberSaveable { mutableStateOf<String?>(null) }
     val datingContact = datingContactId?.let { id -> choices.firstOrNull { it.contact.id == id } }
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize().safeDrawingPadding()) {
         Column(Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp)) {
-            Text("Choose who comes in", style = MaterialTheme.typography.titleLarge)
-            Text(
+            Text("Choose who comes in", style = MaterialTheme.typography.headlineSmall)
+            Note(
                 "$selected of ${choices.size} selected" +
-                    if (missingRelations > 0) " · $missingRelations still need a relation" else "",
-                style = MaterialTheme.typography.bodySmall,
+                    if (missingRelations > 0) " \u00B7 $missingRelations still need a relation" else "",
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 // A button the user presses, never a default (the engineering rules).
@@ -331,11 +342,9 @@ private fun ContactsReview(
                 Text(if (selected == 0) "Pick someone first" else "Import $selected")
             }
             if (missingRelations > 0) {
-                Text(
+                WarningNote(
                     "$missingRelations of the people you picked still need a relation. " +
                         "Use \"Set relation\" to do them all at once.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
@@ -468,6 +477,36 @@ private fun AddDateDialog(name: String, onSave: (EventDate) -> Unit, onDismiss: 
 // File import
 // =====================================================================================
 
+/**
+ * Where a spreadsheet import starts, before any file has been chosen.
+ *
+ * Split out of [ImportFileScreen]'s `when` so it can be drawn without an `ImportStore`. It has
+ * no store state of its own — a busy flag and two callbacks — and the split is what lets the
+ * design harness photograph it, and a future test assert on it, without standing up a
+ * repository, a contacts gateway and a file gateway to render a heading and two buttons.
+ */
+@Composable
+fun ImportFileChooseScreen(
+    busy: Boolean,
+    onPick: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Import a spreadsheet", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "A .csv or .xlsx with one person per row. It is read on this phone — the file is " +
+                "not uploaded anywhere.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(onClick = onPick, enabled = !busy) { Text("Choose a file") }
+        TextButton(onClick = onBack) { Text("Back") }
+    }
+}
+
 @Composable
 fun ImportFileScreen(
     store: ImportStore,
@@ -486,24 +525,18 @@ fun ImportFileScreen(
     LaunchedEffect(result) { if (result != null && result !== resultOnEntry) onDone() }
 
     when (val current = state) {
-        FileState.Choosing -> Column(
-            modifier = modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Import a spreadsheet", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "A .csv or .xlsx with one person per row. It is read on this phone — the " +
-                    "file is not uploaded anywhere.",
-            )
-            Button(onClick = store::pickFile, enabled = !busy) { Text("Choose a file") }
-            TextButton(onClick = onBack) { Text("Back") }
-        }
+        FileState.Choosing -> ImportFileChooseScreen(
+            busy = busy,
+            onPick = store::pickFile,
+            onBack = onBack,
+            modifier = modifier,
+        )
 
         is FileState.Unreadable -> Column(
-            modifier = modifier.fillMaxSize().padding(16.dp),
+            modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("That file did not open", style = MaterialTheme.typography.headlineSmall)
+            Text("That file did not open", style = MaterialTheme.typography.headlineMedium)
             Text(current.fileName, style = MaterialTheme.typography.bodySmall)
             Text(current.reason)
             Button(onClick = store::pickFile) { Text("Try another file") }
@@ -542,7 +575,8 @@ private fun MappingScreen(
     var relationPickerOpen by rememberSaveable { mutableStateOf(false) }
 
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = modifier.fillMaxSize().safeDrawingPadding().imePadding()
+            .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(state.fileName, style = MaterialTheme.typography.titleMedium)
@@ -598,17 +632,15 @@ private fun MappingScreen(
                 label = { Text("Month first (6 May)") },
             )
         }
-        Text(
+        Note(
             "WishKaro never guesses this from the file. A spreadsheet where every date is " +
                 "under the 13th reads perfectly well both ways and only one of them is yours.",
-            style = MaterialTheme.typography.bodySmall,
         )
 
         SectionHeader("Relation")
-        Text(
+        Note(
             state.settings.defaultRelation?.let { "Rows with no relation of their own: $it" }
                 ?: "Rows with no relation of their own cannot be imported (every person needs one).",
-            style = MaterialTheme.typography.bodySmall,
         )
         OutlinedButton(onClick = { relationPickerOpen = true }) {
             Text(state.settings.defaultRelation?.let { "Change" } ?: "Set one for those rows")
@@ -657,7 +689,7 @@ private fun PreviewTable(state: FileState.Mapping, today: LocalDate) {
     // import would not have picked — or skip a blank line the importer would have counted.
     val dataRows = importDataRows(state.rows, state.settings.hasHeaderRow).take(5).map { it.value }
     if (dataRows.isEmpty()) {
-        Text("No rows to show.", style = MaterialTheme.typography.bodySmall)
+        Note("No rows to show.")
         return
     }
 
@@ -730,7 +762,8 @@ fun ImportResultScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = modifier.fillMaxSize().safeDrawingPadding().imePadding()
+            .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
@@ -739,7 +772,7 @@ fun ImportResultScreen(
                 result.skipped.isNotEmpty() && result.failed.isEmpty() -> "Nothing new"
                 else -> "Nothing was added"
             },
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineMedium,
         )
         Text(
             listOfNotNull(

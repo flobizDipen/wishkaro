@@ -6,6 +6,11 @@ import `in`.wishkaro.app.domain.TimelineMonth
 import `in`.wishkaro.app.domain.UpcomingEntry
 import `in`.wishkaro.app.domain.timelineMonths
 import `in`.wishkaro.app.domain.toneFor
+import `in`.wishkaro.app.ui.components.DateBadge
+import `in`.wishkaro.app.ui.components.DateBadgeWidth
+import `in`.wishkaro.app.ui.components.Note
+import `in`.wishkaro.app.ui.theme.SolemnScope
+import `in`.wishkaro.app.ui.theme.accent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -70,11 +75,9 @@ fun TimelineScreen(
 
             if (month.entries.isEmpty()) {
                 item(key = "empty-${month.year}-${month.month}") {
-                    Text(
+                    Note(
                         "Nothing this month",
-                        modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = TimelineContentStart, end = 16.dp, bottom = 12.dp),
                     )
                 }
             } else {
@@ -91,15 +94,14 @@ fun TimelineScreen(
 @Composable
 private fun MonthHeading(month: TimelineMonth, isFirst: Boolean, isLast: Boolean) {
     Column {
-        if (!isFirst) HorizontalDivider(Modifier.padding(start = 72.dp))
+        if (!isFirst) HorizontalDivider(Modifier.padding(start = TimelineContentStart))
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp, 12.dp, 16.dp, 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 MONTH_FULL_NAMES[month.month - 1],
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.testTag("timeline_${MONTH_FULL_NAMES[month.month - 1]}"),
             )
@@ -110,7 +112,7 @@ private fun MonthHeading(month: TimelineMonth, isFirst: Boolean, isLast: Boolean
             if (month.month == 1 || isFirst || isLast) {
                 Text(
                     " ${month.year}",
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -128,51 +130,67 @@ private fun MonthHeading(month: TimelineMonth, isFirst: Boolean, isLast: Boolean
 @Composable
 private fun TimelineRow(entry: UpcomingEntry, onClick: () -> Unit) {
     val tone = toneFor(entry.person)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // The date rail down the left is what makes this read as a timeline rather than a
-        // list with headings.
-        Text(
-            BirthdayMath.formatDayMonth(entry.nextOccurrence.day, entry.nextOccurrence.month.number),
-            modifier = Modifier.width(56.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(
-                    if (entry.isSolemn) {
-                        MaterialTheme.colorScheme.outline
-                    } else {
-                        MaterialTheme.colorScheme.primary
+    SolemnScope(entry.isSolemn) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The date rail down the left is what makes this read as a timeline rather than a
+            // list with headings. It was a 56dp `labelMedium` string; it is the same
+            // `DateBadge` the upcoming list uses now, so the two views agree about what a date
+            // looks like and the rails line up with the month dividers above them.
+            DateBadge(
+                day = entry.nextOccurrence.day,
+                month = entry.nextOccurrence.month.number,
+            )
+            Box(
+                Modifier
+                    .padding(start = 8.dp)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (entry.isSolemn) {
+                            MaterialTheme.colorScheme.outline
+                        } else {
+                            MaterialTheme.accent
+                        },
+                    ),
+            )
+            Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                Text(
+                    entry.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    buildString {
+                        append(entry.title)
+                        tone.years(entry.turningAge, entry.event.type)?.let {
+                            append(" \u00B7 ")
+                            append(it)
+                        }
                     },
-                ),
-        )
-        Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(entry.displayName, style = MaterialTheme.typography.bodyLarge)
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(
-                buildString {
-                    append(entry.title)
-                    tone.years(entry.turningAge, entry.event.type)?.let {
-                        append(" · ")
-                        append(it)
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall,
+                entry.countdown,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(
-            entry.countdown,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
+
+/**
+ * Where a row's text starts, so the dividers and the "nothing this month" line agree with it.
+ *
+ * 16dp of leading padding + the `DateBadge`'s 44dp + 8dp + the 8dp dot + 12dp. It was a bare
+ * `72.dp` repeated in two places and tuned by eye to the old 56dp date rail; naming it is what
+ * stops the next change to the badge leaving the dividers behind.
+ */
+private val TimelineContentStart = DateBadgeWidth + 44.dp

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The night twin of `values/colors.xml`, and the reason the cold start does not flash.
+
+    Resource qualifiers are resolved from the device's `uiMode` configuration, not from the
+    theme's parent — so these values are picked up whenever the system is in dark mode, without
+    `Theme.WishKaro` having to be a DayNight theme. That matters because the window background
+    is applied before `onCreate`, long before `isSystemInDarkTheme()` has been read by anything.
+
+    Each value is its `WishKaroPalette.DARK` twin.
+
+    `ic_launcher_background` is deliberately NOT overridden here. A launcher icon is drawn by
+    the launcher, which may be themed differently from the app, and an icon whose background
+    changes under the user is an icon they stop recognising on the home screen. Android 13+
+    themed icons are handled properly, by the `<monochrome>` layer, rather than by swapping the
+    background out from under the normal one.
+-->
+<resources>
+    <color name="wk_ground">#15131C</color>
+    <color name="wk_accent">#E09A52</color>
+    <color name="wk_ink">#F0EBE3</color>
+</resources>

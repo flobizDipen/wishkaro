@@ -3,16 +3,22 @@ package `in`.wishkaro.app.ui.components
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import `in`.wishkaro.app.ui.components.OverflowGlyph
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 /**
  * The top bar every top-level view shares.
@@ -43,6 +49,15 @@ fun WishKaroTopBar(
 
     TopAppBar(
         title = { Text(title) },
+        // The same colours as `DetailTopBar`, for the same reason: "warm paper" means the bar
+        // is the same sheet the content is on. Material's default puts a tinted container
+        // behind the title, which is what made every screen in this app look like it had a
+        // header pasted onto it.
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            actionIconContentColor = MaterialTheme.colorScheme.primary,
+        ),
         actions = {
             TextButton(
                 onClick = onRefresh,
@@ -50,10 +65,16 @@ fun WishKaroTopBar(
                 modifier = Modifier.testTag("action_sync"),
             ) { Text("Sync") }
 
-            TextButton(
+            // An overflow icon, not the word "More". Same correction as the back arrow, and
+            // the same reason: three dots in a column is what an Android toolbar puts here,
+            // and a word in its place reads as a port of something else. The content
+            // description keeps it addressable by a screen reader AND by `ui.sh`.
+            IconButton(
                 onClick = { menuOpen = true },
-                modifier = Modifier.testTag("action_more"),
-            ) { Text("More") }
+                modifier = Modifier
+                    .semantics { contentDescription = "More" }
+                    .testTag("action_more"),
+            ) { OverflowGlyph(MaterialTheme.colorScheme.onSurfaceVariant) }
 
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(

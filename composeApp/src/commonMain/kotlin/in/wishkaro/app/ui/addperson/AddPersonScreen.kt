@@ -2,9 +2,11 @@ package `in`.wishkaro.app.ui.addperson
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -22,6 +24,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import `in`.wishkaro.app.domain.BirthdayMath
@@ -35,6 +39,9 @@ import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.EventTypePicker
 import `in`.wishkaro.app.ui.components.RelationPicker
+import `in`.wishkaro.app.ui.components.BackAffordance
+import `in`.wishkaro.app.ui.components.DetailTopBar
+import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
 import kotlinx.coroutines.launch
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
@@ -87,21 +94,41 @@ fun AddPersonScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Add a person") },
-                navigationIcon = { TextButton(onClick = onCancel) { Text("Cancel") } },
+            // "Cancel" rather than "Back": leaving a half-filled form discards what was
+            // typed, and the two words say different things about that.
+            DetailTopBar(
+                title = "Add a person",
+                onBack = onCancel,
+                back = BackAffordance.CLOSE,
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+            // `imePadding()` BEFORE `verticalScroll`, which is the order the edge-to-edge
+            // guidance calls out: applied after the scroll it pads the scrollable's CONTENT
+            // rather than its viewport, and the field still ends up under the keyboard.
+            //
+            // It is needed at all because this app is edge-to-edge. `adjustResize` in the
+            // manifest resizes the WINDOW, and a window that has already been told not to fit
+            // system windows has nothing left to resize — so from M4's `enableEdgeToEdge()`
+            // onward, every scrolling form in this app could put a focused field behind the
+            // keyboard. The Scaffold's default `contentWindowInsets` does not carry the IME.
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding()
+                .verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it.take(FieldLimits.NAME) },
                 label = { Text("Name") },
                 singleLine = true,
+                // Words, not Sentences. A name is capitalised at every word, and the
+                // difference is "meera kulkarni" on every screen that person appears on —
+                // on a phone keyboard, with autocapitalisation off by default in many Indic
+                // layouts, this is the whole of whether names look entered or typed.
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Words,
+                    imeAction = ImeAction.Next,
+                ),
                 modifier = Modifier.fillMaxWidth().testTag("add_person_name"),
             )
 
@@ -111,19 +138,23 @@ fun AddPersonScreen(
             if (needsLabel) {
                 OutlinedTextField(
                     value = label,
-                    onValueChange = { label = it },
+                    onValueChange = { label = it.take(FieldLimits.RELATION) },
                     label = { Text("Call it what?") },
                     placeholder = { Text("Shop anniversary") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next,
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        .testTag("add_person_label"),
                 )
             }
 
             if (type == EventType.DEATH_ANNIVERSARY) {
-                Text(
+                Note(
                     "WishKaro will keep this person's page quiet, and will never wish them " +
                         "anything.",
-                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 12.dp),
                 )
             }

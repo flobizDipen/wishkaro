@@ -68,6 +68,12 @@
             and an implicit default is not a decision anyone can read. There is no
             screenOrientation anywhere in this file, which is the other half of FR-VIEW-09.
         -->
+        <!--
+            M7, item 5. The activity is LAUNCHED with the splash theme, and
+            `installSplashScreen()` in `onCreate` swaps it for `Theme.WishKaro` — which is
+            where `android:windowBackground` lives, and the window background is what the
+            white flash actually was. See `res/values/themes.xml`.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -75,7 +81,7 @@
             android:resizeableActivity="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.WishKaro">
+            android:theme="@style/Theme.WishKaro.Starting">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

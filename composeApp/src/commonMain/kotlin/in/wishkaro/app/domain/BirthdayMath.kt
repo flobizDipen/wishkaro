@@ -76,10 +76,17 @@ object BirthdayMath {
         else -> "in $daysUntil days"
     }
 
-    fun formatDayMonth(day: Int, month: Int): String {
-        val name = MONTH_NAMES.getOrElse(month - 1) { "?" }
-        return "$day $name"
-    }
+    fun formatDayMonth(day: Int, month: Int): String = "$day ${shortMonthName(month)}"
+
+    /**
+     * "Jan", "Feb", … — the same list [formatDayMonth] uses.
+     *
+     * Public since M7, because the design system's `DateBadge` draws the day and the month as
+     * two separate pieces of type rather than as one string, and `PeopleListScreen` was already
+     * carrying a second copy of this list for its month filter chips. Three copies of twelve
+     * strings is how "March" and "Mar" end up disagreeing on two screens.
+     */
+    fun shortMonthName(month: Int): String = MONTH_NAMES.getOrElse(month - 1) { "?" }
 
     /** True when the given day/month pair can exist in some year. 29 Feb counts. */
     fun isRealDayMonth(day: Int, month: Int): Boolean {
