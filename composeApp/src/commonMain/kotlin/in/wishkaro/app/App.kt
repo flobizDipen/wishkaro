@@ -575,8 +575,25 @@ private fun wishKaroEntryProvider(
         val loaded by store.peopleLoaded.collectAsState()
         val poster by posterStore.state.collectAsState()
 
+        /**
+         * Re-opened on the whole KEY, not just the person.
+         *
+         * The guard used to compare `poster.person?.id` alone while the key also carries
+         * `eventId`, and `PosterStore` is an app-scoped singleton whose state survives a
+         * back navigation. So opening the studio for someone's birthday, going back, and
+         * opening it again for their anniversary skipped `open()` entirely: the event, the
+         * occurrence year, the theme list and the previous poster were all still the
+         * birthday's, and Generate posted `eventType = BIRTHDAY` under the birthday's
+         * cache key.
+         *
+         * The worse path is the one that matters here. Open for a living person, go back,
+         * let a sync mark them deceased, reopen — `themes` was still the CELEBRATORY
+         * family. The server refuses it (`assertThemeAllowed` -> 400) so it is not
+         * confetti on a remembrance, but the picker is wrong on precisely the axis
+         * FR-POS-13 governs, and the user is offered a theme the server will reject.
+         */
         LaunchedEffect(key, person?.id, loaded) {
-            if (person != null && poster.person?.id != person.id) posterStore.open(person, key.eventId)
+            if (person != null && posterStore.openedFor != key) posterStore.open(person, key.eventId, key)
         }
 
         PosterScreen(

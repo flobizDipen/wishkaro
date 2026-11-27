@@ -269,3 +269,22 @@ function avoidBlock(c: DraftContext): string[] {
     '',
   ];
 }
+
+/**
+ * Every user-typed string this prompt puts in front of a model.
+ *
+ * It lives beside `buildPrompt` on purpose. §10 rule 7 says moderation runs on every
+ * generation, and the only way to know what "the input" IS, is to ask the thing that
+ * builds it — a list maintained anywhere else drifts the first time a field is added to
+ * the prompt, silently and in the direction of checking less.
+ *
+ * Before this, `DraftingService` checked `avoid` and `notes` only, so the name, the
+ * relation, the hobbies and the likes all reached the model unchecked — and the POSTER
+ * surface checked a different subset again, so whether the rule applied depended on which
+ * box the user had typed into.
+ */
+export function userTextIn(c: DraftContext): string[] {
+  return [c.displayName, c.relationToOwner, c.notes, ...c.hobbies, ...c.likes, ...c.avoid].filter(
+    (v): v is string => typeof v === 'string' && v.trim() !== '',
+  );
+}

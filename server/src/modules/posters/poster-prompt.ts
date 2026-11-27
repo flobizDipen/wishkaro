@@ -52,6 +52,20 @@ export interface CopyPromptInput {
  * cache layout `prompt-builder.ts` established: the prefix is what a provider can cache,
  * and a prefix that varied per person would be a prefix that never hits.
  */
+/**
+ * Every user-typed string the copy prompt carries. Beside the builder, for the reason
+ * `prompt-builder.ts` gives: a list kept anywhere else drifts towards checking less.
+ *
+ * Shorter than the wish draft's, because this prompt is deliberately told less — a
+ * headline is three or four words and nothing in a person's profile can change them.
+ * `isMinor` suppresses the relation here exactly as it does in the prompt itself.
+ */
+export function userTextIn(input: CopyPromptInput): string[] {
+  return [input.displayName, input.isMinor ? null : input.relationToOwner].filter(
+    (v): v is string => typeof v === 'string' && v.trim() !== '',
+  );
+}
+
 export function buildCopyPrompt(input: CopyPromptInput): { system: string; user: string } {
   const solemn = input.sentiment === 'SOLEMN';
 

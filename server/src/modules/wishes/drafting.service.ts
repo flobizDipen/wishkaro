@@ -13,7 +13,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { AiUsageService, FEATURE_WISH_DRAFT } from './ledger/ai-usage.service';
 import { SpendCapService } from './ledger/spend-cap.service';
 import { LLM_PROVIDER, NO_TOKENS, type DraftResult, type LlmProvider } from './llm/llm-provider';
-import { buildPrompt, type DraftContext } from './prompt-builder';
+import { buildPrompt, userTextIn, type DraftContext } from './prompt-builder';
 import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
 import { ToneNotAllowedError, assertToneAllowed, sentimentFor } from './tone-rules';
 import { NO_REPEAT_YEARS, WishHistoryService } from './wish-history.service';
@@ -63,16 +63,16 @@ export class DraftingService {
      * because building it for the new feature and not the shipped one leaves rule 7 unmet
      * for the code that is already in users' hands — `docs/M6_PLAN.md` §5.
      *
-     * The texts checked are the ones a USER typed that reach the prompt: the `avoid` list
-     * (FR-WSH-03, the one user-controlled string with a direct line to a model) and the
-     * person's notes. Checked here rather than in the schema because the deterministic
-     * rules and the classifier are one decision with one verdict, and a 400 from Zod would
-     * not reach the classifier at all.
+     * The texts checked come from `userTextIn(context)` — the prompt builder's own
+     * declaration of what it puts in front of the model. This used to be `avoid` and
+     * `notes` only, so the name, the relation, the hobbies and the likes reached the model
+     * unchecked, and the poster surface checked a different subset again: whether rule 7
+     * applied depended on which box the user had typed into.
      *
      * Refused BEFORE the spend cap and the rate limit, so a blocked input costs neither
      * money nor one of the user's fifteen.
      */
-    const inputCheck = await this.moderation.checkInput([...request.avoid, context.notes]);
+    const inputCheck = await this.moderation.checkInput(userTextIn(context));
     if (inputCheck.verdict === 'BLOCKED') {
       throw new HttpException(
         {

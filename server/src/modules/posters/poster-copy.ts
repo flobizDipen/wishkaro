@@ -121,10 +121,25 @@ export function solemnCopyViolation(
   const text = parts.filter((p): p is string => typeof p === 'string').join(' ');
   if (text.trim() === '') return null;
 
-  // "happy" is not in BANNED_ON_SOLEMN — that list is about motifs — and it is the single
-  // most likely way a copy model gets this wrong, so it is named here explicitly.
-  for (const term of ['happy', 'congratulations', ...BANNED_ON_SOLEMN]) {
+  /**
+   * FR-EVT-04 names the lexicon outright: copy "never uses 'celebrate', 'wish', 'congrats'
+   * or emoji for these events". `BANNED_ON_SOLEMN` is about MOTIFS — it has "celebrate"
+   * and "congrats" but not "wish", and not "happy", which is the single most likely way a
+   * copy model gets this wrong. Both are named here so the requirement's own words are
+   * covered rather than approximated.
+   */
+  for (const term of ['happy', 'wish', 'wishes', 'congratulations', ...BANNED_ON_SOLEMN]) {
     if (new RegExp(`\\b${term}\\b`, 'i').test(text)) return term;
   }
+
+  /**
+   * Emoji, which FR-EVT-04 names in the same breath and no word list can catch.
+   *
+   * Matched by Unicode property rather than by a range table: `\p{Extended_Pictographic}`
+   * covers the pictographic blocks including ones added after this was written, which a
+   * hand-rolled range would not.
+   */
+  if (/\p{Extended_Pictographic}/u.test(text)) return 'emoji';
+
   return null;
 }

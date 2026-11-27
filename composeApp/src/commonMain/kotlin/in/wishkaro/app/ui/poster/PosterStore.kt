@@ -165,6 +165,16 @@ class PosterStore(
     private var inFlightPersonId: String? = null
 
     /**
+     * What `open()` was last called for, as an opaque token the caller supplies.
+     *
+     * The screen compares its whole nav key against this instead of comparing the person
+     * id, because the key also carries the event — and this store is a singleton whose
+     * state outlives a back navigation. See the comment at the `PosterStudio` entry.
+     */
+    var openedFor: Any? = null
+        private set
+
+    /**
      * Open on a person, and optionally a specific event.
      *
      * Takes a [Person] rather than an id, as `WishStore.open` does: the screen has already
@@ -176,7 +186,8 @@ class PosterStore(
      * resolved exactly as the composer resolves it, because the two screens must not
      * disagree about which occasion a person is about to be greeted for.
      */
-    fun open(person: Person, eventId: String?) {
+    fun open(person: Person, eventId: String?, token: Any? = null) {
+        openedFor = token
         // Whatever was being polled belongs to the previous screen.
         inFlight?.cancel()
         inFlight = null

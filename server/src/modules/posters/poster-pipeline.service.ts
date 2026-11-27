@@ -20,6 +20,7 @@ import {
   buildArtPrompt,
   buildCopyPrompt,
   promptHashOf,
+  userTextIn,
 } from './poster-prompt';
 import { isPremium } from './premium';
 import { PosterRateLimitService } from './rate-limit/poster-rate-limit.service';
@@ -153,10 +154,21 @@ export class PosterPipelineService {
 
     // --- §10 rule 7, input ------------------------------------------------------------
     //
-    // The person's own text, which is what reaches the copy prompt on the live path and
-    // the picture on every path. The display name is checked because it is rendered at
-    // 72px on something the user will send.
-    const inputCheck = await this.moderation.checkInput([person.displayName, person.notes]);
+    // From `userTextIn`, the copy prompt's own declaration of what it carries, so the two
+    // cannot drift. It used to be a hand-written `[displayName, notes]`, which checked a
+    // field this prompt never sends and missed one it does.
+    const inputCheck = await this.moderation.checkInput(
+      userTextIn({
+        displayName: person.displayName,
+        relationToOwner: person.relationToOwner,
+        eventType: job.eventType,
+        sentiment: occasion.sentiment,
+        milestone: occasion.milestone,
+        language: 'english',
+        themeIds: [],
+        isMinor: person.isMinor,
+      }),
+    );
     if (inputCheck.verdict === 'BLOCKED') {
       await this.generations.close(
         job.generationId,
