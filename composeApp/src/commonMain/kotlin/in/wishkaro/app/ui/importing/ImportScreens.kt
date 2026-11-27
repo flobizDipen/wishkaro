@@ -194,8 +194,17 @@ fun ImportContactsScreen(
  * the controls were simply below the fold and nobody could reach them. A disclosure the user
  * cannot read to the end is not a disclosure.
  */
+/**
+ * Public, and not only for the screenshot harness.
+ *
+ * This composable IS `FR-AUTH-06`'s prominent disclosure and §12's Play requirement. It is the
+ * one piece of the import flow that a reviewer may have to be shown on its own, it holds no
+ * store state, and it is what `ImportContactsScreen` renders before anything else happens.
+ * `M7_VERIFY.md`'s screenshot of "the contacts import screen" is this, because this is the
+ * screen a user meets.
+ */
 @Composable
-private fun PermissionRationale(
+fun PermissionRationale(
     busy: Boolean,
     onAsk: () -> Unit,
     onBack: () -> Unit,
@@ -468,6 +477,36 @@ private fun AddDateDialog(name: String, onSave: (EventDate) -> Unit, onDismiss: 
 // File import
 // =====================================================================================
 
+/**
+ * Where a spreadsheet import starts, before any file has been chosen.
+ *
+ * Split out of [ImportFileScreen]'s `when` so it can be drawn without an `ImportStore`. It has
+ * no store state of its own — a busy flag and two callbacks — and the split is what lets the
+ * design harness photograph it, and a future test assert on it, without standing up a
+ * repository, a contacts gateway and a file gateway to render a heading and two buttons.
+ */
+@Composable
+fun ImportFileChooseScreen(
+    busy: Boolean,
+    onPick: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Import a spreadsheet", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "A .csv or .xlsx with one person per row. It is read on this phone — the file is " +
+                "not uploaded anywhere.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(onClick = onPick, enabled = !busy) { Text("Choose a file") }
+        TextButton(onClick = onBack) { Text("Back") }
+    }
+}
+
 @Composable
 fun ImportFileScreen(
     store: ImportStore,
@@ -486,18 +525,12 @@ fun ImportFileScreen(
     LaunchedEffect(result) { if (result != null && result !== resultOnEntry) onDone() }
 
     when (val current = state) {
-        FileState.Choosing -> Column(
-            modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Import a spreadsheet", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "A .csv or .xlsx with one person per row. It is read on this phone — the " +
-                    "file is not uploaded anywhere.",
-            )
-            Button(onClick = store::pickFile, enabled = !busy) { Text("Choose a file") }
-            TextButton(onClick = onBack) { Text("Back") }
-        }
+        FileState.Choosing -> ImportFileChooseScreen(
+            busy = busy,
+            onPick = store::pickFile,
+            onBack = onBack,
+            modifier = modifier,
+        )
 
         is FileState.Unreadable -> Column(
             modifier = modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),

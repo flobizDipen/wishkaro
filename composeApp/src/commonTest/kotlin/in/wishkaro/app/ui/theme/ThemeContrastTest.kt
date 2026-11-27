@@ -83,6 +83,18 @@ class ThemeContrastTest {
         Pair("solemnAccent", "surfaceVariant", 4.5, "a remembrance countdown on a remembrance card"),
         Pair("solemnAccent", "secondaryContainer", 4.5, "a remembrance card reached from a widget tap"),
 
+        // ---- the solemn PRIMARY FAMILY, which `SolemnScope` swaps into the scheme --------
+        //
+        // Added after item 9's screenshot pair showed what a composition local alone could not
+        // reach: a full-width SAFFRON "Send a message" button, and a saffron reminder switch,
+        // on a death anniversary's screen. `Button` reads `colorScheme.primary`, so the scope
+        // now replaces the family rather than providing a local beside it — which means these
+        // four pairs are shipped and have to be measured like any others.
+        Pair("onSolemnAccent", "solemnAccent", 4.5, "\"Send a message\" on a remembrance screen"),
+        Pair("onSolemnContainer", "solemnContainer", 4.5, "a selected chip inside a solemn scope"),
+        Pair("solemnAccent", "solemnContainer", 4.5, "accent text on its own solemn container"),
+        Pair("onSurface", "solemnContainer", 4.5, "ink on a solemn container"),
+
         // ---- fills with a label on them ------------------------------------------------
         Pair("onPrimary", "primary", 4.5, "every filled Button: Save, Import, Send a wish"),
         Pair("onPrimaryContainer", "primaryContainer", 4.5, "the calendar's selected day"),
@@ -169,6 +181,9 @@ class ThemeContrastTest {
         "inverseOnSurface" -> inverseOnSurface
         "inversePrimary" -> inversePrimary
         "solemnAccent" -> solemnAccent
+        "onSolemnAccent" -> onSolemnAccent
+        "solemnContainer" -> solemnContainer
+        "onSolemnContainer" -> onSolemnContainer
         else -> throw IllegalArgumentException("no such role: $name")
     }
 

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -88,12 +87,10 @@ fun ToggleRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
-            colors = SwitchDefaults.colors(
-                // The accent, so a remembrance event's mute toggle desaturates with everything
-                // else on the screen rather than staying the one warm thing on it.
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-            ),
+            // No `colors = …`. Switch already takes its checked track from
+            // `colorScheme.primary`, and inside a `SolemnScope` that IS the desaturated
+            // accent — see `ui/theme/Solemn.kt`. Naming the colour here would be correct
+            // today and would be the line somebody later pins to a literal.
             modifier = if (tag != null) Modifier.testTag(tag) else Modifier,
         )
     }

@@ -114,6 +114,9 @@ object WishKaroPalette {
         inversePrimary = 0xFFE8B07A,
 
         solemnAccent = 0xFF67635A,
+        onSolemnAccent = 0xFFFFFFFF,
+        solemnContainer = 0xFFE4E1D7,
+        onSolemnContainer = 0xFF2A2820,
     )
 
     /**
@@ -169,6 +172,9 @@ object WishKaroPalette {
         inversePrimary = 0xFF8F531E,
 
         solemnAccent = 0xFFB9B2A3,
+        onSolemnAccent = 0xFF2B2823,
+        solemnContainer = 0xFF433F37,
+        onSolemnContainer = 0xFFE6E2D6,
     )
 }
 
@@ -219,5 +225,11 @@ data class WarmPaper(
     val inverseSurface: Long,
     val inverseOnSurface: Long,
     val inversePrimary: Long,
+    /** The accent, desaturated. See `Solemn.kt`. */
     val solemnAccent: Long,
+    /** A label on a filled control inside a solemn scope. */
+    val onSolemnAccent: Long,
+    /** The container family's solemn twin, so a chip or a day cell desaturates too. */
+    val solemnContainer: Long,
+    val onSolemnContainer: Long,
 )

@@ -5,7 +5,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.graphics.Color
 
 /**
  * "Warm paper" — colour, type, shape and motion, in both themes.
@@ -44,9 +43,7 @@ fun WishKaroTheme(
         typography = wishKaroTypography(),
         shapes = WishKaroShapes,
     ) {
-        CompositionLocalProvider(
-            LocalSolemnAccent provides Color(palette.solemnAccent),
-        ) {
+        CompositionLocalProvider(LocalSolemnAccent provides palette) {
             // `color` explicitly rather than by default: Surface's default IS
             // colorScheme.surface, but saying it here is what makes the next reader check it
             // against the splash's window background, which has to be the same ivory or the
