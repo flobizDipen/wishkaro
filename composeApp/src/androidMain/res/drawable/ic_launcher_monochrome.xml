@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The same diya as a single-colour silhouette, for Android 13+ themed icons.
+
+    M7 item 6 asks for this layer by name, and it is the half of a launcher icon that is easiest
+    to skip: without it, a phone with themed icons turned on draws WishKaro as the normal icon
+    among a home screen of tinted ones — which looks less like a brand and more like an app that
+    has not been updated in two years.
+
+    The colour here is **not** the colour that appears on screen. The system tints a
+    `<monochrome>` layer to whatever the user's wallpaper palette produces and uses only the
+    alpha. `@color/wk_ink` is used rather than a literal so this file still has no colour of its
+    own, and so the drawable is legible when inspected on its own.
+
+    The gap between the flame and the bowl is the one thing that matters here. A silhouette drawn
+    as one shape reads as a blob at 48dp; keeping the 2px of ground between them is what makes it
+    still read as a lamp with a flame over it once the colour is gone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="@color/wk_ink"
+        android:pathData="M54,29 C54,29 43,42 43,50.5 C43,57.2 47.9,62 54,62 C60.1,62 65,57.2 65,50.5 C65,42 54,29 54,29 Z" />
+
+    <path
+        android:fillColor="@color/wk_ink"
+        android:pathData="M28,64 L80,64 C80,74 68.4,81 54,81 C39.6,81 28,74 28,64 Z" />
+</vector>

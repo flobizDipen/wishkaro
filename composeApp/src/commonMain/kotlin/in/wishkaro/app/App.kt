@@ -34,6 +34,8 @@ import `in`.wishkaro.app.ui.poster.PosterScreen
 import `in`.wishkaro.app.ui.poster.PosterStore
 import `in`.wishkaro.app.ui.wish.WishComposerScreen
 import `in`.wishkaro.app.ui.wish.WishStore
+import `in`.wishkaro.app.ui.onboarding.OnboardingScreen
+import `in`.wishkaro.app.ui.onboarding.OnboardingStore
 import `in`.wishkaro.app.ui.nav.NavEvent
 import `in`.wishkaro.app.ui.nav.Screen
 import `in`.wishkaro.app.ui.nav.showsTabs
@@ -68,6 +70,7 @@ import org.koin.compose.koinInject
 fun App(modifier: Modifier = Modifier) {
     WishKaroTheme {
         val store: AppStore = koinInject()
+        val onboarding: OnboardingStore = koinInject()
         val importStore: ImportStore = koinInject()
         val wishStore: WishStore = koinInject()
         val posterStore: PosterStore = koinInject()
@@ -77,6 +80,7 @@ fun App(modifier: Modifier = Modifier) {
         val navigationKind = rememberNavigationKind()
 
         val authState by store.authState.collectAsState()
+        val onboardingSeen by onboarding.seen.collectAsState()
         val busy by store.busy.collectAsState()
         val message by store.message.collectAsState()
         val snackbar = remember { SnackbarHostState() }
@@ -146,7 +150,22 @@ fun App(modifier: Modifier = Modifier) {
             // there is no session, which makes two things structurally impossible: pressing
             // back out of a signed-in app onto a sign-in screen, and a sign-out leaving the
             // previous user's history standing behind it.
-            if (authState !is AuthState.SignedIn) {
+            if (!onboardingSeen) {
+                /**
+                 * FR-AUTH-01, M7. Shown once, BEFORE sign-in.
+                 *
+                 * Before, because the point of a value carousel is to be read by somebody
+                 * deciding whether to hand over a Google account — after sign-in it would be
+                 * a tour of an app they have already committed to.
+                 *
+                 * Checked before the auth branch rather than inside its `!SignedIn` arm, so
+                 * that it cannot reappear for a signed-in user whose session happens to
+                 * expire. `onboardingSeen` is read from disk, not from saved state, so it
+                 * survives process death, a swipe from Recents, a force-stop and a reboot —
+                 * which is what "once" has to mean (`ui/onboarding/OnboardingStore.kt`).
+                 */
+                OnboardingScreen(onDone = onboarding::markSeen, modifier = inner)
+            } else if (authState !is AuthState.SignedIn) {
                 SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
             } else {
                 val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, wishStore, posterStore, nav, inner))

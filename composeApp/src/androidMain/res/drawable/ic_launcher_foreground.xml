@@ -1,11 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder mark. A real icon is a launch task, not a walking-skeleton task. -->
+<!--
+    A lit diya: a lamp with a flame over it.
+
+    ## What it replaces
+
+    A white outline of a gift box inside a purple circle, committed in M0 under the comment
+    *"Placeholder mark. A real icon is a launch task, not a walking-skeleton task."* Nine
+    milestones later nothing had launched, and the icon was still Material's `#FF6750A4`.
+
+    ## Why a diya
+
+    This is an India-first product and the icon is the one piece of it somebody sees without
+    opening the app. A diya is read instantly across the country, is not tied to one festival or
+    one faith, and — the part that decided it — **it is the one warm mark that works on both
+    halves of this app.** A lamp is lit for a birthday and it is lit in remembrance. A gift box,
+    a cake or a balloon is only ever the first of those, and the whole visual direction was
+    chosen because this app's list holds a death anniversary next to a fifth birthday.
+
+    ## Drawing notes
+
+    The viewport is the adaptive-icon standard 108x108. A launcher may mask anything outside the
+    central 72x72 and WILL mask outside 66x66 on a circular mask, so the art sits inside
+    x: 28..80, y: 29..81 — comfortably within the safe zone, which is why it survives a squircle,
+    a circle and a teardrop without losing the flame's tip.
+
+    Two colours, both from `values/colors.xml`, never literals: the flame in the accent and the
+    bowl in ink, so the mark reads as an object rather than as a silhouette. The silhouette
+    version — which is what Android 13+ themed icons need — is `ic_launcher_monochrome.xml`.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- The flame. A teardrop with its point up, slightly narrower than it is tall. -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,30c2.21,0 4,-1.79 4,-4c0,-0.76 -0.21,-1.47 -0.58,-2.08L54,18l-3.42,5.92C50.21,24.53 50,25.24 50,26C50,28.21 51.79,30 54,30zM66,36h-10v-4h-4v4L42,36c-3.31,0 -6,2.69 -6,6v18c0,3.31 2.69,6 6,6h24c3.31,0 6,-2.69 6,-6L72,42C72,38.69 69.31,36 66,36zM68,60c0,1.1 -0.9,2 -2,2L42,62c-1.1,0 -2,-0.9 -2,-2v-6h28V60zM68,50L40,50v-8c0,-1.1 0.9,-2 2,-2h24c1.1,0 2,0.9 2,2V50z" />
+        android:fillColor="@color/wk_accent"
+        android:pathData="M54,29 C54,29 43,42 43,50.5 C43,57.2 47.9,62 54,62 C60.1,62 65,57.2 65,50.5 C65,42 54,29 54,29 Z" />
+
+    <!-- The bowl. Flat lip, shallow curve — a diya, not a cup. -->
+    <path
+        android:fillColor="@color/wk_ink"
+        android:pathData="M28,64 L80,64 C80,74 68.4,81 54,81 C39.6,81 28,74 28,64 Z" />
 </vector>

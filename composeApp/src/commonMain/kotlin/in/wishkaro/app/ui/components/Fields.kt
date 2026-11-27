@@ -210,12 +210,5 @@ fun RelationPicker(
     }
 }
 
-@Composable
-fun SectionHeader(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(top = 16.dp, bottom = 4.dp),
-    )
-}
+// `SectionHeader` moved to `Headers.kt` in M7, with the second, different one that
+// `UpcomingListScreen` had been keeping privately. Same package, so no call site changed.

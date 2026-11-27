@@ -1,6 +1,7 @@
 package `in`.wishkaro.app.di
 
 import `in`.wishkaro.app.data.TokenStore
+import `in`.wishkaro.app.data.createAppPreferences
 import `in`.wishkaro.app.data.createSecureStorage
 import `in`.wishkaro.app.data.local.LocalStore
 import `in`.wishkaro.app.data.remote.WishKaroApi
@@ -23,6 +24,7 @@ import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.onboarding.OnboardingStore
 import `in`.wishkaro.app.ui.poster.PosterStore
 import `in`.wishkaro.app.ui.wish.WishStore
 import kotlinx.coroutines.CoroutineScope
@@ -56,6 +58,17 @@ val appModule = module {
      */
     single { LocalStore(get()) } binds arrayOf(SyncStore::class, PlanStore::class)
     single { TokenStore(createSecureStorage()) }
+
+    /**
+     * M7, FR-AUTH-01. Device-local flags, and the one thing in them.
+     *
+     * `AppPreferences` is a SEPARATE store from `SecureStorage` on purpose: `TokenStore.clear()`
+     * empties the whole encrypted file on sign-out and on account deletion, so a "has seen the
+     * carousel" flag living there would bring the introduction back every time somebody signed
+     * out. See `data/AppPreferences.kt`.
+     */
+    single { createAppPreferences() }
+    single { OnboardingStore(get()) }
 
     single {
         // The API is constructed with a callback rather than a dependency on AuthRepository,

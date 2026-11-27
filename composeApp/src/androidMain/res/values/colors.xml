@@ -1,4 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The three colours that cannot be read from a Compose `ColorScheme`.
+
+    A window background is applied by the system before any of this app's code runs; a vector
+    drawable is inflated by the platform; a launcher icon is drawn by another process entirely.
+    None of them can call `MaterialTheme`. So this file, and its `values-night` twin, are
+    `ui/theme/`'s equivalent on the resource side — and they are the only two files
+    `tools/check-no-raw-colors.sh` exempts, for that reason and no other.
+
+    **Every value here has a twin in `ui/theme/Palette.kt` and must stay equal to it.** The one
+    that matters is `wk_ground`: it is the window background the splash hands over to, and the
+    Compose `Surface` draws `colorScheme.surface` on top of it. If the two ever differ, the
+    difference is a flash of the wrong colour on every cold start — which is exactly the defect
+    M7 item 5 exists to prevent, arriving by the back door.
+-->
 <resources>
-    <color name="ic_launcher_background">#FF6750A4</color>
+
+    <!-- `WishKaroPalette.LIGHT.surface` — ivory. The ground, and the splash window. -->
+    <color name="wk_ground">#FDFBF7</color>
+
+    <!-- `WishKaroPalette.LIGHT.primary` — the shipped saffron, darkened to 5.93:1 on ivory. -->
+    <color name="wk_accent">#8F531E</color>
+
+    <!-- `WishKaroPalette.LIGHT.onSurface` — ink. The lamp's bowl, so the mark is not one colour. -->
+    <color name="wk_ink">#15131C</color>
+
+    <!--
+        The launcher icon's background.
+
+        Was `#FF6750A4` — Material's baseline purple, never changed, from M0 until M7. A launcher
+        icon is the only part of an app most people see most days, and this one said the app had
+        no design at all.
+    -->
+    <color name="ic_launcher_background">#FDFBF7</color>
 </resources>

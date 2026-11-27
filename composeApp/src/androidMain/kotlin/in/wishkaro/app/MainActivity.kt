@@ -7,9 +7,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
@@ -79,7 +81,33 @@ class MainActivity : ComponentActivity() {
             ContactsPermissionBridge.pending.complete(granted)
         }
 
+    /**
+     * Flipped by the first composition, read by the splash screen's keep-on-screen condition.
+     *
+     * Not a `MutableState`: nothing in Compose reads it, and the only reader is a pre-draw
+     * callback on the Android side.
+     */
+    private var firstComposeFrame = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        /**
+         * M7, item 5 — and the ORDER here is the whole of it.
+         *
+         * `installSplashScreen()` must run BEFORE `super.onCreate`, because that is where it
+         * swaps the launch theme (`Theme.WishKaro.Starting`) for `postSplashScreenTheme`
+         * (`Theme.WishKaro`). Called after, the activity keeps the splash theme for its whole
+         * life and the icon stays behind the content as a window background.
+         *
+         * `setKeepOnScreenCondition` holds the splash until the first composition has run.
+         * Without it the splash exits on the first draw of the content VIEW, which for a
+         * Compose activity is the empty `ComposeView` — so there is a frame of window
+         * background with nothing on it between the icon leaving and the app arriving. One
+         * frame of ivory is not a white flash, but it is the seam, and the item is about the
+         * hand-off being invisible rather than about the colour being nearly right.
+         */
+        val splash = installSplashScreen()
+        splash.setKeepOnScreenCondition { !firstComposeFrame }
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -178,6 +206,11 @@ class MainActivity : ComponentActivity() {
             // checks the state BEFORE the tap. See docs/M4_PLAN.md §4.
             //
             // Android-only API, so it lives here rather than in commonMain's App().
+            // The flag the splash is waiting on, flipped once the first composition has
+            // run. `LaunchedEffect(Unit)` rather than `onGloballyPositioned`: it fires after
+            // composition and before the frame is presented, which is the moment there is
+            // something real behind the icon.
+            LaunchedEffect(Unit) { firstComposeFrame = true }
             Box(Modifier.semantics { testTagsAsResourceId = true }) { App() }
         }
     }
