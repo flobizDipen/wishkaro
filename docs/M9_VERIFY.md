@@ -925,13 +925,40 @@ Recorded rather than quietly fixed (`MILESTONE_CHECKLIST.md` §F: bugs found in 
 milestones' code are recorded). Neither is on this branch; both are already committed and
 public.
 
-**`docs/M0_PREREQUISITES.md:175` contains a real Gmail address**, in a table about which Google
-account is the default. It has been in the public repository since M0. It is not a credential,
-so the exposure is enumeration and spam rather than account access — but it is exactly the
-class of thing §11's public-repo rule exists for, and the same logic as a leaked secret applies:
-**deleting the line does not unpublish it.** Git history is permanent and public repositories
-are scraped continuously. Removing it is still worth doing for every reader after today; it is
-Dipen's call, and this document does not repeat the address.
+**`docs/M0_PREREQUISITES.md` contained two real addresses** — the owner's personal and work
+Google accounts — in a table about which one the Firebase project lives under. They had been in
+the public repository since M0. Not credentials, so the exposure is enumeration and spam rather
+than account access, but exactly the class of thing §11's public-repo rule exists for.
+
+**Removed on Dipen's instruction, with the limitation stated rather than glossed:** deleting the
+lines does **not** unpublish them. Git history is permanent and public repositories are scraped
+continuously, exactly as with a leaked secret — and unlike a secret, an address cannot be
+rotated. It stops future readers and future scrapes of the current tree, and nothing more. The
+table's actual content survives without the addresses, because what it was for is the
+instruction "if Firebase says the project is missing, check the active account first", and
+`firebase login:list` answers "which account" without anybody writing one down.
+
+**And a guard, because four written rules did not prevent this one.** §F has said since M3 that
+fixtures carry invented people; M5 §0.5 extended it to screenshots; §14 to export files; §14.1
+to verification documents. A real address still sat in `docs/` across four milestones.
+`server/src/common/no-pii-in-repo.spec.ts` now greps the tree for addresses at the consumer mail
+hosts a real person's account lives on, plus the work domain.
+
+Three decisions in it are the whole value:
+
+- **Not a general email regex.** `.env.example`, the fixtures and the specs are full of
+  `example.invalid` and `example.test`, and a check that flagged those would be switched off
+  within a week — which is the real failure mode for a test like this. RFC 2606 and RFC 6761
+  reserve those domains precisely so they can be used this way, and a test asserts they stay
+  unmatched.
+- **`git grep --untracked`.** Plain `git grep` searches tracked files only, so a brand-new
+  document carrying an address — which is exactly how this milestone nearly did it — would not
+  be searched until after it was committed, one push too late. The revert-check plants one in
+  an untracked file and it is caught by name.
+- **The failure names the file and line and does not print what it found.** A test that echoed
+  the address would put it into CI logs and into the terminal of everybody who ran the suite.
+
+It checks the working tree, not history, and says so in its own header.
 
 **One name in `docs/fixtures/name-tokens.json` may not be invented.** The fixture's own header
 states that every person in it is invented, and that claim is load-bearing — it is the sentence
