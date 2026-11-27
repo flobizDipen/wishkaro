@@ -1005,6 +1005,59 @@ suite sharing a database must own a unique marker, and must never delete by a pr
 than what it wrote.** The first half is obvious once stated; the second is the one that bites,
 because a too-wide cleanup fails in a *different file*.
 
+### 14.5 The suites were flaky before anybody touched them, and the fix is free
+
+§14.3a fixed a marker collision and ten consecutive runs went green, which looked like the end
+of it. Merging `main` in and re-running — because a merge is a good moment for a flaky suite to
+look green — gave **three failures in five runs**, in three different tests:
+
+```
+leaves theme_cache and its shared artwork alone
+does not cache the library placeholder under the generated-artwork key
+lets a draft through while there is budget left
+```
+
+The merge changed one file and no behaviour, so the cause is not the merge. It is the
+environment, and the marker fix had addressed one instance of a general problem rather than the
+problem.
+
+**What is actually shared.** Six `.db.spec.ts` suites talk to one Postgres and one Redis, and
+jest runs them in parallel workers:
+
+- **§10 rule 6's spend cap is a SUM over `ai_usage` for the day.** Global by design — it bounds
+  the bill, not a feature — so every suite that writes a ledger row moves the number every
+  other suite's cap test reads.
+- **`theme_cache.theme_key` is UNIQUE**, and cleanup predicates written a little wider than what
+  a suite seeded delete another suite's fixtures.
+
+And the local database had accumulated **1,543 ledger rows totalling ₹44,430 for the day**,
+because suites leak rows they do not clean up. That accumulation is what widens the race until
+it bites.
+
+**Measured, not assumed:**
+
+| Mode | Result |
+|---|---|
+| parallel | **3 failures in 5 runs** |
+| `--runInBand` | 5 in 5, then 8 more through `npm test` — **13 clean** |
+| parallel wall clock | 7 s |
+| serial wall clock | **7 s** |
+
+So `package.json` now passes `--runInBand`, and `jest.config.js` carries the reasoning. The
+suite is I/O-bound on Postgres rather than CPU-bound, so serialising it costs nothing
+measurable. Determinism for free is not a trade-off.
+
+**Why CI never saw it, which is the uncomfortable part.** CI starts from an empty database
+every run, so the window is narrow and it has been green throughout. This is a flake that fails
+on a developer's machine and passes in CI — the worse way round, because it trains people to
+re-run rather than to look. It was found only because a merge prompted a re-run that nobody
+needed to do.
+
+Per-suite database isolation is the thorough fix and is not worth it at this size. What is
+worth carrying forward is the rule in §14.3a, now with a second half: **a DB-backed suite
+sharing a database must own a unique marker, must never delete by a predicate broader than what
+it wrote — and must not assume it is alone.**
+
 ### 14.4 `main` already carries the removal
 
 The commit that strips the two addresses was cherry-picked onto `main` as `1b3db4a` with `-x`,
