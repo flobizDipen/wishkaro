@@ -5,6 +5,7 @@ import { APP_ENV, type AppEnv } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BLOB_STORE, blobKeyFor, type BlobStore } from '../media/blob-store';
 import { ModerationService } from '../moderation/moderation.service';
+import { expiryFor } from '../retention/retention.rules';
 import { AiUsageService } from '../wishes/ledger/ai-usage.service';
 import { SpendCapService } from '../wishes/ledger/spend-cap.service';
 import { LLM_PROVIDER, type LlmProvider } from '../wishes/llm/llm-provider';
@@ -69,6 +70,18 @@ export interface PosterJob {
   /** The theme the user picked, or null to take the occasion's default. */
   themeId: string | null;
   format: PosterFormat;
+}
+
+/**
+ * A person's source photo, with the id that says WHICH one (M9).
+ *
+ * `photoFor` used to hand back bare bytes. FR-SET-06 protects a photo "attached to a saved
+ * poster" and nothing recorded the attachment, so the id travels with the pixels now and
+ * `persist` writes it to `poster.source_asset_id`.
+ */
+export interface SourcePhoto {
+  assetId: string;
+  bytes: Buffer;
 }
 
 export interface PosterJobResult {
@@ -254,7 +267,7 @@ export class PosterPipelineService {
     const photo = await this.photoFor(person.id, job.userId);
     const composited = await composePoster({
       background: background.png,
-      photo,
+      photo: photo?.bytes ?? null,
       headline: copy.headline,
       subline: copy.subline,
       theme,
@@ -283,7 +296,7 @@ export class PosterPipelineService {
       return { posterId: null, status: 'BLOCKED' };
     }
 
-    const posterId = await this.persist(job, person.id, theme, occasion.sentiment, composited);
+    const posterId = await this.persist(job, person.id, theme, occasion.sentiment, composited, photo);
 
     await this.generations.close(
       job.generationId,
@@ -646,7 +659,7 @@ export class PosterPipelineService {
    * 600-person contact list have no photo, so for many users the typographic template is
    * not a fallback — it is the only path they will ever see.
    */
-  private async photoFor(personId: string, userId: string): Promise<Buffer | null> {
+  private async photoFor(personId: string, userId: string): Promise<SourcePhoto | null> {
     const asset = await this.prisma.asset.findFirst({
       where: { personId, userId, kind: 'SOURCE_PHOTO', deletedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -658,7 +671,16 @@ export class PosterPipelineService {
       this.logger.warn(`Photo asset ${asset.id} has no bytes; compositing without a photo.`);
       return null;
     }
-    return bytes;
+    /**
+     * The **id** comes back with the bytes now (M9).
+     *
+     * FR-SET-06 protects a source photo "attached to a saved poster", and until M9 nothing
+     * recorded the attachment: this method picked a photo and forgot which one, while every
+     * new upload tombstones the previous row — so six months later there was no way to tell
+     * which photo a poster depended on. `persist` writes it to `poster.source_asset_id` and
+     * the retention sweep reads a recorded link rather than guessing. docs/M9_PLAN.md C3.
+     */
+    return { assetId: asset.id, bytes };
   }
 
   /** The asset and poster rows, written together so a poster never points at nothing. */
@@ -668,6 +690,8 @@ export class PosterPipelineService {
     theme: PosterTheme,
     sentiment: 'SOLEMN' | 'CELEBRATORY',
     composited: { png: Buffer; width: number; height: number },
+    /** Null for a typographic poster (FR-POS-06 / OD-11). M9 — see `sourceAssetId` below. */
+    source: SourcePhoto | null,
   ): Promise<string> {
     // A storage id, deliberately NOT the poster row's id: the row's id is minted by
     // Postgres (`uuid(7)`) and does not exist until the transaction below runs, and the
@@ -688,10 +712,15 @@ export class PosterPipelineService {
           bytes: composited.png.byteLength,
           width: composited.width,
           height: composited.height,
-          // FR-SET-06: generated media is purged after 180 days. M6 writes the date; M9's
-          // retention job is what reads it, so M9 is a job rather than a job and a
-          // migration.
-          expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+          // FR-SET-06: generated media is purged after 180 days, with a warning.
+          //
+          // M6 wrote this arithmetic out longhand here and again in `PhotoService`; M9 names
+          // it once in `retention.rules.ts`, which is also what the sweep and the un-keep
+          // path use. Three copies of "what 180 days means" is how two of them end up
+          // disagreeing. (M6's comment here claimed M9 would be "a job rather than a job and
+          // a migration" — it is both: FR-SET-06's warning clause had nowhere to live. See
+          // docs/M9_PLAN.md C2.)
+          expiresAt: expiryFor('POSTER', new Date()),
         },
       });
 
@@ -710,6 +739,15 @@ export class PosterPipelineService {
           eventType: job.eventType,
           format: job.format,
           assetId: asset.id,
+          /**
+           * M9. The INPUT photo, where `assetId` above is the output png.
+           *
+           * This is the whole of FR-SET-06's "unless attached to a saved poster" — without it
+           * the retention sweep has to guess which photos a poster depends on, and a guess at
+           * sweep time is a guess that runs every night for ever. Null is correct and common:
+           * a typographic poster has no source photo and protects nothing.
+           */
+          sourceAssetId: source?.assetId ?? null,
           attributed: !(await isPremium(job.userId)),
         },
         select: { id: true },

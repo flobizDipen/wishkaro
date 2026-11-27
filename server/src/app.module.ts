@@ -16,6 +16,7 @@ import { ModerationModule } from './modules/moderation/moderation.module';
 import { PeopleModule } from './modules/people/people.module';
 import { PostersModule } from './modules/posters/posters.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
+import { RetentionModule } from './modules/retention/retention.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { WishesModule } from './modules/wishes/wishes.module';
@@ -43,6 +44,7 @@ import { WishesModule } from './modules/wishes/wishes.module';
     EventsModule,
     DevicesModule,
     RemindersModule,
+    RetentionModule,
     SettingsModule,
     SyncModule,
     WishesModule,

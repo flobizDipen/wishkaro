@@ -10,6 +10,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { PrismaService } from '../../prisma/prisma.service';
+import { expiryFor } from '../retention/retention.rules';
 import { BLOB_STORE, SIGNED_URL_TTL_SECONDS, blobKeyFor, type BlobStore } from './blob-store';
 import { PhotoRateLimitService } from './photo-rate-limit.service';
 
@@ -198,8 +199,10 @@ export class PhotoService {
           width,
           height,
           // FR-SET-06: source photos purged after 90 days unless attached to a saved
-          // poster. M6 writes the date; M9's job reads it.
-          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+          // poster. M6 wrote the date; M9's sweep reads it, and the arithmetic is named once
+          // in `retention.rules.ts` rather than written out here and again in the poster
+          // pipeline. Two copies of "what 90 days means" is how one of them ends up wrong.
+          expiresAt: expiryFor('SOURCE_PHOTO', new Date()),
         },
       });
 
