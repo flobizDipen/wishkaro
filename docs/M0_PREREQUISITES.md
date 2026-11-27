@@ -167,15 +167,26 @@ It should then show **2 oauth_client entries** — one `ANDROID` (client_type 1)
 
 ### CLI accounts
 
-The project lives under a **personal** Google account, not the work one:
+The Firebase project lives under the owner's **personal** Google account, not the work one.
+The work account sees fifteen other projects and not this one, so a Firebase command run under
+it reports `wishkaro` as missing.
 
-| Account | Sees `wishkaro` |
-|---|---|
-| `dipen@flobiz.in` | ❌ no — 15 other projects |
-| `drjansari@gmail.com` | ✅ yes — now the global default |
+```
+firebase login:list          # which accounts the CLI knows, and which is active
+firebase login:use <email>   # switch
+```
 
-Switch between them with `firebase login:use <email>`. If a Firebase command ever reports the
-project as missing, this is why — check the active account first.
+The personal account is the global default. **If a Firebase command ever says the project does
+not exist, check the active account before anything else** — that is this, nearly every time.
+
+> *The two addresses were written out here until M9 and have been removed. This repository is
+> public, and a verification or setup document naming a real person's accounts is the same
+> class of mistake as committing a fixture full of real contacts — `MILESTONE_CHECKLIST.md` §F
+> and `docs/M9_VERIFY.md` §14.1. Removing them does **not** unpublish them: git history is
+> permanent and public repositories are scraped, exactly as with a leaked secret. Unlike a
+> secret, an email address cannot be rotated, so this stops future readers and future scrapes
+> of the current tree and nothing more. The instruction above is what the table was for, and it
+> survives without them.*
 
 > Why the Web client and not the Android one: the app asks Google for a token, but the *server*
 > must verify it. Google issues the ID token with the **Web** client as its audience, so that is
