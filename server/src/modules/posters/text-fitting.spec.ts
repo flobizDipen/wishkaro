@@ -2,6 +2,7 @@ import type { PosterFormat } from '@prisma/client';
 import sharp from 'sharp';
 import { FORMATS, THEMES, type PosterTheme } from './theme-library';
 import { renderTextLayer, type CompositeRequest } from './compositor';
+import { FONT_STACK } from './compositor';
 import { estimateWidth, fitText } from './text-fitting';
 
 /**
@@ -85,35 +86,47 @@ describe('the headline stays inside the canvas — measured, not estimated', () 
   it('does not shrink a headline that already fits', async () => {
     // The fix must not quietly make every poster smaller. A short name keeps the
     // layout's own size.
-    const fitted = fitText('Happy Birthday, Asha', { maxWidth: 920, nominalSize: 78, maxLines: 2 });
+    const fitted = await fitText('Happy Birthday, Asha', {
+      maxWidth: 920,
+      nominalSize: 78,
+      maxLines: 2,
+      fontStack: FONT_STACK,
+    });
     expect(fitted.fontSize).toBe(78);
     expect(fitted.lines).toHaveLength(1);
   });
 
   it('wraps before it shrinks', async () => {
     // Two lines at 78px reads better than one at 38px on a phone held at arm's length.
-    const fitted = fitText('Remembering Rohan Deshpande', {
+    const fitted = await fitText('Remembering Rohan Deshpande', {
       maxWidth: 920,
       nominalSize: 101,
       maxLines: 2,
+      fontStack: FONT_STACK,
     });
     expect(fitted.lines.length).toBe(2);
     expect(fitted.fontSize).toBe(101);
   });
 
   it('shrinks a single word that cannot be broken', async () => {
-    const fitted = fitText('Venkataramanujacharya', {
+    const fitted = await fitText('Venkataramanujacharya', {
       maxWidth: 400,
       nominalSize: 101,
       maxLines: 2,
+      fontStack: FONT_STACK,
     });
     expect(fitted.lines).toHaveLength(1);
     expect(fitted.fontSize).toBeLessThan(101);
   });
 
-  it('never returns a font size above nominal', () => {
+  it('never returns a font size above nominal', async () => {
     for (const headline of ['A', 'Hi', ...LONG_HEADLINES]) {
-      const fitted = fitText(headline, { maxWidth: 920, nominalSize: 78, maxLines: 2 });
+      const fitted = await fitText(headline, {
+        maxWidth: 920,
+        nominalSize: 78,
+        maxLines: 2,
+        fontStack: FONT_STACK,
+      });
       expect(fitted.fontSize).toBeLessThanOrEqual(78);
       expect(fitted.fontSize).toBeGreaterThan(0);
     }

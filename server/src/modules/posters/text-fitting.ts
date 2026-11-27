@@ -1,3 +1,5 @@
+import sharp from 'sharp';
+
 /**
  * Making the headline fit the canvas.
  *
@@ -15,25 +17,37 @@
  * the no-photo path (FR-POS-06, OD-11) sets the headline 30% LARGER, so the format most
  * likely to overflow is the one most users will see.
  *
- * ## Why the width is estimated rather than measured
+ * ## It MEASURES. The first version estimated, and CI caught it on the wrong platform
  *
- * `sharp` renders SVG through librsvg and gives no text-metrics API, and the alternative —
- * shipping a font parser to measure advances — is a dependency and a font file in a public
- * repository for one layout decision. So this estimates, and then **the spec measures the
- * rendered ink with `sharp.trim()` and asserts it is inside the canvas**. The estimate can
- * be wrong; the assertion is on the actual pixels, which is the only claim worth making.
+ * `sharp` has no text-metrics API, so the first version estimated advance widths from a
+ * table of per-character ratios. It passed on macOS and **failed 11 of 42 cases on CI**,
+ * because ubuntu-latest resolves the font stack to DejaVu Sans where macOS resolves it to
+ * something narrower. The production target is `node:22-alpine` with fonts installed —
+ * Linux — so the estimate was tuned against the one platform the server never runs on, and
+ * every poster with a long name would still have been clipped in production while the
+ * developer's machine said it was fine.
  *
- * The estimate is deliberately biased to OVER-state width. Too small is a poster that reads
- * slightly quietly; too large is one with the user's own name cut in half.
+ * That is not a thing to fix by widening a safety factor until CI goes quiet. The numbers
+ * would still be a guess about a font nobody has pinned, and the next base-image change
+ * would move them again.
+ *
+ * So the width comes from `sharp` itself: render the text once at a reference size on a
+ * transparent canvas, `trim()` to the drawn ink, and divide. Text width scales linearly
+ * with font size, so one render gives the em-width and everything after it is arithmetic.
+ * It is exact on whatever font is actually installed, which is the only question that
+ * matters.
+ *
+ * **Cost.** One render per distinct string, memoised. A measure canvas is small and
+ * monochrome; against a ~150ms poster the two measurements a headline and a subline need
+ * are not the expensive part, and `composePoster` already awaits several `sharp` pipelines.
  */
 
 /**
  * Advance widths as a fraction of the font size, for a bold humanist sans.
  *
- * Buckets rather than a table of every glyph: the error that matters is systematic, not
- * per-character, and five buckets get within a few percent on real names. Devanagari is
- * treated as wide because its conjuncts and matras are, and because under-estimating a
- * Hindi headline is the case nobody here can eyeball.
+ * **Kept only to choose where to break a line**, never to decide a font size. A bad guess
+ * here moves a word between lines; it cannot cause an overflow, because the size is
+ * computed afterwards from a real measurement of the lines this produced.
  */
 function advanceRatio(ch: string): number {
   if (ch === ' ') return 0.28;
@@ -45,11 +59,76 @@ function advanceRatio(ch: string): number {
   return 0.56;
 }
 
-/** Estimated width of a string at a font size, in pixels. */
+/** Rough width, for choosing a line break only. See [advanceRatio]. */
 export function estimateWidth(text: string, fontSize: number): number {
   let em = 0;
   for (const ch of text) em += advanceRatio(ch);
   return em * fontSize;
+}
+
+/**
+ * The size the text is measured at. Large enough that hinting and rounding are a fraction
+ * of a percent, small enough that the measure canvas is cheap.
+ */
+const REF_SIZE = 200;
+
+/**
+ * Memoised, because the same name is measured for the headline of every format and every
+ * regeneration. Bounded so a server that has seen a million names does not hold them all —
+ * these are PEOPLE'S NAMES, and an unbounded cache of them is both a leak and a pile of
+ * personal data sitting in memory for no reason (§11).
+ */
+const MEASURE_CACHE = new Map<string, number>();
+const MEASURE_CACHE_MAX = 500;
+
+/**
+ * The width of one line at font size 1, measured by rendering it.
+ *
+ * Returns the ESTIMATE if the render fails or the string draws no ink at all — a measuring
+ * step that can throw must not be the thing that stops a poster being made, and the
+ * estimate is what the first version shipped, so falling back to it is no worse than that.
+ */
+export async function measureEm(text: string, fontStack: string): Promise<number> {
+  const key = `${fontStack}\u0000${text}`;
+  const cached = MEASURE_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
+  let em: number;
+  try {
+    // Generous canvas: wide enough that nothing is clipped before it is measured, which
+    // would make an over-long line measure as exactly the canvas width and "fit".
+    const width = Math.ceil(estimateWidth(text, REF_SIZE) * 2 + REF_SIZE * 4);
+    const height = REF_SIZE * 3;
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+      `<text x="${REF_SIZE}" y="${REF_SIZE * 2}" font-family="${fontStack}" ` +
+      `font-size="${REF_SIZE}" font-weight="700" fill="#000">${escapeXml(text)}</text></svg>`;
+
+    const { info } = await sharp(Buffer.from(svg))
+      .png()
+      .trim({ threshold: 1 })
+      .toBuffer({ resolveWithObject: true });
+
+    em = info.width / REF_SIZE;
+    // A string that draws nothing — all spaces, or a glyph the font lacks entirely.
+    if (!Number.isFinite(em) || em <= 0) em = estimateWidth(text, 1);
+  } catch {
+    em = estimateWidth(text, 1);
+  }
+
+  if (MEASURE_CACHE.size >= MEASURE_CACHE_MAX) MEASURE_CACHE.clear();
+  MEASURE_CACHE.set(key, em);
+  return em;
+}
+
+/** The same escaping `compositor.ts` uses; duplicated rather than imported to avoid a cycle. */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 export interface FittedText {
@@ -62,6 +141,12 @@ export interface FitOptions {
   /** The size the layout wants. Never exceeded — fitting only ever shrinks. */
   nominalSize: number;
   maxLines: number;
+  /**
+   * The font the text will actually be drawn in — the same stack `compositor.ts` puts in
+   * the SVG. Passed in rather than imported, because measuring in one font and drawing in
+   * another is the whole bug this file now exists to prevent.
+   */
+  fontStack: string;
   /**
    * The smallest the text may become, in pixels.
    *
@@ -85,8 +170,8 @@ export interface FitOptions {
  * single word that cannot be broken — which is most Indian surnames, and the case that
  * produced the bug.
  */
-export function fitText(text: string, options: FitOptions): FittedText {
-  const { maxWidth, nominalSize, maxLines } = options;
+export async function fitText(text: string, options: FitOptions): Promise<FittedText> {
+  const { maxWidth, nominalSize, maxLines, fontStack } = options;
   const minSize = options.minSize ?? 28;
   const trimmed = text.trim();
   if (trimmed === '') return { lines: [''], fontSize: nominalSize };
@@ -94,14 +179,16 @@ export function fitText(text: string, options: FitOptions): FittedText {
   for (let lineCount = 1; lineCount <= maxLines; lineCount++) {
     const lines = wrapInto(trimmed, lineCount, nominalSize, maxWidth);
     if (!lines) continue;
-    const widest = Math.max(...lines.map((l) => estimateWidth(l, nominalSize)));
-    if (widest <= maxWidth) return { lines, fontSize: nominalSize };
+
+    // MEASURED, not estimated. The break point above is a guess; this is not.
+    const widestEm = await widestEmOf(lines, fontStack);
+    if (widestEm * nominalSize <= maxWidth) return { lines, fontSize: nominalSize };
   }
 
-  // Nothing fits at the nominal size. Wrap as far as allowed, then shrink to the widest
-  // line. `floor` rather than round, because rounding up is how a fit becomes a crop.
+  // Nothing fits at the nominal size. Wrap as far as allowed, then take the size straight
+  // from the measurement. `floor`, because rounding up is how a fit becomes a crop.
   const lines = wrapInto(trimmed, maxLines, nominalSize, maxWidth) ?? [trimmed];
-  const widestEm = Math.max(...lines.map((l) => estimateWidth(l, 1)));
+  const widestEm = await widestEmOf(lines, fontStack);
   const needed = Math.floor(maxWidth / widestEm);
 
   if (needed >= minSize) {
@@ -111,20 +198,41 @@ export function fitText(text: string, options: FitOptions): FittedText {
   // Smaller than is worth reading. Hold the floor and shorten instead, so the result is
   // always inside the canvas.
   const fontSize = Math.min(minSize, nominalSize);
-  return { lines: lines.map((line) => truncateTo(line, maxWidth, fontSize)), fontSize };
+  const shortened: string[] = [];
+  for (const line of lines) shortened.push(await truncateTo(line, maxWidth, fontSize, fontStack));
+  return { lines: shortened, fontSize };
 }
 
-/** Shorten with an ellipsis until the estimate fits. */
-function truncateTo(line: string, maxWidth: number, fontSize: number): string {
-  if (estimateWidth(line, fontSize) <= maxWidth) return line;
+async function widestEmOf(lines: readonly string[], fontStack: string): Promise<number> {
+  let widest = 0;
+  for (const line of lines) widest = Math.max(widest, await measureEm(line, fontStack));
+  // A line of pure whitespace measures zero ink; never divide by it.
+  return widest > 0 ? widest : 1;
+}
 
-  const chars = [...line];
-  while (chars.length > 1) {
-    chars.pop();
+/**
+ * Shorten with an ellipsis until it MEASURES as fitting.
+ *
+ * Drops characters in proportion to how far over it is rather than one at a time, so a
+ * wildly long string costs a handful of measurements instead of hundreds.
+ */
+async function truncateTo(
+  line: string,
+  maxWidth: number,
+  fontSize: number,
+  fontStack: string,
+): Promise<string> {
+  if ((await measureEm(line, fontStack)) * fontSize <= maxWidth) return line;
+
+  let chars = [...line];
+  for (let attempt = 0; attempt < 12 && chars.length > 1; attempt++) {
     const candidate = `${chars.join('').trimEnd()}\u2026`;
-    if (estimateWidth(candidate, fontSize) <= maxWidth) return candidate;
+    const width = (await measureEm(candidate, fontStack)) * fontSize;
+    if (width <= maxWidth) return candidate;
+    const keep = Math.max(1, Math.floor(chars.length * (maxWidth / width)) - 1);
+    chars = chars.slice(0, keep);
   }
-  return '\u2026';
+  return `${chars.join('').trimEnd()}\u2026`;
 }
 
 /**

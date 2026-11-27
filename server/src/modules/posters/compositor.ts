@@ -206,7 +206,7 @@ export async function composePoster(request: CompositeRequest): Promise<Composit
   }
 
   layers.push({
-    input: Buffer.from(textLayerSvg(request, layout, spec, hasPhoto)),
+    input: Buffer.from(await textLayerSvg(request, layout, spec, hasPhoto)),
     left: 0,
     top: 0,
   });
@@ -235,12 +235,12 @@ export async function composePoster(request: CompositeRequest): Promise<Composit
  * the symptom is "posters do not work for anybody called Jones & Co" rather than anything
  * dramatic. Escaped anyway, and tested, because the input is a user's own text.
  */
-function textLayerSvg(
+async function textLayerSvg(
   request: CompositeRequest,
   layout: Layout,
   spec: { width: number; height: number },
   hasPhoto: boolean,
-): string {
+): Promise<string> {
   const { theme } = request;
 
   /**
@@ -271,10 +271,11 @@ function textLayerSvg(
    * a headline into the subline, and `assertNoOverlap` would then be guarding a band the
    * text had already left.
    */
-  const headline = fitText(request.headline, {
+  const headline = await fitText(request.headline, {
     maxWidth: textWidth,
     nominalSize: nominalHeadline,
     maxLines: 2,
+    fontStack: FONT_STACK,
   });
 
   const lineHeight = Math.round(headline.fontSize * 1.12);
@@ -309,10 +310,11 @@ function textLayerSvg(
   // Shrunk but never wrapped: a subline is a year count or a milestone, and breaking
   // "25th Silver anniversary" across two lines reads worse than setting it smaller.
   const fittedSub = request.subline
-    ? fitText(request.subline, {
+    ? await fitText(request.subline, {
         maxWidth: textWidth,
         nominalSize: layout.sublineSize,
         maxLines: 1,
+        fontStack: FONT_STACK,
       })
     : null;
 
@@ -349,7 +351,7 @@ export async function renderTextLayer(
   hasPhoto: boolean,
 ): Promise<Buffer> {
   const spec = FORMATS[request.format];
-  const svg = textLayerSvg(request, LAYOUTS[request.format], spec, hasPhoto);
+  const svg = await textLayerSvg(request, LAYOUTS[request.format], spec, hasPhoto);
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
@@ -376,7 +378,7 @@ function typographicHeadlineY(spec: { height: number }): number {
  * `server/Dockerfile` installs them; `docs/M6_VERIFY.md` records whether that was checked
  * inside the image or only read.
  */
-const FONT_STACK = 'Noto Sans Devanagari, Noto Sans, DejaVu Sans, sans-serif';
+export const FONT_STACK = 'Noto Sans Devanagari, Noto Sans, DejaVu Sans, sans-serif';
 
 function escapeXml(value: string): string {
   return value

@@ -127,6 +127,32 @@ wrong thing to have relied on. The preview is now capped at 380dp and fitted ins
 bounds, because a 9:16 poster is height-bound and a 1.91:1 one is width-bound and either
 rule alone overflows the other case.
 
+### 0.6 The headline fix was tuned against a font the server never uses
+
+§0.1's fix passed 42 of 42 locally and **failed 11 of them on CI**.
+
+The width was ESTIMATED from a table of per-character advance ratios, and those ratios were
+implicitly tuned against whatever macOS resolves `Noto Sans Devanagari, Noto Sans, DejaVu
+Sans, sans-serif` to. `ubuntu-latest` resolves it to DejaVu Sans, which is wider — so every
+long name still overflowed, across all three formats and both photo paths. The production
+runtime is `node:22-alpine` with `font-noto` installed. **Linux. The estimate was tuned
+against the one platform the server never runs on**, and a developer's machine would have
+gone on saying the posters were fine.
+
+Widening a safety factor until CI went quiet would have left the numbers a guess about a
+font nobody has pinned, moving again at the next base-image change. So the estimate is gone
+from the decision: `measureEm` renders the string once at a reference size, `trim()`s to the
+drawn ink and divides, and the font size is computed from that. One render per distinct
+string, memoised and bounded — bounded because these are people's names and an unbounded
+cache of them is both a leak and a pile of personal data held for no reason (§11). The
+per-character table survives only to choose where to break a line, where a bad guess moves a
+word and cannot cause an overflow.
+
+**Verified on Linux before pushing, not after.** The compositor and fitting suites were run
+inside a `node:22-bookworm` container with `fonts-dejavu-core` and `fonts-noto-core`
+installed — 310 font files, DejaVu among them — and 66 of 66 passed. That is the check that
+was missing the first time.
+
 ---
 
 ## 1. The honest summary
@@ -308,6 +334,7 @@ M6 touches none of these and closes none of them.
 | Suite | Count | Where |
 |---|---|---|
 | Server | 595 | 37 suites, including 3 DB-backed against real Postgres and Redis. Green in **UTC, Asia/Kolkata and Pacific/Kiritimati** (UTC+14, where "today" is tomorrow in UTC) |
+| Server, on Linux | 66 | The compositor and fitting suites in a `node:22-bookworm` container with DejaVu and Noto installed, because §0.6 is a bug macOS cannot see |
 | Android unit | green | `:composeApp:testDebugUnitTest` |
 | Android instrumented | 21 | **Pixel 9a, Android 17** (and 16 of them on an emulator earlier). **Not in CI** |
 | iOS | compiles | `:composeApp:compileKotlinIosSimulatorArm64` |
@@ -325,6 +352,7 @@ formality — M5 had three and each was a real gap.
 | The global spend cap | skipping `isCapped()` | 1 red |
 | The client picker filter | `posterThemesFor` reading `person.isDeceased` | Instrumented test red **on a device** |
 | The FileProvider authority (§0.4) | restoring the over-escaped interpolation | 2 of 5 red **on the handset** |
+| Measured text fitting (§0.6) | the estimate it replaced | 11 of 42 red **on Linux** — which is how it was found |
 
 **Two of these first produced a compile error rather than a failing test**, which is not a
 revert-check — it proves the code is referenced, not that anything asserts on its behaviour.
@@ -349,9 +377,14 @@ a device:
 | §0.2 | A privacy assertion that could not have failed | Writing the assertion carefully |
 | §0.4 | Every share failed silently — FileProvider authority | **Tapping Share on the handset** |
 | §0.5 | The studio opened with every control below the fold | **Opening the studio on the handset** |
+| §0.6 | The headline fix was tuned against the wrong font and still clipped on Linux | **CI, on ubuntu** |
 
-Both device bugs were invisible to 595 server tests, a green Android unit suite and 16
-instrumented tests on an emulator. §0.4 in particular cannot be caught off-device at all.
+Two needed a device and one needed a different operating system. §0.4 cannot be caught
+off-device at all; §0.6 could not be caught on the developer's machine, and its fix is now
+verified in a Linux container rather than only in CI.
+
+Five bugs, and **not one of them was found by a passing test suite** — they were found by
+opening a PNG, tapping a button, and reading a CI log.
 
 The four existing `person.isDeceased || marksPersonDeceased(…)` expressions in
 `PersonDerivationService`, `SyncService` and `EventsService` were correct. They were
