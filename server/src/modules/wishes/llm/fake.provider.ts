@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import type { DraftPrompt, DraftResult, LlmProvider, DraftOutcome } from './llm-provider';
+import type {
+  DraftPrompt,
+  DraftResult,
+  LlmProvider,
+  DraftOutcome,
+  PosterCopyPrompt,
+  PosterCopyResult,
+} from './llm-provider';
 
 /**
  * A provider that never calls anything.
@@ -70,6 +77,69 @@ export class FakeLlmProvider implements LlmProvider {
         return {
           outcome: 'OK',
           text: 'This draft came from the fake provider. No model was called.',
+          model: this.modelName,
+          usage,
+        };
+    }
+  }
+
+  /**
+   * FR-POS-01 step (a), faked.
+   *
+   * The headline is deliberately flat and the theme is deliberately the FIRST of the
+   * allowed set rather than a random one. Both are the same decision: nothing in this
+   * project asserts on a fake model's words (`MILESTONE_CHECKLIST.md` §D), so the only
+   * useful property here is determinism — a pipeline test that runs twice must get the same
+   * cache key, or the cache-hit measurement would be measuring the fake's dice.
+   *
+   * It never picks a theme outside `themeIds`, because the one thing worth simulating about
+   * this call is that the allowed set is respected. The pipeline re-checks regardless.
+   */
+  async draftPosterCopy(prompt: PosterCopyPrompt): Promise<PosterCopyResult> {
+    const usage = {
+      inputTokens: Math.ceil((prompt.system.length + prompt.user.length) / 4),
+      outputTokens: 12,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
+
+    switch (this.nextOutcome) {
+      case 'REFUSED':
+        return {
+          outcome: 'REFUSED',
+          copy: null,
+          model: this.modelName,
+          usage,
+          refusalCategory: 'simulated',
+        };
+      case 'ERROR':
+        return {
+          outcome: 'ERROR',
+          copy: null,
+          model: this.modelName,
+          usage: { ...usage, inputTokens: 0, outputTokens: 0 },
+          errorMessage: 'simulated provider error',
+        };
+      case 'TIMEOUT':
+        return {
+          outcome: 'TIMEOUT',
+          copy: null,
+          model: this.modelName,
+          usage: { ...usage, inputTokens: 0, outputTokens: 0 },
+          errorMessage: 'simulated timeout',
+        };
+      case 'OK':
+      default:
+        return {
+          outcome: 'OK',
+          copy: {
+            headline: 'A fake headline',
+            subline: null,
+            // Falls back to '' rather than throwing on an empty allowed set: a provider is
+            // contracted never to throw, and the pipeline's `assertThemeAllowed` is what
+            // turns a bad id into a refusal.
+            themeId: prompt.themeIds[0] ?? '',
+          },
           model: this.modelName,
           usage,
         };

@@ -108,6 +108,61 @@ export interface LlmProvider {
   readonly isLive: boolean;
 
   draft(prompt: DraftPrompt): Promise<DraftResult>;
+
+  /**
+   * FR-POS-01 step (a): "a text model picks or writes the words **and selects a theme**."
+   *
+   * ## Why this is a second method and not a second port
+   *
+   * `docs/M6_PLAN.md` §3.4 raised that FR-POS-01 still names Claude for this step, which D20
+   * amended away on 2026-11-26 — and committed to routing it through THIS port rather than
+   * a named vendor, so that there is one way to choose a text provider in this codebase and
+   * not two. A separate `PosterCopyProvider` would have been the second way.
+   *
+   * `ImageProvider` is separate for a reason that does not apply here: it bills per image
+   * rather than per token, so `TokenUsage` does not describe it and `pricing.ts` needs a
+   * different table. Poster copy is an ordinary structured text call with ordinary token
+   * costs, so it belongs on the seam that already knows how to price one.
+   *
+   * ## What it returns, and what it must not
+   *
+   * A theme **id from the allowed set**, never a free-text theme name. The allowed set is
+   * computed from the occasion's sentiment before the call, so a model cannot choose a
+   * celebratory theme for a remembrance even by returning a plausible-looking id — and the
+   * pipeline re-checks with `assertThemeAllowed` afterwards anyway, because a model is an
+   * untrusted input like any other.
+   */
+  draftPosterCopy(prompt: PosterCopyPrompt): Promise<PosterCopyResult>;
+}
+
+/** The copy-and-theme call's prompt. Built by `poster-prompt.ts`; the provider assembles nothing. */
+export interface PosterCopyPrompt {
+  system: string;
+  user: string;
+  /**
+   * The theme ids the model may choose from — already filtered to the occasion's family.
+   *
+   * On the prompt rather than looked up by the provider, so that the filter happens once,
+   * on the server, in `themesFor(sentiment)`, and a provider cannot widen it.
+   */
+  themeIds: readonly string[];
+}
+
+export interface PosterCopyDraft {
+  /** Three or four words. Rendered at 64–96px, so length is a layout constraint. */
+  headline: string;
+  subline: string | null;
+  themeId: string;
+}
+
+export interface PosterCopyResult {
+  outcome: DraftOutcome;
+  /** Null on every outcome but OK — never a partial. */
+  copy: PosterCopyDraft | null;
+  model: string;
+  usage: TokenUsage;
+  refusalCategory?: string | null;
+  errorMessage?: string;
 }
 
 /** Koin-style DI token. Nest needs a symbol for an interface-typed provider. */

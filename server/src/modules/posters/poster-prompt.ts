@@ -19,6 +19,93 @@ import { BANNED_ON_SOLEMN, type PosterTheme } from './theme-library';
 export const POSTER_COPY_PROMPT_VERSION = 'poster-copy-2026-11-27';
 export const POSTER_ART_PROMPT_VERSION = 'poster-art-2026-11-27';
 
+export interface CopyPromptInput {
+  displayName: string;
+  relationToOwner: string | null;
+  eventType: EventType;
+  sentiment: Sentiment;
+  milestone: string | null;
+  language: string;
+  /** The ids the model may choose from — already filtered to the occasion's family. */
+  themeIds: readonly string[];
+  /** FR-PPL-09. A flagged record is not profiled. */
+  isMinor: boolean;
+}
+
+/**
+ * FR-POS-01 step (a): the words and the theme.
+ *
+ * ## What it is allowed to know
+ *
+ * The relation, the occasion, the milestone and the language. **Not** hobbies, likes, notes
+ * or anything else a wish draft gets. A headline is three or four words; nothing in a
+ * person's profile can change them, so sending the profile would be paying input tokens to
+ * leak more about somebody than the output could possibly use.
+ *
+ * FR-PPL-09's minor flag narrows it further, to exactly what `prompt-builder.ts` already
+ * narrows a wish draft to: relation, occasion, milestone and age band, nothing else. Here
+ * that means the relation goes too.
+ *
+ * ## The split, and why it is not cosmetic
+ *
+ * `system` is frozen per (sentiment, language) and `user` carries this person. That is the
+ * cache layout `prompt-builder.ts` established: the prefix is what a provider can cache,
+ * and a prefix that varied per person would be a prefix that never hits.
+ */
+export function buildCopyPrompt(input: CopyPromptInput): { system: string; user: string } {
+  const solemn = input.sentiment === 'SOLEMN';
+
+  const system = [
+    'You write the few words that go on a greeting poster, and you choose its theme.',
+    'The headline is three or four words at most. It is set at 72 pixels over a photograph,',
+    'so anything longer does not fit and will be cropped.',
+    solemn
+      ? 'This is a REMEMBRANCE. The register is quiet, plain and dignified. Never congratulate,' +
+        ' never wish anyone a happy anything, never mention balloons, cake, parties or' +
+        ' celebration, and never imply the person is alive.'
+      : 'This is a celebration. The register is warm and direct.',
+    'No emoji. No quotation marks. No trailing full stop. No hashtags.',
+    `Write in ${input.language.toLowerCase()}.`,
+    'Choose exactly one theme id from the list you are given. Nothing outside that list.',
+  ].join(' ');
+
+  const facts: string[] = [
+    `Name as it should appear: ${input.displayName}`,
+    `Occasion: ${describeOccasion(input.eventType, solemn)}`,
+  ];
+  // FR-PPL-09: a flagged record is excluded from profiling. The relation is the only
+  // profile field this prompt ever carries, so suppressing it is the whole of the rule here.
+  if (!input.isMinor && input.relationToOwner) {
+    facts.push(`Their relation to the sender: ${input.relationToOwner}`);
+  }
+  if (input.milestone) {
+    facts.push(`Milestone to acknowledge if it fits: ${input.milestone}`);
+  }
+  facts.push(`Theme ids you may choose from: ${input.themeIds.join(', ')}`);
+
+  return { system, user: facts.join('\n') };
+}
+
+function describeOccasion(type: EventType, solemn: boolean): string {
+  if (solemn && type !== 'DEATH_ANNIVERSARY') {
+    // A remembrance birthday (FR-EVT-05). Saying "birthday" alone here is how a model
+    // writes "Happy birthday" for somebody who has died.
+    return `a remembrance on what would have been their ${type.toLowerCase().replace(/_/g, ' ')}`;
+  }
+  switch (type) {
+    case 'DEATH_ANNIVERSARY':
+      return 'a death anniversary — a remembrance';
+    case 'BIRTHDAY':
+      return 'a birthday';
+    case 'WEDDING_ANNIVERSARY':
+      return 'a wedding anniversary';
+    case 'ENGAGEMENT_ANNIVERSARY':
+      return 'an engagement anniversary';
+    case 'CUSTOM':
+      return 'an occasion the sender named themselves';
+  }
+}
+
 export interface ArtPromptInput {
   theme: PosterTheme;
   eventType: EventType;

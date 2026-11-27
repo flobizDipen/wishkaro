@@ -94,3 +94,42 @@ export const BLOB_STORE = Symbol('BLOB_STORE');
  * anybody reads it.
  */
 export const SIGNED_URL_TTL_SECONDS = 600;
+
+// ---------------------------------------------------------------------------------------
+// Minting keys
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The **only** thing that makes a blob key.
+ *
+ * `LocalBlobStore.pathFor` refuses anything that is not lowercase segments, digits, dashes,
+ * underscores and dots joined by `/`, and its comment names this function as the sole
+ * source. That check exists because of a real bug the spec found: an absolute key resolved
+ * to the same file as its relative twin, which meant **two distinct keys silently sharing
+ * one object** — the exact failure §8's indexing note warns about one layer up, where
+ * `theme_cache(theme_key)` is unique "or caching silently fails".
+ *
+ * So keys are minted here, from values this app generates, and never assembled at a call
+ * site from anything a client sent.
+ *
+ * Three namespaces, because the three have different lifetimes (FR-SET-06: source photos at
+ * 90 days, generated media at 180, cached theme art never) and a prefix is what lets an
+ * operator see which is which in a bucket listing without joining to Postgres.
+ */
+export type BlobNamespace = 'themes' | 'posters' | 'photos';
+
+export function blobKeyFor(namespace: BlobNamespace, id: string, extension: string): string {
+  const safeId = id.toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(safeId)) {
+    // uuid v7, a hex digest, nothing else. Throwing rather than sanitising: a caller that
+    // reached here with something else has a bug, and silently rewriting its id would put
+    // two of its objects in one place.
+    throw new Error(`Refusing to mint a blob key from "${id}"`);
+  }
+  if (!/^[a-z0-9]+$/.test(extension)) {
+    throw new Error(`Refusing to mint a blob key with extension "${extension}"`);
+  }
+  // Two characters of fan-out. A flat directory of a hundred thousand posters is slow to
+  // list on every filesystem and some object stores still shard on the first bytes of a key.
+  return `${namespace}/${safeId.slice(0, 2)}/${safeId}.${extension}`;
+}
