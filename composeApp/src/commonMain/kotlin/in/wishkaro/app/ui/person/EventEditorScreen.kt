@@ -31,6 +31,7 @@ import `in`.wishkaro.app.ui.components.enumSaver
 import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.EventTypePicker
+import `in`.wishkaro.app.ui.components.BackAffordance
 import `in`.wishkaro.app.ui.components.DetailTopBar
 import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
@@ -76,7 +77,7 @@ fun EventEditorScreen(
             DetailTopBar(
                 title = if (existing == null) "Add a date" else "Edit date",
                 onBack = onBack,
-                backLabel = "Cancel",
+                back = BackAffordance.CLOSE,
             )
         },
     ) { padding ->

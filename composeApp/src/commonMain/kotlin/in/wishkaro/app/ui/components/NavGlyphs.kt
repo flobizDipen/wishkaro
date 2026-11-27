@@ -7,11 +7,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 
 /**
- * The bottom navigation's icons, drawn rather than imported.
+ * The navigation icons, drawn rather than imported.
  *
  * `androidx.compose.material:material-icons-core` is Android-only, and the multiplatform
  * `org.jetbrains.compose.material:material-icons-core` stopped at 1.7.3 — this project is on
@@ -21,6 +22,17 @@ import androidx.compose.ui.unit.dp
  * Four shapes is less code than the workaround would be, and they are simple on purpose:
  * a navigation bar's icons are read at a glance at 24dp, where a list is three bars and a
  * calendar is a grid. The labels carry the meaning; these carry the scanning.
+ *
+ * **M7 added the three that are conventions rather than decoration**: the back arrow, the
+ * close cross and the overflow dots. Until then this app wrote the WORD "Back" in a
+ * `TextButton` on seven screens, and "Cancel" on three more — which is not what an Android
+ * toolbar does, and is the kind of thing a user notices without being able to say why the app
+ * feels wrong. Nothing about the icon artifact's availability had changed; the text was there
+ * because the icons had not been drawn yet.
+ *
+ * Every one of them is a bare `Canvas` with no semantics of its own, so the **caller supplies
+ * the content description**. An icon-only button with no description is a button a screen
+ * reader announces as nothing at all, which is strictly worse than the word it replaced.
  */
 
 private const val STROKE_DP = 1.8f
@@ -121,5 +133,75 @@ fun PeopleGlyph(tint: Color, modifier: Modifier = Modifier) {
             size = Size(size.width * 0.38f, size.height * 0.34f),
             style = stroke,
         )
+    }
+}
+
+/**
+ * The up affordance: a left-pointing arrow.
+ *
+ * Material's `ArrowBack` is a shaft with a chevron on it, and that is what this is — drawn
+ * at the same 24dp and the same stroke weight as the four tab glyphs above, so the toolbar
+ * and the navigation bar look like they were drawn by the same hand.
+ *
+ * `StrokeCap.Round` on the chevron: a mitre at this weight renders as a visible notch at the
+ * arrow's point on a 420dpi screen.
+ */
+@Composable
+fun BackGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(24.dp)) {
+        val stroke = 2.dp.toPx()
+        val midY = size.height / 2f
+        val left = size.width * 0.21f
+        val right = size.width * 0.82f
+
+        drawLine(tint, Offset(left, midY), Offset(right, midY), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(
+            tint,
+            Offset(left, midY),
+            Offset(left + size.width * 0.24f, midY - size.height * 0.24f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            tint,
+            Offset(left, midY),
+            Offset(left + size.width * 0.24f, midY + size.height * 0.24f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+    }
+}
+
+/**
+ * The dismiss affordance: a cross.
+ *
+ * Not the same thing as [BackGlyph], and the difference is the one piece of meaning this app's
+ * toolbars actually carry. An arrow says "up, to where you came from"; a cross says "close
+ * this, and what you typed goes with it". `AddPersonScreen`, `EditPersonScreen` and
+ * `EventEditorScreen` are tasks you abandon rather than places you leave, which is why they
+ * said "Cancel" before and why they get this now.
+ */
+@Composable
+fun CloseGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(24.dp)) {
+        val stroke = 2.dp.toPx()
+        val a = size.width * 0.24f
+        val b = size.width * 0.76f
+        drawLine(tint, Offset(a, a), Offset(b, b), strokeWidth = stroke, cap = StrokeCap.Round)
+        drawLine(tint, Offset(b, a), Offset(a, b), strokeWidth = stroke, cap = StrokeCap.Round)
+    }
+}
+
+/** The overflow affordance: three dots in a column. */
+@Composable
+fun OverflowGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(24.dp)) {
+        listOf(0.26f, 0.5f, 0.74f).forEach { fraction ->
+            drawCircle(
+                tint,
+                radius = 1.9.dp.toPx(),
+                center = Offset(size.width / 2f, size.height * fraction),
+            )
+        }
     }
 }

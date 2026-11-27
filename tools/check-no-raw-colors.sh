@@ -51,11 +51,20 @@
 #
 # ## The one escape hatch
 #
-# A line carrying `raw-color-ok:` followed by a reason is skipped. There is exactly one use in
-# the repository — `PosterScreen.parseHex`, which turns a server-supplied `#RRGGBB` into a
-# `Color` and is a *parser* rather than a choice — and the reason is written in the file. A hatch
-# with no reason is a hatch that gets used; requiring the words after the colon is what keeps the
-# count at one.
+# A line carrying `raw-color-ok:` followed by a reason is skipped. There are exactly two uses in
+# the repository, and both are cases where the value is not paint this app chose:
+#
+#   1. `PosterScreen.parseHex` — an alpha mask OR'd onto a `#RRGGBB` that came off the wire from
+#      `GET /v1/themes`. A parser, not a choice.
+#   2. `LauncherIconTest` — a test that stands in for the SYSTEM, tinting the monochrome icon
+#      the way a launcher tints it from the wallpaper palette. An Android drawable rendered
+#      outside any composition cannot read `MaterialTheme`.
+#
+# **Test sources are deliberately in scope.** Excluding them would be the easy fix for the
+# second case and the wrong one: a design milestone's own tests are exactly where a wrong colour
+# gets laundered into evidence, and `M7_VERIFY.md`'s screenshots come out of this source set. A
+# hatch with no reason is a hatch that gets used; requiring words after the colon is what keeps
+# the count at two.
 #
 # Usage:
 #   tools/check-no-raw-colors.sh            # scan; exit 1 and print file:line:match on a hit
@@ -111,6 +120,7 @@ echo "" >&2
 echo "Use MaterialTheme.colorScheme, or MaterialTheme.accent where the value is the occasion's" >&2
 echo "accent and must desaturate on a remembrance (see ui/theme/Solemn.kt)." >&2
 echo "" >&2
-echo "If the value genuinely is not paint — a parser, a bit mask — put 'raw-color-ok: <reason>'" >&2
-echo "on the line. There is one in the repository; make it two only with a reason worth reading." >&2
+echo "If the value genuinely is not paint — a parser, a bit mask, a system tint — put" >&2
+echo "'raw-color-ok: <reason>' ON THAT LINE. There are two in the repository; add a third" >&2
+echo "only with a reason worth reading, and read the header here first." >&2
 exit 1

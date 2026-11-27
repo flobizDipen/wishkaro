@@ -111,6 +111,31 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        /**
+         * Turn OFF the system's navigation-bar scrim.
+         *
+         * `enableEdgeToEdge()` sets `isNavigationBarContrastEnforced = true`, which paints a
+         * translucent grey wash behind the navigation bar so that three-button navigation
+         * stays legible over arbitrary app content. That is a sensible default for an app
+         * whose bottom edge could be anything, and it is wrong for this one: WishKaro's
+         * bottom edge is `NavigationBar`, which is an opaque Material surface with its own
+         * colour, and the scrim lays a grey band over the bottom of it. On "warm paper" that
+         * band is the one cool-grey thing in the app.
+         *
+         * Invisible on gesture navigation, which is why it is the kind of thing that ships:
+         * the phone it was developed on does not show it. The edge-to-edge guidance names
+         * this case explicitly — *"if any screen uses a Scaffold with a bottom bar, set
+         * `window.isNavigationBarContrastEnforced = false` for SDK 29+"*.
+         *
+         * The system bar ICON colours are deliberately not touched. `enableEdgeToEdge()` from
+         * `ComponentActivity` already flips them with the device's dark-mode setting, and the
+         * same guidance says not to set them by hand when it does — verified on the handset in
+         * both modes: dark icons on ivory, light icons on ink.
+         */
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+
         ActivityHolder.current = this
         PermissionBridge.requester = {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {

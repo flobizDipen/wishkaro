@@ -36,6 +36,7 @@ import `in`.wishkaro.app.ui.components.DateFieldsState
 import `in`.wishkaro.app.ui.components.EventDateFields
 import `in`.wishkaro.app.ui.components.EventTypePicker
 import `in`.wishkaro.app.ui.components.RelationPicker
+import `in`.wishkaro.app.ui.components.BackAffordance
 import `in`.wishkaro.app.ui.components.DetailTopBar
 import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
@@ -92,7 +93,11 @@ fun AddPersonScreen(
         topBar = {
             // "Cancel" rather than "Back": leaving a half-filled form discards what was
             // typed, and the two words say different things about that.
-            DetailTopBar(title = "Add a person", onBack = onCancel, backLabel = "Cancel")
+            DetailTopBar(
+                title = "Add a person",
+                onBack = onCancel,
+                back = BackAffordance.CLOSE,
+            )
         },
     ) { padding ->
         Column(

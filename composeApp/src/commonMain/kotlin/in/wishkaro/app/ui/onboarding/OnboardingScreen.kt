@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import `in`.wishkaro.app.ui.components.WishKaroMark
 import `in`.wishkaro.app.ui.theme.WishKaroMotion
 import kotlinx.coroutines.launch
 
@@ -191,21 +192,23 @@ private fun OnboardingPageContent(page: OnboardingPage) {
  */
 @Composable
 private fun PageMark(page: OnboardingPage) {
+    // The FIRST page carries the app's own mark rather than an illustration of one. It is the
+    // same calendar as the launcher icon and the splash, so the three things a new user sees
+    // in their first ten seconds — the icon they tapped, the splash, and this — are one object
+    // rather than three drawings of a similar idea.
+    if (page == OnboardingPage.REMEMBER) {
+        WishKaroMark(size = 96.dp)
+        return
+    }
+
     val accent = MaterialTheme.colorScheme.primary
     val quiet = MaterialTheme.colorScheme.outlineVariant
 
     Canvas(Modifier.size(96.dp)) {
         val stroke = Stroke(width = 2.5.dp.toPx())
         when (page) {
-            // A ring with one day marked: the shape of a date coming round again.
-            OnboardingPage.REMEMBER -> {
-                drawCircle(quiet, radius = size.minDimension / 2 - 2.dp.toPx(), style = stroke)
-                drawCircle(
-                    accent,
-                    radius = 6.dp.toPx(),
-                    center = Offset(size.width * 0.5f, size.height * 0.5f - size.minDimension / 2 + 2.dp.toPx()),
-                )
-            }
+            // Handled above: this page draws the app's mark, not a glyph.
+            OnboardingPage.REMEMBER -> Unit
             // A speech shape: three lines, the last one short, with a tail.
             OnboardingPage.WISH -> {
                 drawRoundRect(

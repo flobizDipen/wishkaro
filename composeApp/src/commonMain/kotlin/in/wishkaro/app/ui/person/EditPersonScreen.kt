@@ -30,6 +30,7 @@ import `in`.wishkaro.app.domain.EventType
 import `in`.wishkaro.app.domain.FieldLimits
 import `in`.wishkaro.app.domain.Person
 import `in`.wishkaro.app.ui.components.RelationPicker
+import `in`.wishkaro.app.ui.components.BackAffordance
 import `in`.wishkaro.app.ui.components.DetailTopBar
 import `in`.wishkaro.app.ui.components.SectionHeader
 import `in`.wishkaro.app.ui.components.ToggleRow
@@ -79,7 +80,7 @@ fun EditPersonScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            DetailTopBar(title = "Edit", onBack = onBack, backLabel = "Cancel")
+            DetailTopBar(title = "Edit", onBack = onBack, back = BackAffordance.CLOSE)
         },
     ) { padding ->
         Column(

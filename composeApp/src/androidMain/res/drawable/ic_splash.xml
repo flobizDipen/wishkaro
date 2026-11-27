@@ -1,24 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The splash icon: the same diya, on the splash window's own background.
+    The splash icon: the same calendar, on the splash window's own background.
 
     ## The geometry, which is the part that is easy to get wrong
 
     `windowSplashScreenAnimatedIcon` is drawn on a 288x288 canvas and the platform masks it to a
-    circle of **192dp** — the outer third is clipped on every device. So the art cannot simply be
-    the 108x108 launcher drawable scaled up: it would lose the flame's tip and the bowl's rim.
+    circle of **192dp** — the outer third is clipped on every device. So the art cannot simply
+    be the 108x108 launcher drawable scaled up: it would lose the hangers and the page's corners.
 
     The group below maps the launcher's 108x108 coordinate space onto that inner 192x192 square
-    (scale 192/108 = 1.7778, offset (288-192)/2 = 48), so this file and `ic_launcher_foreground`
-    draw the identical mark from the identical path data. The alternative — a second set of
-    coordinates — is a second drawing that drifts.
+    (scale 192/108 = 1.7778, offset (288-192)/2 = 48), so this file and
+    `ic_launcher_foreground.xml` draw the identical mark from identical path data. The
+    alternative — a second set of coordinates — is a second drawing that drifts.
 
     ## Colours
 
-    `@color/wk_accent` and `@color/wk_ink`, which have `values-night` twins. So the splash is a
-    saffron flame on ivory by day and a lighter flame on ink by night, matching the window it
-    hands over to. The splash background is `@color/wk_ground` (see `themes.xml`), which is the
-    same resource the window background uses — they cannot disagree.
+    `@color/wk_ground`, `@color/wk_accent` and `@color/wk_ink` all have `values-night` twins, so
+    the splash is a saffron-headed calendar on ivory by day and on ink by night, matching the
+    window it hands over to. The splash BACKGROUND is `@color/wk_ground` too (see `themes.xml`),
+    which is the same resource the window background uses — they cannot disagree, and that is
+    what M7 item 5 measured at 184 ms to 1068 ms with no white frame.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="288dp"
@@ -33,11 +34,27 @@
         android:scaleY="1.7778">
 
         <path
-            android:fillColor="@color/wk_accent"
-            android:pathData="M54,29 C54,29 43,42 43,50.5 C43,57.2 47.9,62 54,62 C60.1,62 65,57.2 65,50.5 C65,42 54,29 54,29 Z" />
-
+            android:fillColor="@color/wk_ink"
+            android:pathData="M42,25 A2.5,2.5 0 0 1 44.5,27.5 L44.5,33.5 A2.5,2.5 0 0 1 42,36 A2.5,2.5 0 0 1 39.5,33.5 L39.5,27.5 A2.5,2.5 0 0 1 42,25 Z" />
         <path
             android:fillColor="@color/wk_ink"
-            android:pathData="M28,64 L80,64 C80,74 68.4,81 54,81 C39.6,81 28,74 28,64 Z" />
+            android:pathData="M66,25 A2.5,2.5 0 0 1 68.5,27.5 L68.5,33.5 A2.5,2.5 0 0 1 66,36 A2.5,2.5 0 0 1 63.5,33.5 L63.5,27.5 A2.5,2.5 0 0 1 66,25 Z" />
+        <path
+            android:fillColor="@color/wk_ink"
+            android:pathData="M37,30 L71,30 A9,9 0 0 1 80,39 L80,69 A9,9 0 0 1 71,78 L37,78 A9,9 0 0 1 28,69 L28,39 A9,9 0 0 1 37,30 Z" />
+        <path
+            android:fillColor="@color/wk_ground"
+            android:pathData="M38,34 L70,34 A6,6 0 0 1 76,40 L76,68 A6,6 0 0 1 70,74 L38,74 A6,6 0 0 1 32,68 L32,40 A6,6 0 0 1 38,34 Z" />
+        <path
+            android:fillColor="@color/wk_accent"
+            android:pathData="M38,34 L70,34 A6,6 0 0 1 76,40 L76,47 L32,47 L32,40 A6,6 0 0 1 38,34 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M36,53 A3,3 0 1 1 36,59 A3,3 0 1 1 36,53 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M48,53 A3,3 0 1 1 48,59 A3,3 0 1 1 48,53 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M60,53 A3,3 0 1 1 60,59 A3,3 0 1 1 60,53 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M72,53 A3,3 0 1 1 72,59 A3,3 0 1 1 72,53 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M36,63 A3,3 0 1 1 36,69 A3,3 0 1 1 36,63 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M48,63 A3,3 0 1 1 48,69 A3,3 0 1 1 48,63 Z" />
+        <path android:fillColor="@color/wk_ink" android:pathData="M72,63 A3,3 0 1 1 72,69 A3,3 0 1 1 72,63 Z" />
+        <path android:fillColor="@color/wk_accent" android:pathData="M60,59.5 A6.5,6.5 0 1 1 60,72.5 A6.5,6.5 0 1 1 60,59.5 Z" />
     </group>
 </vector>

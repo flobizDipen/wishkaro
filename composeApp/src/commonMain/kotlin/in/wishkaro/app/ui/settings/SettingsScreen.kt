@@ -23,6 +23,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import `in`.wishkaro.app.domain.QuietHours
@@ -45,6 +48,7 @@ import `in`.wishkaro.app.platform.OemVendor
 import `in`.wishkaro.app.ui.ReliabilityState
 import `in`.wishkaro.app.ui.SelfTestState
 import `in`.wishkaro.app.ui.adaptive.AdaptiveDialog
+import `in`.wishkaro.app.ui.components.BackGlyph
 import `in`.wishkaro.app.ui.components.Note
 import `in`.wishkaro.app.ui.components.SectionHeader
 import `in`.wishkaro.app.ui.components.ToggleRow
@@ -104,7 +108,14 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onBack) { Text("Back") }
+                // The same arrow as every other screen, for the same reason. This row is
+                // not a `TopAppBar` — Settings is a bare LazyColumn so its own content can
+                // scroll under the status bar — but the affordance has to be the app's one
+                // affordance, not a second one that happens to live on this screen.
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.semantics { contentDescription = "Back" },
+                ) { BackGlyph(MaterialTheme.colorScheme.primary) }
                 Spacer(Modifier.width(4.dp))
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
             }
