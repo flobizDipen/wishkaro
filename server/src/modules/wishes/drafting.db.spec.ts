@@ -4,6 +4,8 @@ import IORedis from 'ioredis';
 import { DraftingService } from './drafting.service';
 import { AiUsageService } from './ledger/ai-usage.service';
 import { SpendCapService } from './ledger/spend-cap.service';
+import { FakeModerationProvider } from '../moderation/fake.moderation-provider';
+import { ModerationService } from '../moderation/moderation.service';
 import { FakeLlmProvider } from './llm/fake.provider';
 import { PRICING_VERSION } from './llm/pricing';
 import { PROMPT_VERSION } from './prompt-builder';
@@ -57,6 +59,7 @@ let deceasedId: string;
 let minorId: string;
 let service: DraftingService;
 let provider: FakeLlmProvider;
+let moderator: FakeModerationProvider;
 
 beforeAll(async () => {
   try {
@@ -125,12 +128,14 @@ beforeEach(async () => {
   minorId = ira.id;
 
   provider = new FakeLlmProvider();
+  moderator = new FakeModerationProvider();
   service = new DraftingService(
     db,
     new WishHistoryService(db),
     new AiUsageService(db, env),
     new SpendCapService(db, env),
     new DraftRateLimitService(redis, env),
+    new ModerationService(moderator),
     provider,
   );
 });
@@ -497,6 +502,7 @@ describe('drafting — the global spend cap', () => {
       new AiUsageService(db, capEnv),
       new SpendCapService(db, capEnv),
       new DraftRateLimitService(redis, capEnv),
+      new ModerationService(moderator),
       provider,
     );
   }

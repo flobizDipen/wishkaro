@@ -40,4 +40,32 @@ interface MessageSender {
 
     /** Copy to the clipboard. The one target that opens nothing. */
     fun copyToClipboard(text: String): Boolean
+
+    /**
+     * Hands a composited poster to another app, with the message beside it (FR-POS-01:
+     * "instead of, or alongside").
+     *
+     * Same contract as every method above and it bears repeating here, because an image
+     * makes it tempting to think something is being published: **this opens a share sheet
+     * with the picture attached and stops.** FR-WSH-06 is unchanged by the payload being
+     * bytes.
+     *
+     * [bytes] rather than a path or a URL. A URL would need the receiving app to fetch it,
+     * which means the signature would have to outlive the share — and a signed URL that
+     * lives long enough to be convenient is a capability sitting in another app's cache.
+     * The bytes are already on the phone by the time the user taps send.
+     *
+     * Returns false when the platform cannot do it, so the screen can say so rather than
+     * appearing to do nothing.
+     */
+    fun shareImage(bytes: ByteArray, mimeType: String, caption: String): Boolean
+
+    /**
+     * The same, aimed at WhatsApp specifically (FR-POS-05's status format exists for it).
+     *
+     * Separate from [shareImage] because WhatsApp is the primary target in an India-first
+     * product and a share sheet is one tap further away. Falls back to false when neither
+     * WhatsApp nor WhatsApp Business is installed, and the screen offers the sheet instead.
+     */
+    fun shareImageToWhatsApp(bytes: ByteArray, mimeType: String, caption: String): Boolean
 }

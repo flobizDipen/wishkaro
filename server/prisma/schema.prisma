@@ -147,6 +147,80 @@ enum WishSource {
 }
 
 // ---------------------------------------------------------------------------
+// M6 — AI posters (FR-POS-01..13, REQUIREMENTS.md §10)
+// ---------------------------------------------------------------------------
+
+/// What a stored binary IS (REQUIREMENTS.md §8's `asset.kind`).
+///
+/// VIDEO is in §8's list and is deliberately absent here: it is M10, nothing can produce one,
+/// and an enum value nothing writes is a claim that a feature exists. Adding a value to a
+/// Postgres enum is a pure addition, so M10 pays nothing for this.
+enum AssetKind {
+  /// A composited poster. A user's media: FR-SET-06 purges these after 180 days.
+  POSTER
+  /// A photo the user uploaded of a person. FR-SET-06 purges these after 90 days unless
+  /// attached to a saved poster.
+  SOURCE_PHOTO
+}
+
+/// The three output formats (FR-POS-05). Named rather than stored as "1080x1920" so that a
+/// typo cannot invent a fourth, and so the compositor's switch is exhaustive.
+enum PosterFormat {
+  /// 1080×1920. WhatsApp status, and the DEFAULT.
+  STATUS
+  /// 1080×1080.
+  SQUARE
+  /// 1200×630. Link preview.
+  LINK
+}
+
+/// Which family a theme belongs to (FR-POS-13).
+///
+/// TWO COLLECTIONS, never one with a branch. The same arrangement `domain/Tone.kt` uses on the
+/// client, and for the reason its comment gives: a conditional is a thing someone can forget,
+/// and a set you have to pick is a thing the compiler makes you pick. FR-POS-13 asks for
+/// celebratory themes to be filtered OUT of the picker for a solemn occasion rather than
+/// merely ranked lower, and a single collection with a `solemn` boolean is how "ranked lower"
+/// happens by accident.
+///
+/// Mirrors `Sentiment` deliberately but is NOT the same type: a sentiment is a fact about an
+/// occasion and a family is a property of a picture. They map one to one today and the
+/// mapping lives in exactly one function.
+enum ThemeFamily {
+  CELEBRATORY
+  SOLEMN
+}
+
+/// Where one poster job got to (FR-POS-09's "visible progress state").
+///
+/// §8's `generation` sketch has a `status` with no values named. These are the five a client
+/// can actually be shown something for.
+enum GenerationStatus {
+  /// Accepted and on the queue. The app shows progress from here.
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  /// The pipeline failed. The app degrades; the ledger still has its rows.
+  FAILED
+  /// Input or output moderation refused it (§10 rule 7, FR-POS-12). Distinct from FAILED
+  /// because the user-facing answer differs and because "how often does moderation bite" is
+  /// a question worth being able to ask of this table.
+  BLOCKED
+}
+
+/// What moderation said about a generation (§10 rule 7, FR-POS-12).
+///
+/// UNCHECKED is a real, honest value and the default. There is no moderation key on this
+/// machine, so a generation served by the fake moderator records what actually happened
+/// rather than claiming a verdict nobody reached — the same reason `WishSource.TEMPLATE`
+/// exists instead of recording a template as AI.
+enum ModerationVerdict {
+  UNCHECKED
+  ALLOWED
+  BLOCKED
+}
+
+// ---------------------------------------------------------------------------
 // Tables
 // ---------------------------------------------------------------------------
 
@@ -204,6 +278,10 @@ model User {
   refreshTokens RefreshToken[]
   wishes        Wish[]
   aiUsage       AiUsage[]
+  assets        Asset[]
+  generations   Generation[]
+  posters       Poster[]
+  reports       ContentReport[]
 
   @@index([email])
   @@map("user")
@@ -250,10 +328,12 @@ model Person {
   updatedAt DateTime  @default(now()) @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  events Event[]
-  traits PersonTrait[]
-  wishes Wish[]
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events  Event[]
+  traits  PersonTrait[]
+  wishes  Wish[]
+  assets  Asset[]
+  posters Poster[]
 
   /// Drives the sync cursor: (updatedAt, id) is the monotonic ordering.
   @@index([userId, updatedAt, id])
@@ -526,9 +606,16 @@ model Wish {
   channel     WishChannel
   source      WishSource
 
-  /// Reserved for M6's poster (FR-HIS-01 asks for "the poster used"). NOTHING writes this in
-  /// M5. The column exists now so that milestone is a code change and not a migration — the
-  /// same reason `person.photo_key` has existed since M1.
+  /// The poster that went with this message (FR-HIS-01, "and the poster used").
+  ///
+  /// Reserved and unwritten in M5; **M6 is what writes it**, and it is also the reason a
+  /// poster is not a fifth synced entity. A wish syncs, so the reference to a poster syncs
+  /// with it for free — docs/M6_PLAN.md §4.
+  ///
+  /// A plain nullable column with no foreign key, for the same first reason `eventId` above
+  /// has none: deleting a poster must not delete the record that a message was sent. What
+  /// you said to somebody in 2026 is a fact about the past; the picture is an attachment to
+  /// it, and tidying up the attachment cannot be allowed to destroy the fact.
   posterId String? @map("poster_id")
 
   /// When the user said yes, not when the draft was produced.
@@ -607,9 +694,17 @@ model AiUsage {
   /// Rows written before this column default to "unversioned", which is true of them.
   promptVersion String @default("unversioned") @map("prompt_version")
 
+  /// Which JOB this call belonged to, when it belonged to one (M6).
+  ///
+  /// Nullable because M5's wish drafts have no generation row and never will: a draft is one
+  /// call and nothing else, so wrapping it in a job would be a row per row. A poster is a job
+  /// that makes zero, one or two calls — see `Generation` for why those are two tables.
+  generationId String? @map("generation_id")
+
   createdAt DateTime @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generation Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
 
   /// "What does one user cost per year" — the question M7's pricing is built on.
   @@index([userId, createdAt])
@@ -629,5 +724,323 @@ model AiUsage {
   /// got slower daily — and on a public endpoint behind a token anybody can mint, a cheap
   /// request that forces a full scan is also the shape somebody abuses.
   @@index([createdAt])
+  /// "Which calls belonged to this job." One poster generation makes ZERO model calls on a
+  /// cache hit, one on a copy-only path and two on a full miss, so this is one-to-many and
+  /// the join has to be indexed from this side.
+  @@index([generationId])
   @@map("ai_usage")
+}
+
+// ---------------------------------------------------------------------------
+// M6 — posters (FR-POS-01..13)
+// ---------------------------------------------------------------------------
+
+/// One stored binary. REQUIREMENTS.md §8's `asset`.
+///
+/// §8 calls the column `r2_key`. It is `blob_key` here because the store is a PORT: there is
+/// no Cloudflare R2 account, no bucket and no credentials on this machine or in `env.ts`,
+/// and naming a column after one vendor's product is how a swap becomes a migration. See
+/// `media/blob-store.ts` and docs/M6_PLAN.md §3.2 — this is raised there rather than treated
+/// as settled, because §8, §11 and §14 all name R2 and none of them is configured.
+model Asset {
+  id       String  @id @default(uuid(7))
+  userId   String  @map("user_id")
+  /// Null for an asset that is not about anybody — a cached theme background is NOT one of
+  /// these (it has its own table; see ThemeCache and docs/M6_PLAN.md §3.6).
+  personId String? @map("person_id")
+
+  kind AssetKind
+
+  /// The key in whichever blob store is configured. Opaque to everything but the store.
+  blobKey     String @map("blob_key")
+  contentType String @map("content_type")
+  bytes       Int
+  width       Int?
+  height      Int?
+
+  /// FR-SET-06: source photos purged after 90 days unless attached to a saved poster,
+  /// generated media after 180 days with a warning.
+  ///
+  /// M6 WRITES this and does not sweep it. The retention JOB is M9's, and giving it a column
+  /// to read now means M9 is a job rather than a job plus a migration. A null means "keep" —
+  /// the user-overridable case FR-SET-06 names.
+  expiresAt DateTime? @map("expires_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person  Person?  @relation(fields: [personId], references: [id], onDelete: SetNull)
+  posters Poster[]
+
+  @@index([userId, createdAt])
+  @@index([personId])
+  /// Drives M9's retention sweep. Partial in spirit — most rows have a date.
+  @@index([expiresAt])
+  @@map("asset")
+}
+
+/// Pre-generated background artwork, cached by theme key and reused (FR-POS-03, §10 rule 5).
+///
+/// **`theme_key` is UNIQUE, and §8's indexing note says why in one sentence: "theme_cache
+/// (theme_key) must be unique or caching silently fails."** Without the constraint a race
+/// between two misses for the same key inserts two rows, the second lookup picks one of them
+/// arbitrarily, and the hit rate the entire economic thesis rests on becomes unmeasurable
+/// while looking fine.
+///
+/// The key is the five-part tuple FR-POS-03 names — (theme, event type, milestone, palette,
+/// aspect ratio) — composed by `themeKeyFor()` in `posters/theme-key.ts` so that the string
+/// is built in exactly one place.
+///
+/// **Never swept.** §10 rule 5 says "reused indefinitely" and FR-SET-06 purges generated
+/// media after 180 days; those collide only if the two kinds of image are one kind, and they
+/// are not. A cached background is PRODUCT ART, owned by us and shared across every user. A
+/// composited poster is a USER'S MEDIA, about a named person. They are two tables with two
+/// lifetimes on purpose — a retention job that could not tell them apart would delete the
+/// cache, every subsequent poster would become a live generation, and the bill would go up
+/// with nothing on screen having changed. docs/M6_PLAN.md §3.6.
+model ThemeCache {
+  id       String @id @default(uuid(7))
+  themeKey String @unique @map("theme_key")
+
+  /// The theme this is artwork FOR — the id in the shipped library manifest.
+  themeId String      @map("theme_id")
+  /// Denormalised from the theme, so that FR-POS-13's filter is expressible in SQL without
+  /// loading the manifest. The manifest is still the source of truth; this is a mirror, and
+  /// `docs/fixtures/poster-themes.json` is the one table of cases both sides are held to.
+  family  ThemeFamily
+  blobKey String      @map("blob_key")
+
+  // --- the rest of the key, stored as columns as well as composed into theme_key ---------
+  //
+  // Both, deliberately. The composed key is what the unique constraint protects and what a
+  // lookup uses; the columns are what a human asks questions of ("which solemn themes have
+  // we actually generated"). A key you can only match exactly is a key you cannot audit.
+  eventType   EventType @map("event_type")
+  milestone   String?
+  palette     String
+  aspectRatio String    @map("aspect_ratio")
+
+  /// FR-POS-04's "hand-approved". **Defaults to FALSE**, and the picker only ever offers
+  /// approved rows.
+  ///
+  /// TBD-5 — visual identity and poster art direction — was due at M4 and is still open, so
+  /// nothing in M6 can set this honestly. The themes M6 ships are visibly placeholder and
+  /// say so in their own display names. The column is the switch TBD-5 throws; a session
+  /// cannot throw it, because "hand-approved" names a hand. docs/M6_PLAN.md §2.1.
+  approved Boolean @default(false)
+
+  /// FR-POS-03's whole argument, as a number: "generated once and served thousands of times".
+  /// Incremented on every hit, which is what makes §13's "theme cache-hit rate" health metric
+  /// and TBD-3's credit re-check queries rather than estimates.
+  hitCount Int @default(0) @map("hit_count")
+
+  /// What produced the artwork, for the same reason `ai_usage` records it: a cached image
+  /// nobody can trace to a model and a prompt version cannot be re-made when either changes.
+  /// Null for artwork that was not generated at all — the placeholder set.
+  provider      String?
+  model         String?
+  promptVersion String? @map("prompt_version")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// The picker's query: approved artwork of one family for one event type.
+  @@index([family, eventType, approved])
+  @@map("theme_cache")
+}
+
+/// One poster generation JOB. REQUIREMENTS.md §8's `generation`.
+///
+/// ## Why this is not `AiUsage`
+///
+/// §8 draws one table and M5 built `AiUsage`, which has the cost half and none of `status`,
+/// `latency_ms`, `cache_hit` or `prompt_hash`. Collapsing the two loses the measurement this
+/// milestone exists to produce, so they are separate and `ai_usage.generation_id` joins them.
+/// Raised rather than quietly resolved in docs/M6_PLAN.md §3.3.
+///
+/// They are different cardinalities:
+///
+///   - `AiUsage` is one row **per model call**. That is its contract, and the global spend
+///     cap sums it.
+///   - A generation is one user-visible **job** making ZERO model calls on a cache hit, one
+///     on a copy-only path, and two on a full miss (copy-and-theme, then image).
+///
+/// One table cannot mean both without one meaning becoming a lie, and the lie would be the
+/// expensive one. docs/BUILD_PROMPT_M6.md's definition-of-done item 5 requires that a cache
+/// hit "writes no ledger row for a generation that did not happen". If `AiUsage` were also
+/// the generation record, a hit would either write a zero-cost row — making its row count
+/// stop meaning "calls made", which is what the spend cap reads — or write nothing, making
+/// the cache-hit rate unmeasurable. That rate is the number §13 lists as a health metric,
+/// TBD-3 waits on, and FR-MON-03a's margin guard is built from.
+model Generation {
+  id     String @id @default(uuid(7))
+  userId String @map("user_id")
+
+  /// Same vocabulary as `ai_usage.feature`: "poster" here, "gift_ideas" in M8.
+  feature  String
+  personId String? @map("person_id")
+
+  status GenerationStatus @default(QUEUED)
+
+  /// **The point of the table.** True when the background came from `theme_cache` or the
+  /// shipped library and no model was called.
+  cacheHit Boolean @default(false) @map("cache_hit")
+
+  /// True when this request was served from cached themes because a rail bit rather than
+  /// because the user chose it — the global spend cap (§10 rule 6), the per-user limit, or a
+  /// provider failure.
+  ///
+  /// Distinct from `cacheHit`, and the distinction is the one somebody will want: both end in
+  /// the same picture, and only one of them means the budget ran out. "How often did we
+  /// degrade" is a different question from "how often did we hit the cache", and a single
+  /// boolean would answer neither.
+  degraded Boolean @default(false)
+
+  /// §10 rule 7. UNCHECKED is honest — see `ModerationVerdict`.
+  moderation ModerationVerdict @default(UNCHECKED)
+
+  /// Which prompt produced it, and a hash of what was actually asked (§8, §10 rule 4). The
+  /// prompt TEXT is never stored: it carries a person's name, their relation and their
+  /// traits, and §11 bans PII where it does not belong.
+  promptHash    String? @map("prompt_hash")
+  promptVersion String? @map("prompt_version")
+
+  /// FR-POS-09's targets: p95 under 15s on a miss, under 2s on a hit. Measured from accepting
+  /// the request to the poster existing, so it includes the queue wait — which is the number
+  /// the user experiences and therefore the only one worth a target.
+  latencyMs Int? @map("latency_ms")
+
+  /// The sum of this job's `ai_usage` rows, denormalised. Zero on a cache hit, and that zero
+  /// is a fact rather than a gap: no call was made.
+  costInr Decimal @default(0) @map("cost_inr") @db.Decimal(12, 4)
+
+  /// A code a developer can act on, never shown to a user. On BLOCKED, why.
+  errorCode String? @map("error_code")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  completedAt DateTime? @map("completed_at")
+
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  calls   AiUsage[]
+  posters Poster[]
+
+  @@index([userId, createdAt])
+  /// §13's health metric: the cache-hit rate per feature over a window, in one query.
+  @@index([feature, cacheHit, createdAt])
+  @@map("generation")
+}
+
+/// One composited poster, in one format (FR-POS-01, FR-POS-05).
+///
+/// Separate from `Asset` even though every poster has one, because a poster carries facts an
+/// asset has no business holding — which theme, which family, and **what the sentiment was
+/// when it was made**. `Asset` also holds source photos, for which all three are meaningless,
+/// so folding them together would mean three nullable columns that are only ever null for one
+/// kind. The asset is the bytes; the poster is what they are a picture of.
+///
+/// **NOT a synced entity, and that is a decision with reasons** — docs/M6_PLAN.md §4. The
+/// sync engine's three rules exist to reconcile concurrent EDITS, and a poster is generated
+/// server-side, immutable once composited, and never edited by a client: last-write-wins on a
+/// binary nobody writes is ceremony. The reference the client needs already syncs, on
+/// `wish.poster_id`, which M5 reserved for exactly this. What the client wants offline is the
+/// FILE, which a cursor would not give it.
+///
+/// If a later milestone wants a cross-device poster gallery, the fifth cursor entity is the
+/// same mechanical shape M1 used for traits and M5 for wishes — `sync-cursor.ts` decodes a
+/// missing key as null and takes a full resync, which is the correct delta for an entity a
+/// client has never seen.
+model Poster {
+  id       String @id @default(uuid(7))
+  userId   String @map("user_id")
+  personId String @map("person_id")
+
+  /// The job that made it. Nullable only so a poster can outlive a pruned generation row.
+  generationId String? @map("generation_id")
+
+  themeId String      @map("theme_id")
+  family  ThemeFamily
+
+  /// **The sentiment as the server derived it AT GENERATION TIME**, by `sentimentFor()` and
+  /// nothing else (FR-EVT-01a; there is exactly one implementation per side and M6 does not
+  /// add a third).
+  ///
+  /// Stored rather than re-derived on read, for the same reason `wish.sentiment` is: it is a
+  /// fact about the moment the picture was made. It is also the audit trail for the one
+  /// failure this milestone is most likely to produce — a celebratory theme on a death
+  /// anniversary — because `family != CELEBRATORY WHERE sentiment = SOLEMN` is then a query
+  /// rather than an inspection of every image.
+  sentiment Sentiment
+  eventType EventType @map("event_type")
+
+  format  PosterFormat
+  assetId String       @map("asset_id")
+
+  /// FR-POS-08 / OD-9: free-tier posters carry subtle WishKaro attribution; Premium removes
+  /// it. **Defaults to true** and M7 is what can make it false — M6 builds the switch and one
+  /// function that answers "is this user premium" with `false`. Recorded per poster rather
+  /// than derived from the user's tier on read, because a poster made while free stays the
+  /// poster that was made, and a subscription lapsing must not retroactively rewrite what
+  /// somebody already sent.
+  attributed Boolean @default(true)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person     Person      @relation(fields: [personId], references: [id], onDelete: Cascade)
+  asset      Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  generation Generation? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([personId, createdAt])
+  /// REQUIREMENTS.md §11's tone-safety clause, as something a test can ask the database:
+  /// "no SOLEMN event can ever produce ... a celebratory template".
+  @@index([sentiment, family])
+  @@map("poster")
+}
+
+/// A user's report of generated content (FR-POS-12, FR-SET-07, §12's Play GenAI box).
+///
+/// Play's GenAI policy requires an in-app reporting mechanism for generated output. It is a
+/// POLICY gate rather than a feature, which makes it the kind of thing that is painful to
+/// discover during submission — §9 has listed `POST /v1/ai/report` since v1 and nothing has
+/// ever written to it.
+///
+/// Covers BOTH surfaces (docs/M6_PLAN.md §5): a poster and a drafted wish. Building it for
+/// posters only would leave §10 rule 7 unmet for the feature that is already in users' hands
+/// and move the debt silently to M7.
+model ContentReport {
+  id     String @id @default(uuid(7))
+  userId String @map("user_id")
+
+  /// "poster" | "wish_draft". The same vocabulary as `ai_usage.feature`, so a report can be
+  /// lined up against what it cost.
+  feature String
+
+  /// What was reported. Exactly one of these is set; both are nullable because the two
+  /// surfaces store their output in different tables, and a polymorphic key column would be
+  /// a foreign key the database cannot enforce.
+  posterId     String? @map("poster_id")
+  generationId String? @map("generation_id")
+
+  /// A short category from a fixed client-side list, plus optional free text.
+  reason String
+  /// The user's own words. Capped at the API. Never logged — §11.
+  detail String?
+
+  /// The reported TEXT, copied at report time for a wish draft.
+  ///
+  /// Copied rather than referenced on purpose: a draft the user never sent has no `wish` row
+  /// to point at (FR-WSH-07 writes history only after the hand-off), so without this a report
+  /// about an unsent draft would say that something was wrong and not what.
+  reportedText String? @map("reported_text")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@map("content_report")
 }

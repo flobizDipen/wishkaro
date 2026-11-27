@@ -11,7 +11,10 @@ import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { DevicesModule } from './modules/devices/devices.module';
 import { EventsModule } from './modules/events/events.module';
+import { MediaModule } from './modules/media/media.module';
+import { ModerationModule } from './modules/moderation/moderation.module';
 import { PeopleModule } from './modules/people/people.module';
+import { PostersModule } from './modules/posters/posters.module';
 import { RemindersModule } from './modules/reminders/reminders.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SyncModule } from './modules/sync/sync.module';
@@ -33,6 +36,8 @@ import { WishesModule } from './modules/wishes/wishes.module';
     DerivationModule,
     FirebaseModule,
     QueueModule,
+    MediaModule,
+    ModerationModule,
     AuthModule,
     PeopleModule,
     EventsModule,
@@ -41,6 +46,7 @@ import { WishesModule } from './modules/wishes/wishes.module';
     SettingsModule,
     SyncModule,
     WishesModule,
+    PostersModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],

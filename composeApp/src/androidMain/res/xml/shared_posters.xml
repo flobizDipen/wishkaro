@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The one directory a poster is exposed from (FR-POS-01, FR-WSH-05).
+
+    `cache-path` and a single subdirectory, deliberately narrow. A FileProvider that shared
+    `files-path` with path="." would expose this app's entire private storage to whatever
+    app is on the other end of the share sheet — including the SQLDelight database, which
+    holds every person, every date and every message this user has ever recorded.
+
+    `posters/` under the cache is also what makes the file disposable: the system reclaims
+    it under pressure, so a picture of somebody's late father does not accumulate on the
+    device after it has been sent.
+-->
+<paths>
+    <cache-path name="posters" path="posters/" />
+</paths>

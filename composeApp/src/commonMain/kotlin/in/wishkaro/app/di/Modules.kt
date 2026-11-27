@@ -23,6 +23,7 @@ import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.data.repository.UpcomingRepository
 import `in`.wishkaro.app.ui.AppStore
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.poster.PosterStore
 import `in`.wishkaro.app.ui.wish.WishStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -114,6 +115,17 @@ val appModule = module {
             api = get<WishKaroApi>(),
             local = get(),
             sender = get(),
+            scope = get(),
+        )
+    }
+
+    // M6. Beside WishStore and for the same reason: poster studio state is per-screen and
+    // short-lived, and AppStore is already this app's largest file.
+    single {
+        PosterStore(
+            api = get<WishKaroApi>(),
+            sender = get(),
+            files = get<FileGateway>(),
             scope = get(),
         )
     }

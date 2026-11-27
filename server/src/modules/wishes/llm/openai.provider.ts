@@ -1,7 +1,15 @@
 import { Logger } from '@nestjs/common';
 import OpenAI from 'openai';
 import type { Response as OpenAIResponse } from 'openai/resources/responses/responses';
-import type { DraftPrompt, DraftResult, LlmProvider, TokenUsage } from './llm-provider';
+import type {
+  DraftPrompt,
+  DraftResult,
+  LlmProvider,
+  PosterCopyDraft,
+  PosterCopyPrompt,
+  PosterCopyResult,
+  TokenUsage,
+} from './llm-provider';
 
 /**
  * Wish drafting on OpenAI.
@@ -270,6 +278,116 @@ export class OpenAiProvider implements LlmProvider {
 
     return done({ ...base, outcome: 'OK', text: parsed });
   }
+
+  /**
+   * FR-POS-01 step (a): the words and the theme, in one structured call.
+   *
+   * Shares `draft()`'s retry rule rather than inventing a second one — §10 rule 3 says a
+   * malformed response is retried **once**, then falls back to a template, and "once" has
+   * to mean the same thing on both calls or the rule is two rules. A refusal, a timeout and
+   * a truncation are not retried here either, for the reason written above `draft()`.
+   *
+   * The theme is an ENUM over the ids the caller allowed, so the model is choosing from the
+   * occasion's own family rather than naming one. On a remembrance that set contains no
+   * celebratory theme at all, which makes the worst outcome of this call unreachable
+   * through the schema — and `assertThemeAllowed` still checks, because a schema is a
+   * request and a model is an untrusted input.
+   *
+   * **Never run.** There is no key on this machine. `M6_VERIFY.md` records the live copy
+   * path as BLOCKED rather than as passing.
+   */
+  async draftPosterCopy(prompt: PosterCopyPrompt): Promise<PosterCopyResult> {
+    const first = await this.attemptCopy(prompt);
+    if (first.outcome !== 'MALFORMED') return first.result;
+
+    this.logger.warn('OpenAI poster copy did not match the schema; retrying once');
+    const second = await this.attemptCopy(prompt);
+    const usage = sumUsage(first.result.usage, second.result.usage);
+
+    if (second.outcome !== 'MALFORMED') return { ...second.result, usage };
+
+    return {
+      outcome: 'ERROR',
+      copy: null,
+      model: second.result.model,
+      usage,
+      errorMessage: 'poster copy did not match the schema twice',
+    };
+  }
+
+  private async attemptCopy(
+    prompt: PosterCopyPrompt,
+  ): Promise<{ outcome: 'DONE' | 'MALFORMED'; result: PosterCopyResult }> {
+    const done = (result: PosterCopyResult) => ({ outcome: 'DONE' as const, result });
+
+    try {
+      const response = await this.client.responses.create({
+        model: this.modelName,
+        instructions: prompt.system,
+        input: prompt.user,
+        // A different family from the wish draft, so a different cache key. Sharing one
+        // would mean two different frozen prefixes competing for the same entry, which is
+        // the same miss as having no key.
+        prompt_cache_key: `wishkaro-poster-copy-${this.modelName}`,
+        reasoning: { effort: this.effort },
+        text: { format: posterCopySchema(prompt.themeIds) },
+        // Three or four words and a short second line. Far below the draft's 1200.
+        max_output_tokens: 400,
+      });
+
+      const usage = readUsage(response, this.logger, this.modelName);
+      const base = { model: response.model ?? this.modelName, usage };
+
+      const refusal = firstRefusal(response);
+      if (refusal !== null) {
+        return done({ ...base, outcome: 'REFUSED', copy: null, refusalCategory: refusal || null });
+      }
+      if (response.status === 'incomplete') {
+        return done({
+          ...base,
+          outcome: 'ERROR',
+          copy: null,
+          errorMessage: `incomplete: ${response.incomplete_details?.reason ?? 'unknown'}`,
+        });
+      }
+      if (response.status === 'failed') {
+        return done({
+          ...base,
+          outcome: 'ERROR',
+          copy: null,
+          errorMessage: response.error?.message ?? 'failed',
+        });
+      }
+
+      const parsed = parsePosterCopy(response.output_text, prompt.themeIds);
+      if (parsed === null) {
+        return {
+          outcome: 'MALFORMED',
+          result: {
+            ...base,
+            outcome: 'ERROR',
+            copy: null,
+            errorMessage: 'poster copy did not match the schema',
+          },
+        };
+      }
+
+      return done({ ...base, outcome: 'OK', copy: parsed });
+    } catch (cause) {
+      const timedOut =
+        cause instanceof OpenAI.APIConnectionTimeoutError ||
+        (cause instanceof Error && /timed?\s*out/i.test(cause.message));
+
+      this.logger.warn(`OpenAI poster copy failed: ${describe(cause)}`);
+      return done({
+        outcome: timedOut ? 'TIMEOUT' : 'ERROR',
+        copy: null,
+        model: this.modelName,
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        errorMessage: describe(cause),
+      });
+    }
+  }
 }
 
 /**
@@ -375,4 +493,93 @@ function describe(cause: unknown): string {
   if (cause instanceof OpenAI.APIError) return `${cause.status ?? '?'} ${cause.name}`;
   if (cause instanceof Error) return cause.name;
   return 'unknown error';
+}
+
+/**
+ * FR-POS-01 step (a)'s schema, built per call because the theme enum depends on the
+ * occasion.
+ *
+ * The enum is the interesting part. The allowed ids are computed from the sentiment by
+ * `themesFor()` before the call, so for a remembrance the model is not asked to avoid
+ * celebratory themes — it is not shown any. FR-POS-13 says "filtered out of the picker";
+ * this is the same filter applied to the model, which is the other thing that picks.
+ */
+function posterCopySchema(themeIds: readonly string[]) {
+  return {
+    type: 'json_schema' as const,
+    name: 'poster_copy',
+    strict: true,
+    schema: {
+      type: 'object',
+      properties: {
+        headline: {
+          type: 'string',
+          description: 'Three or four words. No quotation marks, no emoji, no trailing full stop.',
+        },
+        subline: {
+          type: ['string', 'null'],
+          description: 'A short second line, or null. Never a sentence.',
+        },
+        themeId: {
+          type: 'string',
+          enum: [...themeIds],
+          description: 'One of the listed theme ids. No other value is acceptable.',
+        },
+      },
+      required: ['headline', 'subline', 'themeId'],
+      additionalProperties: false,
+    },
+  };
+}
+
+/**
+ * Our half of §10 rule 3: validated server-side rather than trusted.
+ *
+ * `strict: true` is the API's promise and this is ours. The theme id is re-checked against
+ * the allowed set even though the schema is an enum, because the schema is a request and a
+ * model is an untrusted input — the same reason `assertThemeAllowed` runs again afterwards.
+ */
+/** Four long words and a little slack. A headline is set at 64-96px. */
+const MAX_HEADLINE = 80;
+/** A year count or a milestone, never a sentence. */
+const MAX_SUBLINE = 120;
+
+export function parsePosterCopy(
+  outputText: string | null | undefined,
+  themeIds: readonly string[],
+): PosterCopyDraft | null {
+  if (!outputText) return null;
+
+  let body: unknown;
+  try {
+    body = JSON.parse(outputText);
+  } catch {
+    return null;
+  }
+
+  if (typeof body !== 'object' || body === null) return null;
+  const { headline, subline, themeId } = body as Record<string, unknown>;
+
+  /**
+   * Length is validated HERE, not left to the schema's prose description.
+   *
+   * `strict: true` enforces shape, not semantics — "Three or four words" is a hint the
+   * model may ignore, and `max_output_tokens: 400` leaves room for well over a thousand
+   * characters. An over-long headline is the single most common way a copy model
+   * misbehaves, and unbounded it reached the compositor, where measuring a 300-character
+   * string costs about a second and then silently falls back to the width estimate.
+   * Rejecting it here makes it the MALFORMED retry rule 3 already describes.
+   */
+  if (typeof headline !== 'string' || headline.trim() === '') return null;
+  if (headline.trim().length > MAX_HEADLINE) return null;
+  if (typeof subline === 'string' && subline.trim().length > MAX_SUBLINE) return null;
+  if (typeof themeId !== 'string' || !themeIds.includes(themeId)) return null;
+  if (subline !== null && typeof subline !== 'string') return null;
+
+  const trimmedSub = typeof subline === 'string' ? subline.trim() : null;
+  return {
+    headline: headline.trim(),
+    subline: trimmedSub === '' ? null : trimmedSub,
+    themeId,
+  };
 }

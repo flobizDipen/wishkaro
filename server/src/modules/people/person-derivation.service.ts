@@ -3,7 +3,12 @@ import type { Prisma } from '@prisma/client';
 import { APP_ENV, type AppEnv } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { todayIn, type EventDateSpec } from '../../common/date/occurrence';
-import { completenessScore, isMinorFor, sentimentFor } from '../events/derived';
+import {
+  completenessScore,
+  isDeceasedConsidering,
+  isMinorFor,
+  sentimentFor,
+} from '../events/derived';
 
 /** Works against either the root client or a transaction client. */
 type Db = PrismaService | Prisma.TransactionClient;
@@ -72,8 +77,12 @@ export class PersonDerivationService {
     // flipping a person back to celebratory because a row was removed is the exact failure
     // FR-EVT-05 exists to prevent. Clearing it is an explicit edit, and the people service
     // refuses that edit while a death anniversary is still live.
-    const hasDeathAnniversary = person.events.some((e) => e.type === 'DEATH_ANNIVERSARY');
-    const isDeceased = person.isDeceased || hasDeathAnniversary;
+    // One expression, in `derived.ts`, because M6 needed this same predicate a fourth time
+    // to pick a theme family and a fourth copy of it is how the two M5 bugs happened.
+    const isDeceased = isDeceasedConsidering(
+      person.isDeceased,
+      person.events.map((e) => e.type),
+    );
 
     // NOT `person.isDeceased` — that is what the row says NOW, and a caller that set the flag
     // itself has already written it, so the comparison would be `!true && true` and the
@@ -137,7 +146,12 @@ export class PersonDerivationService {
     if (personChanged) {
       await db.person.update({
         where: { id: personId },
-        data: { isDeceased, isMinor, completenessScore: score, updatedAt: bumped(person.updatedAt, now) },
+        data: {
+          isDeceased,
+          isMinor,
+          completenessScore: score,
+          updatedAt: bumped(person.updatedAt, now),
+        },
       });
     }
 

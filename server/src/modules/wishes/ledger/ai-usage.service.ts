@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { APP_ENV, type AppEnv } from '../../../config/env';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { PRICING_VERSION, costOf, isPriced } from '../llm/pricing';
+import { PRICING_VERSION, costOf, imageCostOf, isImagePriced, isPriced } from '../llm/pricing';
 import { PROMPT_VERSION } from '../prompt-builder';
 import type { DraftOutcome, TokenUsage } from '../llm/llm-provider';
 
@@ -24,6 +24,22 @@ import type { DraftOutcome, TokenUsage } from '../llm/llm-provider';
 
 export const FEATURE_WISH_DRAFT = 'wish_draft';
 
+/**
+ * How an entry is priced.
+ *
+ * Two shapes, because M6 added a cost model this table was not built for.
+ * `gpt-image-1` bills **per image**, by size and quality tier, not per token — so a poster's
+ * background costs ₹1–15 where a whole wish draft costs fractions of a paisa. An image
+ * priced through the token table would read ₹0 on every row, and `SpendCapService` sums
+ * `cost_inr` across every feature: an unpriced image is an invisible one, and a cap that
+ * cannot see the expensive half is worse than no cap, because the zero looks like it is
+ * working.
+ */
+export type Billing =
+  { kind: 'tokens' } | { kind: 'image'; quality: string; size: string; count: number };
+
+const BY_TOKENS: Billing = { kind: 'tokens' };
+
 export interface LedgerEntry {
   userId: string;
   feature: string;
@@ -31,6 +47,24 @@ export interface LedgerEntry {
   model: string;
   outcome: DraftOutcome;
   usage: TokenUsage;
+  /** Defaults to token billing, so every M5 call site is unchanged. */
+  billing?: Billing;
+  /**
+   * Which JOB this call belonged to (M6).
+   *
+   * Null for a wish draft and always will be: a draft is one call and nothing else, so
+   * wrapping it in a generation row would be a row per row. A poster is a job that makes
+   * zero, one or two calls — see `model Generation`.
+   */
+  generationId?: string | null;
+  /**
+   * Which prompt produced it (§10 rule 4). Defaults to M5's `PROMPT_VERSION`.
+   *
+   * Posters pass their own — `POSTER_COPY_PROMPT_VERSION` or `POSTER_ART_PROMPT_VERSION` —
+   * because a hand-review that cannot be traced to a revision stops meaning anything the
+   * first time a prompt is edited, and for TBD-5 that review IS the deliverable.
+   */
+  promptVersion?: string;
 }
 
 /** Thrown when the row cannot be written. Deliberately fatal — see [record]. */
@@ -64,9 +98,18 @@ export class AiUsageService {
    */
   async record(entry: LedgerEntry): Promise<void> {
     const rate = this.env.USD_INR_RATE;
-    const cost = costOf(entry.model, entry.usage, rate);
+    const billing = entry.billing ?? BY_TOKENS;
+    const cost =
+      billing.kind === 'image'
+        ? imageCostOf(entry.model, billing.quality, billing.size, billing.count, rate)
+        : costOf(entry.model, entry.usage, rate);
 
-    if (!isPriced(entry.model)) {
+    const priced =
+      billing.kind === 'image'
+        ? isImagePriced(entry.model, billing.quality, billing.size)
+        : isPriced(entry.model);
+
+    if (!priced) {
       // A server-side fallback can land on a model this table has never priced. The row is
       // still written — with a zero that is visibly a gap rather than a guess dressed up as
       // a measurement — and this line is how anybody finds out.
@@ -93,7 +136,8 @@ export class AiUsageService {
           pricingVersion: PRICING_VERSION,
           // §10 rule 4. Which words produced this, so a hand-review of the output can be
           // tied to a revision and re-run when the prompt changes.
-          promptVersion: PROMPT_VERSION,
+          promptVersion: entry.promptVersion ?? PROMPT_VERSION,
+          generationId: entry.generationId ?? null,
         },
       });
     } catch (cause) {

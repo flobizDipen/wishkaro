@@ -61,7 +61,14 @@ import { WishesController } from './wishes.controller';
       },
     },
   ],
-  exports: [WishHistoryService],
+  /**
+   * M6 imports this module for the ledger, the spend cap and the LLM provider — the three
+   * things it EXTENDS rather than rebuilds. The spend cap in particular is cross-feature by
+   * design (§10 rule 6 caps the bill, not a feature), so a second instance in PostersModule
+   * would let two features each sit under their own ceiling and together spend twice what
+   * anybody intended.
+   */
+  exports: [WishHistoryService, AiUsageService, SpendCapService, LLM_PROVIDER],
 })
 export class WishesModule implements OnModuleInit {
   private readonly logger = new Logger(WishesModule.name);

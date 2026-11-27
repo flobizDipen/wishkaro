@@ -15,6 +15,7 @@ import `in`.wishkaro.app.platform.DeviceContact
 import `in`.wishkaro.app.platform.FileGateway
 import `in`.wishkaro.app.platform.PermissionOutcome
 import `in`.wishkaro.app.platform.PickedFile
+import `in`.wishkaro.app.platform.PickedPhoto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,8 @@ class BusyFlagTest {
         }
 
         override suspend fun saveCsv(suggestedName: String, content: String) = false
+
+        override suspend fun pickPhoto(): PickedPhoto? = null
     }
 
     private object NoContacts : ContactsGateway {

@@ -11,7 +11,7 @@ import {
   yearsAt,
   type CivilDate,
 } from '../../common/date/occurrence';
-import { acceptsLabel, defaultMutedFor, marksPersonDeceased, sentimentFor } from './derived';
+import { acceptsLabel, defaultMutedFor, isDeceasedConsidering, sentimentFor } from './derived';
 import { PersonDerivationService } from '../people/person-derivation.service';
 import { RemindersService } from '../reminders/reminders.service';
 
@@ -124,7 +124,7 @@ export class EventsService {
 
     // Creating a death anniversary makes the person deceased (FR-EVT-04), and that is true
     // of the event being written right now — not only from the next write onwards.
-    const deceased = person.isDeceased || marksPersonDeceased(input.type);
+    const deceased = isDeceasedConsidering(person.isDeceased, [input.type]);
 
     const event = await this.prisma.event.create({
       data: {
@@ -176,7 +176,7 @@ export class EventsService {
       });
     }
 
-    const deceased = existing.person.isDeceased || marksPersonDeceased(type);
+    const deceased = isDeceasedConsidering(existing.person.isDeceased, [type]);
 
     await this.prisma.event.update({
       where: { id: eventId },

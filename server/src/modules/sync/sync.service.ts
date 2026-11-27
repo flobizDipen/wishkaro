@@ -4,7 +4,7 @@ import { toSettingsDto, type SettingsDto } from '../settings/settings.schemas';
 import {
   completenessSuggestions,
   defaultMutedFor,
-  marksPersonDeceased,
+  isDeceasedConsidering,
   sentimentFor,
 } from '../events/derived';
 import {
@@ -346,9 +346,7 @@ export class SyncService {
     // Settings last. They are one row and they do not interact with the records above, so
     // ordering them after the recompute keeps a settings-only push from paying for anything
     // and a records-only push from touching them at all.
-    const settings = batch.settings
-      ? await this.applySettings(userId, batch.settings)
-      : undefined;
+    const settings = batch.settings ? await this.applySettings(userId, batch.settings) : undefined;
 
     if (skipped.length > 0) {
       this.logger.debug(`Sync push for ${userId}: ${skipped.length} record(s) skipped`);
@@ -483,7 +481,7 @@ export class SyncService {
 
     // Derived, never taken from the client (FR-EVT-01a). The write schema is .strict(), so
     // a client that sends `sentiment` is rejected rather than having it quietly dropped.
-    const deceased = person.isDeceased || marksPersonDeceased(input.type);
+    const deceased = isDeceasedConsidering(person.isDeceased, [input.type]);
 
     const data = {
       type: input.type,
@@ -589,7 +587,7 @@ export class SyncService {
     // Exactly the expression upsertEvent uses, so that a batch carrying somebody's death
     // anniversary AND the message sent for it cannot produce a celebratory wish because the
     // person row had not caught up yet.
-    const deceased = person.isDeceased || marksPersonDeceased(input.type);
+    const deceased = isDeceasedConsidering(person.isDeceased, [input.type]);
 
     const data = {
       eventType: input.type,

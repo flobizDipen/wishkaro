@@ -30,6 +30,8 @@ import `in`.wishkaro.app.ui.importing.ImportFileScreen
 import `in`.wishkaro.app.ui.importing.ImportResultScreen
 import `in`.wishkaro.app.ui.importing.ImportStartScreen
 import `in`.wishkaro.app.ui.importing.ImportStore
+import `in`.wishkaro.app.ui.poster.PosterScreen
+import `in`.wishkaro.app.ui.poster.PosterStore
 import `in`.wishkaro.app.ui.wish.WishComposerScreen
 import `in`.wishkaro.app.ui.wish.WishStore
 import `in`.wishkaro.app.ui.nav.NavEvent
@@ -66,6 +68,7 @@ fun App(modifier: Modifier = Modifier) {
         val store: AppStore = koinInject()
         val importStore: ImportStore = koinInject()
         val wishStore: WishStore = koinInject()
+        val posterStore: PosterStore = koinInject()
         val nav = rememberWishKaroNavigation()
         // FR-VIEW-06: compact gets a bottom bar, medium and expanded get a rail. Read once,
         // here, so the whole shell agrees about which it is.
@@ -144,7 +147,7 @@ fun App(modifier: Modifier = Modifier) {
             if (authState !is AuthState.SignedIn) {
                 SignInScreen(busy = busy, onSignIn = store::signIn, modifier = inner)
             } else {
-                val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, wishStore, nav, inner))
+                val entries = nav.decoratedEntries(wishKaroEntryProvider(store, importStore, wishStore, posterStore, nav, inner))
                 val twoPane = rememberTwoPaneSceneStrategy<NavKey>()
                 RailOrNot(
                     kind = navigationKind,
@@ -229,6 +232,7 @@ private fun wishKaroEntryProvider(
     store: AppStore,
     importStore: ImportStore,
     wishStore: WishStore,
+    posterStore: PosterStore,
     nav: WishKaroNavigation,
     inner: Modifier,
 ): (NavKey) -> NavEntry<NavKey> = entryProvider {
@@ -411,6 +415,7 @@ private fun wishKaroEntryProvider(
             onAddTrait = { kind, value -> store.addTrait(key.personId, kind, value) },
             onRemoveTrait = store::removeTrait,
             onSendWish = { eventId -> nav.goTo(Screen.WishComposer(key.personId, eventId)) },
+            onMakePoster = { eventId -> nav.goTo(Screen.PosterStudio(key.personId, eventId)) },
             // `remember` by personId, not inline. Without it a new flow instance is built on
             // every recomposition and `collectAsState` keys on the instance, so collection
             // restarts from empty and the history flashes. See AppStore.wishesOf.
@@ -553,6 +558,61 @@ private fun wishKaroEntryProvider(
                 nav.goTo(Screen.EditPerson(key.personId))
             },
             onNudgeDismissed = wishStore::dismissNudge,
+            modifier = inner,
+        )
+    }
+
+    /**
+     * The poster studio (FR-POS-01..13).
+     *
+     * Opened on the PERSON rather than on an id, as the composer is, so the picker's
+     * filter reads the row the rest of the app is already looking at. `LaunchedEffect(key)`
+     * for the same reason: the key carries the person and the event, so moving from one
+     * person's studio to another's re-opens it and a recomposition does not.
+     */
+    entry<Screen.PosterStudio> { key ->
+        val person = store.personOf(key.personId)
+        val loaded by store.peopleLoaded.collectAsState()
+        val poster by posterStore.state.collectAsState()
+
+        /**
+         * Re-opened on the whole KEY, not just the person.
+         *
+         * The guard used to compare `poster.person?.id` alone while the key also carries
+         * `eventId`, and `PosterStore` is an app-scoped singleton whose state survives a
+         * back navigation. So opening the studio for someone's birthday, going back, and
+         * opening it again for their anniversary skipped `open()` entirely: the event, the
+         * occurrence year, the theme list and the previous poster were all still the
+         * birthday's, and Generate posted `eventType = BIRTHDAY` under the birthday's
+         * cache key.
+         *
+         * The worse path is the one that matters here. Open for a living person, go back,
+         * let a sync mark them deceased, reopen — `themes` was still the CELEBRATORY
+         * family. The server refuses it (`assertThemeAllowed` -> 400) so it is not
+         * confetti on a remembrance, but the picker is wrong on precisely the axis
+         * FR-POS-13 governs, and the user is offered a theme the server will reject.
+         */
+        LaunchedEffect(key, person?.id, loaded) {
+            if (person != null && posterStore.openedFor != key) posterStore.open(person, key.eventId, key)
+        }
+
+        PosterScreen(
+            state = poster.copy(person = person ?: poster.person, loaded = loaded),
+            onBack = nav::back,
+            onSelectTheme = posterStore::selectTheme,
+            onSelectFormat = posterStore::selectFormat,
+            onGenerate = posterStore::generate,
+            onPickPhoto = posterStore::pickPhoto,
+            onRemovePhoto = posterStore::removePhoto,
+            onHandOver = { toWhatsApp ->
+                // The drafted message travels beside the picture when there is one
+                // (FR-POS-01: "instead of, or alongside"). An empty caption is an ordinary
+                // case — the user may be sending the poster on its own.
+                posterStore.handOver(toWhatsApp, wishStore.state.value.text.takeIf {
+                    wishStore.state.value.person?.id == key.personId
+                }.orEmpty())
+            },
+            onReport = { reason -> posterStore.report(reason, null) },
             modifier = inner,
         )
     }

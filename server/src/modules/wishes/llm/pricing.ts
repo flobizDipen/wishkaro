@@ -121,6 +121,86 @@ export function isPriced(model: string): boolean {
   return model in RATES || model.startsWith('fake');
 }
 
+// ---------------------------------------------------------------------------------------
+// M6 — images, which are priced PER IMAGE rather than per token
+// ---------------------------------------------------------------------------------------
+
+/**
+ * `gpt-image-1` is billed **per generated image**, by size and quality tier. That is a
+ * different cost shape from everything above, and the difference is the whole reason
+ * FR-POS-03's cache exists.
+ *
+ * **If this table is missing, every poster row reads ₹0 and the global spend cap cannot see
+ * them** — which is worse than having no cap at all, because a ₹0 total looks like a cap
+ * that is working. `docs/BUILD_PROMPT_M6.md` says so in as many words, and `SpendCapService`
+ * sums `cost_inr` across every feature, so an unpriced image is an invisible one.
+ *
+ * ## These numbers are UNVERIFIED, and that is recorded rather than smoothed over
+ *
+ * There is no `OPENAI_API_KEY` on this machine, so nothing here has been checked against a
+ * bill. `REQUIREMENTS.md` §10's own cost table says "₹1–15 depending on quality tier" and
+ * TBD-1 — "verify live `gpt-image-1` pricing" — is listed as needed by M6 and is still open.
+ * The rows below are the published list prices in USD per image; the ledger stores the rate
+ * and the pricing version on every row, so correcting them later never re-prices what has
+ * already been written.
+ *
+ * `M6_VERIFY.md` records definition-of-done item 7's "non-zero **measured** INR" as BLOCKED
+ * for exactly this reason. Arithmetic from a rate table is not a measurement — M5 was right
+ * to refuse to call one the other, and this comment exists so nobody else does.
+ */
+export interface ImageRates {
+  /** USD for one generated image at this size and quality. */
+  perImageUsd: number;
+}
+
+/** Size keys as the API names them, plus the quality tier. */
+const IMAGE_RATES: Record<string, Record<string, ImageRates>> = {
+  'gpt-image-1': {
+    // 1024×1536 — the portrait render a 9:16 poster background is cropped from.
+    'low:1024x1536': { perImageUsd: 0.016 },
+    'medium:1024x1536': { perImageUsd: 0.063 },
+    'high:1024x1536': { perImageUsd: 0.25 },
+    // 1024×1024 — square.
+    'low:1024x1024': { perImageUsd: 0.011 },
+    'medium:1024x1024': { perImageUsd: 0.042 },
+    'high:1024x1024': { perImageUsd: 0.167 },
+    // 1536×1024 — landscape, for the link-preview format.
+    'low:1536x1024': { perImageUsd: 0.016 },
+    'medium:1536x1024': { perImageUsd: 0.063 },
+    'high:1536x1024': { perImageUsd: 0.25 },
+  },
+};
+
+/** The fake image provider costs nothing, and writes a ₹0 row rather than no row. */
+const FREE_IMAGE: ImageRates = { perImageUsd: 0 };
+
+export function imageRatesFor(model: string, quality: string, size: string): ImageRates {
+  if (model.startsWith('fake')) return FREE_IMAGE;
+  return IMAGE_RATES[model]?.[`${quality}:${size}`] ?? FREE_IMAGE;
+}
+
+export function isImagePriced(model: string, quality: string, size: string): boolean {
+  if (model.startsWith('fake')) return true;
+  return IMAGE_RATES[model]?.[`${quality}:${size}`] !== undefined;
+}
+
+/**
+ * What one image cost.
+ *
+ * [count] rather than always 1 because a provider can return several images for one request,
+ * and a ledger that assumed one would under-report exactly when somebody was spending most.
+ */
+export function imageCostOf(
+  model: string,
+  quality: string,
+  size: string,
+  count: number,
+  usdInrRate: number,
+): Cost {
+  const usd = imageRatesFor(model, quality, size).perImageUsd * count;
+  return { usd: round(usd, 6), inr: round(usd * usdInrRate, 4) };
+}
+
 export interface Cost {
   usd: number;
   inr: number;

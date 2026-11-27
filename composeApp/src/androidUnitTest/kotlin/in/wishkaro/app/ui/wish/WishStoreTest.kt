@@ -59,6 +59,18 @@ class WishStoreTest {
         }
         override fun share(text: String): Boolean { opened += "share" to text; return true }
         override fun copyToClipboard(text: String): Boolean { opened += "copy" to text; return true }
+
+        // M6. The composer never calls these; the poster studio does.
+        override fun shareImage(bytes: ByteArray, mimeType: String, caption: String): Boolean {
+            opened += "shareImage" to caption; return installed
+        }
+        override fun shareImageToWhatsApp(
+            bytes: ByteArray,
+            mimeType: String,
+            caption: String,
+        ): Boolean {
+            opened += "shareImageWhatsApp" to caption; return installed
+        }
     }
 
     /**

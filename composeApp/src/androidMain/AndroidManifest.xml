@@ -148,6 +148,31 @@
                 android:resource="@xml/upcoming_widget_info" />
         </receiver>
 
+        <!--
+            How a composited poster reaches WhatsApp (FR-POS-01, FR-WSH-05).
+
+            An image cannot be handed over as an `Intent` extra the way text can — Android
+            needs a content URI another app is allowed to read, and a `file://` URI has
+            thrown FileUriExposedException since Android 7.
+
+            `grantUriPermissions` plus FLAG_GRANT_READ_URI_PERMISSION means the receiving
+            app gets read access to ONE file for the life of that intent, rather than this
+            app holding a permission or the file being world-readable. `exported="false"`:
+            the grant is the access path, not the provider.
+
+            `shared_posters.xml` scopes it to one cache subdirectory. See the comment there
+            for why that narrowness is the point.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.posters"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_posters" />
+        </provider>
+
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="reminders_morning_of" />

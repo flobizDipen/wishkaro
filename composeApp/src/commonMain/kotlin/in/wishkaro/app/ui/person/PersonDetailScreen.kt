@@ -29,6 +29,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -79,6 +80,7 @@ fun PersonDetailScreen(
     onRemoveTrait: (String) -> Unit,
     /** FR-WSH-01's third entry point. Null means the next thing coming up for them. */
     onSendWish: (String?) -> Unit = {},
+    onMakePoster: (String?) -> Unit = {},
     /** FR-PPL-07's wish history, read from the local mirror so it draws offline. */
     wishes: List<Wish> = emptyList(),
     modifier: Modifier = Modifier,
@@ -176,6 +178,26 @@ fun PersonDetailScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("person_send_wish"),
             ) {
                 Text(if (person.isSolemn) "Send a message" else "Send a wish")
+            }
+
+            /**
+             * The poster studio (FR-POS-01), M6.
+             *
+             * The label follows the same rule as the button above and for the same reason:
+             * FR-POS-13 gives a remembrance its own template family, and a button that said
+             * "Make a poster" on a death anniversary would be the first word of a
+             * celebration on a screen that must not contain one.
+             *
+             * Secondary to the message, deliberately. A poster is "instead of, or
+             * alongside" the words (FR-POS-01), and the words are the thing most people
+             * will send — FR-POS-04's economics depend on the poster being a flourish
+             * rather than the default path.
+             */
+            OutlinedButton(
+                onClick = { onMakePoster(card.nextEvent?.id) },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("person_make_poster"),
+            ) {
+                Text(if (person.isSolemn) "Make a remembrance poster" else "Make a poster")
             }
 
             // ---- events (FR-PPL-03) ----

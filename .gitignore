@@ -42,6 +42,10 @@ yarn-error.log*
 Thumbs.db
 
 # ---- Local data ----
+# BLOB_STORE=local writes here (M6). A poster is a picture of a named person and this
+# repository is PUBLIC — docs/M6_PLAN.md §1.2.
+.storage/
+server/.storage/
 *.sqlite
 *.sqlite3
 pgdata/

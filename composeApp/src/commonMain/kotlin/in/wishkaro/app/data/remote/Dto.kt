@@ -390,3 +390,107 @@ data class DraftWishResponse(
     val model: String? = null,
     val draftedAt: String? = null,
 )
+
+// ---------------------------------------------------------------------------------------
+// M6 — AI posters (FR-POS-01..13)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * What the app asks for (FR-POS-01, FR-POS-05).
+ *
+ * Note what is ABSENT, and it is the same absence `DraftWishRequest` has: no `sentiment`,
+ * no `family`, no copy. A client that could assert the sentiment could ask for confetti on
+ * a remembrance, so the one input that decides the theme family is the one input the client
+ * does not get to supply. The server derives it and refuses a theme outside the family.
+ */
+@Serializable
+data class RequestPosterRequest(
+    val personId: String,
+    val eventId: String? = null,
+    val eventType: String,
+    val occurrenceYear: Int,
+    /** Null takes the occasion's own default, which is the first of its OWN family. */
+    val themeId: String? = null,
+    val format: String,
+)
+
+/** 202. FR-POS-09 is asynchronous, so what comes back is something to poll. */
+@Serializable
+data class RequestPosterResponse(val generationId: String, val status: String)
+
+/** FR-POS-09's visible progress state. */
+@Serializable
+data class GenerationStatusResponse(
+    val generationId: String,
+    val status: String,
+    val cacheHit: Boolean = false,
+    val degraded: Boolean = false,
+    val moderation: String = "UNCHECKED",
+    val latencyMs: Int? = null,
+    /**
+     * A code for a developer, never shown. The app has its own words — the screen where
+     * somebody is making a remembrance poster is the worst place to surface an error code.
+     */
+    val errorCode: String? = null,
+    val poster: PosterDto? = null,
+)
+
+@Serializable
+data class PosterDto(
+    val id: String,
+    val personId: String,
+    val themeId: String,
+    val family: String,
+    val sentiment: String,
+    val eventType: String,
+    val format: String,
+    /** FR-POS-08. True on the free tier; M7 is what can make it false. */
+    val attributed: Boolean = true,
+    val createdAt: String? = null,
+    /**
+     * Short-lived and signed (§11), and RELATIVE to the API's base URL.
+     *
+     * Relative because the local blob store signs a path and the server does not know what
+     * host the phone reached it on — behind Railway's proxy the request's own Host header
+     * is the only clue and it is not one worth trusting for a capability URL. The client
+     * joins it to the base URL it already has. An R2 deployment returns an absolute URL and
+     * `absoluteUrl` below handles both.
+     */
+    val url: String? = null,
+    val urlExpiresAt: String? = null,
+)
+
+@Serializable
+data class PosterListResponse(val posters: List<PosterDto> = emptyList())
+
+@Serializable
+data class ThemesResponse(
+    /** The sentiment the SERVER derived. The picker's local filter must agree with it. */
+    val sentiment: String,
+    val themes: List<ThemeDto> = emptyList(),
+)
+
+@Serializable
+data class ThemeDto(
+    val id: String,
+    val family: String,
+    val displayName: String,
+    val palette: String,
+)
+
+/** FR-POS-12, FR-SET-07, and the Play GenAI policy box in §12. */
+@Serializable
+data class ReportContentRequest(
+    val feature: String,
+    val posterId: String? = null,
+    val generationId: String? = null,
+    val reportedText: String? = null,
+    val reason: String,
+    val detail: String? = null,
+)
+
+@Serializable
+data class PhotoUploadResponse(val assetId: String, val url: String? = null)
+
+@Serializable
+data class PhotoUrlResponse(val url: String? = null)

@@ -98,6 +98,21 @@ sealed interface Screen : NavKey {
      */
     @Serializable
     data class WishComposer(val personId: String, val eventId: String? = null) : Screen
+
+    // ---- M6: AI posters (FR-POS-01..13) ----
+
+    /**
+     * The poster studio (FR-POS-01). Reachable from the person screen and from the composer.
+     *
+     * `eventId` is nullable for the same reason [WishComposer]'s is, and it is resolved the
+     * same way: the person screen's button means "the next thing coming up for them".
+     *
+     * Note what is NOT on this key: the theme and the format. Those are studio state, they
+     * change while the screen is open, and putting them in a `NavKey` would push a
+     * back-stack entry on every tap of a swatch.
+     */
+    @Serializable
+    data class PosterStudio(val personId: String, val eventId: String? = null) : Screen
 }
 
 /**
@@ -145,6 +160,10 @@ val Screen.showsTabs: Boolean
         // offering to switch tabs in the middle of writing to somebody is offering to lose
         // what they wrote.
         is Screen.WishComposer,
+        // Same reason as the composer: a task, not a place. It owns the screen while it is
+        // open and offering to switch tabs halfway through making somebody's remembrance
+        // poster is offering to lose it.
+        is Screen.PosterStudio,
         -> false
 
         else -> true
@@ -182,6 +201,7 @@ val WISHKARO_SAVED_STATE: SavedStateConfiguration = SavedStateConfiguration {
             subclass(Screen.ImportFile::class)
             subclass(Screen.ImportResult::class)
             subclass(Screen.WishComposer::class)
+            subclass(Screen.PosterStudio::class)
         }
     }
 }

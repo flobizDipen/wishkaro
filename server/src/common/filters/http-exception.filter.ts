@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { JSON_BODY_LIMIT } from '../http/limits';
+import { IMAGE_BODY_LIMIT, JSON_BODY_LIMIT } from '../http/limits';
 
 interface ErrorBody {
   error: { code: string; message: string; details?: unknown };
@@ -67,7 +67,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
      * Only these two types are translated. Anything else with a `status` on it stays an
      * INTERNAL, because a stack-carrying error's message is not something to put on the wire.
      */
-    const bodyParser = asBodyParserError(exception);
+    const bodyParser = asBodyParserError(exception, request.headers['content-type']);
     if (bodyParser) {
       this.logger.warn(
         `Rejected ${request.method} ${request.url}: ${bodyParser.code} (${bodyParser.type})`,
@@ -100,18 +100,42 @@ const BODY_PARSER_ERRORS: Record<string, { status: number; code: string; message
   'entity.too.large': {
     status: HttpStatus.PAYLOAD_TOO_LARGE,
     code: 'PAYLOAD_TOO_LARGE',
+    // Overwritten per request by [limitFor] — M6 added a second parser with a different
+    // ceiling and both set the same `err.type`, so a fixed message names the wrong limit
+    // for one of them.
     message: `Request body is larger than the ${JSON_BODY_LIMIT} limit`,
   },
 };
 
+/**
+ * Which limit a 413 should quote.
+ *
+ * Both body parsers throw `entity.too.large` and nothing on the error distinguishes them,
+ * so this keys on what the request was. Without it a 9 MB photo — routine from a 48 MP
+ * handset — was told "larger than the 2mb limit" when 8 MB would have worked, sending the
+ * user (or a developer) to the wrong constant.
+ */
+function limitFor(contentType: string | undefined): string {
+  return contentType?.startsWith('image/') ? IMAGE_BODY_LIMIT : JSON_BODY_LIMIT;
+}
+
 function asBodyParserError(
   exception: unknown,
+  contentType?: string,
 ): { status: number; code: string; message: string; type: string } | null {
   if (!exception || typeof exception !== 'object') return null;
   const type = (exception as { type?: unknown }).type;
   if (typeof type !== 'string') return null;
   const known = BODY_PARSER_ERRORS[type];
-  return known ? { ...known, type } : null;
+  if (!known) return null;
+  if (type === 'entity.too.large') {
+    return {
+      ...known,
+      type,
+      message: `Request body is larger than the ${limitFor(contentType)} limit`,
+    };
+  }
+  return { ...known, type };
 }
 
 /** A whole, non-negative number of seconds from the thrown payload, or null. */

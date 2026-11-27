@@ -9,10 +9,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { milestoneLabelFor } from '../events/derived';
+import { ModerationService } from '../moderation/moderation.service';
 import { AiUsageService, FEATURE_WISH_DRAFT } from './ledger/ai-usage.service';
 import { SpendCapService } from './ledger/spend-cap.service';
 import { LLM_PROVIDER, NO_TOKENS, type DraftResult, type LlmProvider } from './llm/llm-provider';
-import { buildPrompt, type DraftContext } from './prompt-builder';
+import { buildPrompt, userTextIn, type DraftContext } from './prompt-builder';
 import { DraftRateLimitService } from './rate-limit/draft-rate-limit.service';
 import { ToneNotAllowedError, assertToneAllowed, sentimentFor } from './tone-rules';
 import { NO_REPEAT_YEARS, WishHistoryService } from './wish-history.service';
@@ -47,11 +48,40 @@ export class DraftingService {
     private readonly ledger: AiUsageService,
     private readonly spendCap: SpendCapService,
     private readonly rateLimit: DraftRateLimitService,
+    private readonly moderation: ModerationService,
     @Inject(LLM_PROVIDER) private readonly provider: LlmProvider,
   ) {}
 
   async draft(userId: string, request: DraftWishRequest): Promise<DraftWishResponse> {
     const context = await this.contextFor(userId, request);
+
+    /**
+     * INPUT moderation (§10 rule 7), before anything costs money.
+     *
+     * M5 shipped this surface with no moderation at all and `M5_VERIFY.md` §4.6 records it
+     * as a knowingly unmet hard rule. M6 covers BOTH surfaces rather than posters only,
+     * because building it for the new feature and not the shipped one leaves rule 7 unmet
+     * for the code that is already in users' hands — `docs/M6_PLAN.md` §5.
+     *
+     * The texts checked come from `userTextIn(context)` — the prompt builder's own
+     * declaration of what it puts in front of the model. This used to be `avoid` and
+     * `notes` only, so the name, the relation, the hobbies and the likes reached the model
+     * unchecked, and the poster surface checked a different subset again: whether rule 7
+     * applied depended on which box the user had typed into.
+     *
+     * Refused BEFORE the spend cap and the rate limit, so a blocked input costs neither
+     * money nor one of the user's fifteen.
+     */
+    const inputCheck = await this.moderation.checkInput(userTextIn(context));
+    if (inputCheck.verdict === 'BLOCKED') {
+      throw new HttpException(
+        {
+          code: 'CONTENT_BLOCKED',
+          message: "We can't use that as a starting point. Try editing it and asking again.",
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
 
     /**
      * The GLOBAL cap, checked before the per-user one (§10 rule 6).
@@ -113,6 +143,29 @@ export class DraftingService {
           code: 'DRAFT_UNAVAILABLE',
           message: "We couldn't write this one.",
         },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    /**
+     * OUTPUT moderation (§10 rule 7). The model wrote it; the user has not seen it yet.
+     *
+     * A blocked draft is a 503 like the other three failures rather than a distinct code,
+     * and that is deliberate: the user-facing answer is the same — the composer opens on
+     * its own template and they write it themselves — and telling somebody that a
+     * classifier objected to a message about their mother's death would be worse than
+     * saying nothing. The reason lives in the log and in the ledger, not on that screen.
+     *
+     * The ledger row is already written by `callAndRecord`'s `finally`, before this runs. A
+     * call that was moderated still cost money.
+     */
+    const outputCheck = await this.moderation.checkOutputText(result.text);
+    if (outputCheck.verdict === 'BLOCKED') {
+      this.logger.warn(
+        `Draft blocked by output moderation for user ${userId}: ${outputCheck.reasonCode}`,
+      );
+      throw new HttpException(
+        { code: 'DRAFT_UNAVAILABLE', message: "We couldn't write this one." },
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
